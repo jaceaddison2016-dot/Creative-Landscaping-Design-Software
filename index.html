@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="Plan a landscape in feet and inches. Place plants and explore seasonal shadows, privately on your computer."
+    />
+    <title>Creative Landscaping · Plan studio</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="core.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Creative Landscaping home"
+        ><span class="brand-mark" aria-hidden="true">✳</span
+        ><span>CREATIVE<span class="brand-sub">LANDSCAPING</span></span></a
+      >
+      <div class="project-heading">
+        <span class="eyebrow">PLAN STUDIO <span class="badge">PROTOTYPE 01</span></span
+        ><input
+          id="project-name"
+          aria-label="Project name"
+          maxlength="100"
+          value="Summer courtyard"
+        />
+      </div>
+      <div class="file-actions">
+        <button id="new-project">New plan</button><button id="load-project">Open</button
+        ><button id="save-project" class="primary">↓ Save project</button
+        ><input id="file-input" type="file" accept=".clp,.json,application/json" hidden />
+      </div>
+    </header>
+    <main class="studio">
+      <aside class="library panel">
+        <div class="panel-heading">
+          <span class="eyebrow">01 / DESIGN</span>
+          <h1>Your planting palette</h1>
+          <p>A little shade. A little color.<br />Make space for something green.</p>
+        </div>
+        <h2>PLACE A PLANT</h2>
+        <div id="catalog" class="catalog"></div>
+        <p class="hint">
+          Choose a plant, then click the plan. Sizes are editable planning placeholders.
+        </p>
+        <div class="divider"></div>
+        <h2>DRAW & EDIT</h2>
+        <button class="tool active" id="select-tool" aria-pressed="true">
+          <span>↖</span> Select & move <kbd>V</kbd>
+        </button>
+        <button class="tool" id="measure-tool" aria-pressed="false">
+          <span>↔</span> Dimension <kbd>M</kbd>
+        </button>
+        <label class="check-row"
+          ><input id="snap" type="checkbox" checked /> Snap to 6-inch grid</label
+        >
+        <div class="divider"></div>
+        <h2>PLOT SIZE</h2>
+        <form id="plot-form">
+          <label>Width <input id="plot-width" value="80' 0&quot;" required /></label
+          ><label>Depth <input id="plot-depth" value="60' 0&quot;" required /></label
+          ><button class="subtle" type="submit">Update plot</button>
+        </form>
+        <p class="hint">
+          Enter feet, or feet + inches: 10' 6&quot;.<br />North is always at the top.
+        </p>
+        <button id="demo-project" class="demo-link">↗ Explore the example plan</button>
+      </aside>
+      <section class="workspace" aria-label="Landscape workspace">
+        <div class="workspace-toolbar">
+          <div class="view-label">
+            <span class="status-dot"></span> TOP VIEW <span class="muted">/ Feet & inches</span>
+          </div>
+          <div class="history">
+            <button id="undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo">↶</button
+            ><button id="redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo">↷</button
+            ><label class="zoom-label"
+              >Zoom
+              <input
+                id="zoom"
+                type="range"
+                min="70"
+                max="200"
+                value="100"
+                aria-label="Zoom" /></label
+            ><button id="fit-view">Fit</button>
+          </div>
+        </div>
+        <div class="canvas-area" id="canvas-area">
+          <div class="north" aria-label="North up">N<span>↑</span></div>
+          <div class="plan-paper" id="plan-paper">
+            <svg
+              id="plan"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 960 720"
+              role="application"
+              aria-label="2D landscape plan: use a placement tool and click, or select and drag a plant"
+              tabindex="0"
+            ></svg>
+          </div>
+        </div>
+        <div class="workspace-footer">
+          <span id="tool-hint">Select a plant to edit it. Drag to move.</span
+          ><span id="plant-count">10 plants</span>
+        </div>
+        <div id="status" class="notice" role="status" aria-live="polite">
+          Example plan loaded. Save a project file to keep your work.
+        </div>
+      </section>
+      <aside class="inspector panel">
+        <div class="sun-heading">
+          <span class="eyebrow">02 / SUN STUDY</span>
+          <h2>Follow the light <span aria-hidden="true">☀</span></h2>
+          <p>See how your plan changes<br />through the day and the seasons.</p>
+        </div>
+        <label class="check-row"
+          ><input id="show-shadows" type="checkbox" checked /> Show plant shadows</label
+        >
+        <form id="sun-form">
+          <label
+            >Date <input id="sun-date" type="date" min="1900-01-01" max="2100-12-31" required
+          /></label>
+          <label>Local time <input id="sun-time" type="time" required /></label>
+          <input
+            id="time-slider"
+            type="range"
+            min="0"
+            max="1439"
+            step="1"
+            value="900"
+            aria-label="Time of day"
+          />
+          <div class="range-labels"><span>00:00</span><span>12:00</span><span>23:59</span></div>
+          <details>
+            <summary>Site location & time zone</summary>
+            <label
+              >Latitude (north +)<input
+                id="latitude"
+                type="number"
+                min="-90"
+                max="90"
+                step="any"
+                required /></label
+            ><label
+              >Longitude (east +)<input
+                id="longitude"
+                type="number"
+                min="-180"
+                max="180"
+                step="any"
+                required /></label
+            ><label
+              >UTC offset (hours)<input
+                id="utc-offset"
+                type="number"
+                min="-12"
+                max="14"
+                step="0.25"
+                required
+            /></label>
+            <p class="hint">
+              Default: Detroit, summer UTC−4. Set your location and the offset for the chosen date,
+              including daylight saving time.
+            </p>
+          </details>
+          <button type="submit" class="subtle">Update sun study</button>
+        </form>
+        <div class="solar-card">
+          <span class="eyebrow" id="sun-state">AFTERNOON LIGHT</span>
+          <div class="solar-values">
+            <div><strong id="sun-elevation">—</strong><span>Elevation</span></div>
+            <div><strong id="sun-azimuth">—</strong><span>Azimuth</span></div>
+          </div>
+          <p id="shadow-summary"></p>
+        </div>
+        <p class="hint">
+          Approximate ground shadows from solid vertical plant footprints. Flat ground, true north.
+          For design exploration; actual foliage and terrain change shade.
+        </p>
+        <div class="divider"></div>
+        <span class="eyebrow">03 / SELECTION</span>
+        <div id="selection-empty">
+          <h2>Room to grow</h2>
+          <p>
+            Click a plant to change its name, position, canopy size, or height. Click a dimension to
+            remove it.
+          </p>
+        </div>
+        <form id="plant-form" hidden>
+          <h2>Plant properties</h2>
+          <label>Name <input id="plant-name" maxlength="80" required /></label>
+          <div class="input-pair">
+            <label>From left <input id="plant-x" required /></label
+            ><label>From top <input id="plant-y" required /></label>
+          </div>
+          <label>Canopy diameter <input id="plant-diameter" required /></label
+          ><label>Plant height <input id="plant-height" required /></label
+          ><button type="submit" class="subtle">Apply changes</button>
+        </form>
+        <div id="dimension-selection" hidden>
+          <h2>Dimension</h2>
+          <p id="dimension-value"></p>
+        </div>
+        <button id="delete-selection" class="danger" hidden>Delete selected</button>
+      </aside>
+    </main>
+    <footer class="app-footer">
+      <span>Creative Landscaping <span class="muted">/ An idea, taking root.</span></span
+      ><span>Local files · No account needed</span>
+    </footer>
+    <dialog id="replace-dialog">
+      <form method="dialog">
+        <h2>Replace this plan?</h2>
+        <p>Unsaved changes will be lost. Save a project file first if you want to keep them.</p>
+        <div class="dialog-actions">
+          <button value="cancel">Keep editing</button
+          ><button value="replace" class="primary">Replace plan</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
