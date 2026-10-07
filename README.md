@@ -15,7 +15,7 @@ This is the first step toward a broader Land F/X-style application. It is not a 
 
 If your browser or organization blocks local HTML files, someone with Node.js 22+ installed can run `npm start` from this folder and open the address printed by the command. No package installation is needed just to run the application. Corporate browser policies may require your administrator's help.
 
-**Testing status:** The application passed functional checks in Chromium on Linux through the local server. Direct-file opening is blocked by this cloud machine's browser policy and could not be verified here. Actual macOS/Windows execution and Safari/Firefox behavior still need the manual checks below. The cross-platform CI workflow is configured but its results are not yet established.
+**Testing status:** Automated checks passed on GitHub-hosted **macOS, Windows, and Linux** runners, including headless Chromium opening `index.html` directly, editing plans, downloading/reloading project files, and HTTP startup. Linux cloud checks also passed through the local server. Your own desktop/browser, default file associations, and Safari/Firefox/Edge still need the manual checks below. See [the validation record](docs/VALIDATION.md) for the exact tested code and results.
 
 ## Make your first plan
 

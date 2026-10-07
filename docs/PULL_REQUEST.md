@@ -17,9 +17,9 @@ README includes screenshots, detailed instructions, and a server fallback if loc
 ## Validation and limits
 
 - Repeated locked install, syntax checks, formatting, and 12 unit tests passed.
-- Linux Chromium passed nine functional browser groups covering placement/editing, dragging, dimensions, undo/redo, seasonal/night shadows, actual downloads and reloads, invalid files, replacement protection, and responsive rendering.
+- GitHub-hosted macOS, Windows, and Linux checks passed at source commit `458a834`, including 12 unit tests and all nine functional browser groups. Direct-file and HTTP launch, placement/editing, dragging, dimensions, undo/redo, seasonal/night shadows, actual downloads/reloads, invalid files, replacement protection, and responsive rendering were exercised. [CI evidence](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37703234683).
 - Solar position meets a 0.5° tolerance against one published NREL reference example, plus seasonal/directional checks. It remains an approximate flat-ground study with solid plant footprints.
-- Direct-file testing was blocked by cloud browser policy. Actual macOS/Windows execution, Safari/Firefox/Edge, native downloads/file associations, and the newly configured CI matrix remain unverified. No native installers are included.
+- This cloud browser blocks direct-file opening, so its local checks used HTTP. Separate three-OS CI did pass direct-file opening. Personal desktop/browser policies, interactive file associations/ZIP extraction, and Safari/Firefox/Edge remain unverified. No native installers are included.
 - No autosave, species database, beds/structures, CAD integration, or Land F/X feature parity. No project-wide redistribution license has been selected for the original code.
 
 See docs/VALIDATION.md and docs/FOUNDATION-EVALUATION.md for evidence and manual checks. This is a draft for first-prototype review.

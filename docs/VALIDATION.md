@@ -2,6 +2,10 @@
 
 Executed October 7, 2026 in the Linux cloud environment. Node.js v24.19.0, npm 11.9.0, Playwright 1.61.1, system Chromium 151.0.7922.173. This record applies to the first prototype in this pull request.
 
+GitHub-hosted native OS checks subsequently **passed on Windows, macOS, and Linux** in [run 37703234683](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37703234683), testing source commit [`458a83463baa1fb3b1e96313f2e9fa30d4776646`](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/commit/458a83463baa1fb3b1e96313f2e9fa30d4776646). Each job completed locked installation, syntax/12-unit-test checks, formatting, Chromium installation, and all nine browser groups. Those browser runs exercised **both direct-file and HTTP launch**, without the cloud-only `TEST_HTTP_ONLY` override. Later documentation-only revisions do not change the tested application code.
+
+An initial Windows formatting check failed before browser testing. A checkout line-ending policy (`.gitattributes`) resolved it; the subsequent Windows formatting and browser checks passed. Original third-party license files remain exempt from line-ending conversion and preserved verbatim.
+
 ## Completed
 
 | Check                                                                        | Result                                                                                                                                       |
@@ -32,10 +36,9 @@ A screenshot captured from the passing browser run is included in [the README](.
 
 ## Could not test here
 
-- **Direct-file launch:** the cloud's managed Chromium returns `ERR_BLOCKED_BY_ADMINISTRATOR` for `file://` navigation. Its enforced URL policy was left in place. The complete functional suite ran over the loopback HTTP server; the `TEST_HTTP_ONLY` flag explicitly marks direct-file launch unrun. No claim that the file route passed is made.
-- **Actual macOS and Windows:** only Linux was available. File association, extraction, downloads, keyboard/platform conventions, system font rendering, and desktop browser policies require native checks.
-- **Safari, Firefox, and Edge:** not available for this run. Chromium does not prove compatibility with those browsers.
-- **GitHub Actions:** the workflow includes Ubuntu, Windows, and macOS jobs, but defining a workflow does not establish a CI pass. Check the actual runs once the branch/PR is available.
+- **Direct-file launch in this cloud machine:** its managed Chromium returns `ERR_BLOCKED_BY_ADMINISTRATOR` for `file://` navigation. Its enforced URL policy was left in place. Here the complete functional suite ran over loopback HTTP; the `TEST_HTTP_ONLY` flag marks local direct-file launch unrun. Direct-file launch did pass in the separate three-OS GitHub CI run above.
+- **Personal macOS and Windows desktops:** automated native OS execution passed on GitHub runners, but interactive ZIP extraction, default-browser file associations, Finder/Explorer download handling, physical keyboard conventions, and your desktop/browser policies still need the manual checks below.
+- **Safari, Firefox, and Edge:** not exercised. Chromium does not prove compatibility with those browsers.
 - **Native installers:** none are implemented or tested. This is a desktop browser application.
 - **Open Garden Planner runtime/tests:** source and licensing were evaluated; the upstream application and test suite were not run.
 
