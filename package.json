@@ -1,0 +1,18 @@
+{
+  "name": "creative-landscaping-design-software",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first, imperial 2D landscape planning prototype",
+  "scripts": {
+    "start": "node scripts/serve.cjs",
+    "test": "node --test tests/core.test.cjs",
+    "test:browser": "node tests/browser.cjs",
+    "check": "node --check core.js && node --check app.js && npm test",
+    "format": "prettier --write \"*.{js,css,html,json,md}\" \"scripts/*.cjs\" \"tests/*.cjs\" \"docs/*.md\" \".github/workflows/*.yml\"",
+    "format:check": "prettier --check \"*.{js,css,html,json,md}\" \"scripts/*.cjs\" \"tests/*.cjs\" \"docs/*.md\" \".github/workflows/*.yml\""
+  },
+  "devDependencies": {
+    "playwright": "1.61.1",
+    "prettier": "3.8.3"
+  }
+}
