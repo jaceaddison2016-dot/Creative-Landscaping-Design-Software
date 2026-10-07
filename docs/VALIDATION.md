@@ -4,13 +4,13 @@ Executed October 7, 2026 in the Linux cloud environment. Node.js v24.19.0, npm 1
 
 ## Completed
 
-| Check                                                                        | Result                                                                         |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `npm ci --cache /tmp/creative-npm-cache --no-audit --no-fund`                | Passed using committed lockfile; repeated installation completed               |
-| `npm run check`                                                              | JavaScript syntax checks passed; **12 unit tests passed, 0 failed, 0 skipped** |
-| `npm run format:check`                                                       | Passed                                                                         |
-| `TEST_HTTP_ONLY=1 BROWSER_EXECUTABLE=/usr/bin/chromium npm run test:browser` | Passed all nine functional groups; no browser page errors                      |
-| `git diff --check`                                                           | Passed                                                                         |
+| Check                                                                        | Result                                                                                                                                       |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm ci --cache /tmp/creative-npm-cache --no-audit --no-fund`                | Passed using committed lockfile; repeated installation completed                                                                             |
+| `npm run check`                                                              | JavaScript syntax checks passed; **12 unit tests passed, 0 failed, 0 skipped**                                                               |
+| `npm run format:check`                                                       | Passed                                                                                                                                       |
+| `TEST_HTTP_ONLY=1 BROWSER_EXECUTABLE=/usr/bin/chromium npm run test:browser` | Passed all nine functional groups; no browser page errors                                                                                    |
+| `git diff --check origin/main -- . ':(exclude)docs/licenses/**'`             | Passed for application code and documentation; original third-party license files are retained verbatim, including their upstream whitespace |
 
 The browser workflow exercised:
 
