@@ -94,8 +94,13 @@ jobs:
           New-Item -ItemType Directory -Force dist/download | Out-Null
           Copy-Item dist/OpenGardenPlanner-v1.29.5-Setup.exe dist/download/
           python -c "import shutil; shutil.make_archive('dist/download/OpenGardenPlanner-v1.29.5-Windows-x64-Portable', 'zip', 'dist', 'OpenGardenPlanner')"
+          if ($LASTEXITCODE -ne 0) { throw 'Portable archive failed' }
           git archive --format=zip --output=dist/download/CreativeLandscapeStudio-Source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Application source archive failed' }
           python -c "import shutil; shutil.make_archive('dist/download/PyQt-Binding-Sources', 'zip', 'dist', 'binding-sources')"
+          if ($LASTEXITCODE -ne 0) { throw 'Binding source archive failed' }
+          python scripts/verify_desktop_download.py dist/download
+          if ($LASTEXITCODE -ne 0) { throw 'Download integrity validation failed' }
           Copy-Item docs/WINDOWS_DOWNLOAD.md dist/download/START-HERE.md
           Copy-Item THIRD_PARTY_NOTICES.md dist/download/
           Copy-Item build-dependencies.json dist/download/

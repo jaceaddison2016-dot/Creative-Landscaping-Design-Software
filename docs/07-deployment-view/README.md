@@ -1,5 +1,19 @@
 # 7. Deployment View
 
+## Creative Landscape Studio fork — current deployment
+
+This fork uses `.github/workflows/windows-prototype.yml` to build and test Windows
+x64 **Actions artifacts**, including installer, portable bundle, source and notices.
+See [trying the download](../WINDOWS_DOWNLOAD.md), [rebuilding](../WINDOWS_BUILD.md),
+and [platform evidence](../../PLATFORM_STATUS.md). Artifacts expire after 90 days.
+The inherited `release.yml` job is restricted to `cofade/open-garden-planner`;
+merging into this fork does **not** create a tag or production release. Its draft
+PR requires owner manual testing. macOS packages and signing remain unverified.
+
+The remaining sections below describe the **inherited upstream deployment**.
+Their automatic release/merge/version instructions apply to upstream, not to
+Creative Landscape Studio. Preserve them as the upstream build reference.
+
 ## 7.1 Distribution Strategy
 
 Open Garden Planner is distributed as:

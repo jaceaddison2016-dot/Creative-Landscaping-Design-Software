@@ -57,6 +57,38 @@ project serializer (`FILE_VERSION = "1.4"`), including legacy/additive loading.
 The Python package/module name stays `open_garden_planner` to avoid needless
 serialization, resource and packaging churn.
 
+## Updating this snapshot safely
+
+1. Create a feature branch from the current fork and preserve local edits. Clone
+   upstream into a separate temporary directory; use an ordinary clone, not a Git
+   worktree. Fetch tags/history needed to compare the recorded baseline above to
+   the proposed new commit. Read the new release notes, AGENTS/skills, dependency
+   pins and license/provenance changes before choosing the candidate.
+2. Compare the two upstream trees and inspect the behavioral delta. Generate a
+   binary patch from **old upstream to new upstream**, rather than copying a new
+   snapshot over the customized fork. Apply with Git's three-way support on the
+   feature branch and resolve conflicts deliberately. Handle the upstream README
+   separately in `docs/upstream/README.md`; retain this fork's root README. Preserve
+   fork workflows, release repository restriction, notices and owner plan records.
+3. Use the original import commit plus fork commit history to distinguish inherited
+   changes from customization. Review command/serialization/unit/security changes
+   and resource additions carefully. Re-read new agent instructions and keep both
+   context libraries synchronized. Do not invent compatibility or change Qt/Qt3D
+   micro pins independently to bypass a failed import.
+4. Record the new upstream URL/tag/SHA/tree, comparison range, selected rationale
+   and update commit in this document. Refresh the constraints and third-party
+   inventory against an actual installation; preserve new data/asset attribution.
+   Review any dependency licensing or source-distribution changes before shipping.
+5. Repeat full pytest, lint, security, context/citation/secret gates, real source
+   smoke, and native packaged subsystem/startup/save/export checks. Regenerate
+   source/binding archives and verify download integrity at the new build commit.
+   Mac source probes do not replace Mac package QA. Obtain independent senior
+   review and keep the update PR draft until owner manual testing passes.
+
+No direct snapshot replacement, automatic upstream merge, manual tag, production
+release or reset of owner work is part of this update procedure. Source snapshots
+share blob/tree identity with upstream but do not supply upstream merge ancestry.
+
 This is a precision garden editor, not a validated replacement for professional
 Land F/X workflows. The large application/controller surface, fast upstream
 changes, Qt3D/runtime ABI pins, dynamic frozen MCP dependencies, optional online
