@@ -1,0 +1,44 @@
+name: macOS dependency investigation
+
+on:
+  push:
+    branches: ['feature/milestone-a-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    name: Probe ${{ matrix.runner }} dependency support
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve existing dependencies without altering Qt pins
+        continue-on-error: true
+        id: install
+        run: |
+          set -o pipefail
+          uname -m > platform.txt
+          python -m pip install --only-binary=:all: -e '.[dev]' 2>&1 | tee macos-dependencies.log
+      - name: Exercise source subsystems if installation succeeded
+        if: steps.install.outcome == 'success'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m open_garden_planner --selftest
+      - name: Preserve support investigation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.runner }}-dependency-evidence
+          path: |
+            macos-dependencies.log
+            platform.txt
