@@ -118,6 +118,8 @@ def exercise_window(app, window, output: Path) -> dict:
     patios = [item for item in window.canvas_scene.items() if isinstance(item, RectangleItem)]
     require(len(patios) == 1, "Typed drawing did not create one rectangle")
     patio = patios[0]
+    require(close_to(patio.rect().x(), 304.8) and close_to(patio.rect().y(), 304.8),
+            "Typed 10-foot origin is wrong")
     require(close_to(patio.rect().width(), 609.6), "20-foot drawn width is wrong")
     require(close_to(patio.rect().height(), 365.76), "12-foot drawn height is wrong")
 
@@ -159,6 +161,8 @@ def exercise_window(app, window, output: Path) -> dict:
     require(project.is_file() and not window._project_manager.is_dirty, "Project save failed")
     window._load_project_file(str(project))
     patio = next(item for item in window.canvas_scene.items() if getattr(item, "item_id", None) == patio_id)
+    require(close_to(patio.rect().x(), 304.8) and close_to(patio.rect().y(), 304.8),
+            "Reopen lost typed physical origin")
     require(close_to(patio.rect().width(), 321.31), "Reopen lost fractional inch geometry")
     require(window.canvas_scene.display_units == IMPERIAL, "Reopen lost project units")
     patio.setSelected(True)

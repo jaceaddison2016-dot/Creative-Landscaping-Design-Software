@@ -36,6 +36,11 @@ editable sample in the download. The runner uses Michigan's time zone for that
 sample; this does not alter an end user's computer. The opt-in
 `--prototype-check OUTPUT` accepts no client project or additional arguments.
 
+The probe checks typed physical origin against the item's geometry as well as
+its dimensions. The inherited Properties position fields use the rendered
+bounding box (including padding), so they can differ from a rectangle corner
+without any coordinate snapping or save drift.
+
 The constraints record the validated Python 3.12 baseline. Windows-specific
 transitives and exact downloaded wheels/hashes are recorded by pip's
 `build-dependencies.json` report in each artifact. To relink with modified Qt,
