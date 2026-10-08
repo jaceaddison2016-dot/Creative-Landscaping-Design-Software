@@ -1031,3 +1031,8 @@ Independent desktop probes found six gaps missed by the initial 7,669-test suite
 ### DXF conversion-factor precision (2026-10-08)
 
 A declared-unit default can still be corrupted by a numeric widget: the retained factor editor clamped kilometer factors from 100000 to 10000 and micron factors from 0.0001 to 0.001. Its compact formatter now preserves the canonical factor until a real user edit, with the range/precision needed by declared DXF units. Explicit standard and US survey conversion factors also avoid ezdxf's unsupported-unit fallback. All 24 declared units have dialog/service/override regressions; unknown and unitless files continue to need user-confirmed scaling when their physical meaning is absent.
+
+
+### Default physical editor precision (2026-10-08)
+
+LengthSpinBox now establishes canonical numeric precision in its constructor; caller formatting choices cannot leave soil/container-height controls at Qt's two-decimal storage default. Regressions preserve 6¼-inch initialization and one-inch steps in the actual metadata controls.

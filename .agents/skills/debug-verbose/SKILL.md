@@ -1747,3 +1747,13 @@ as new component strings. See the risk-log entry and
 **Root cause:** correct service conversion still traversed a bounded rounded QDoubleSpinBox; unsupported library conversions were mistaken for unitless input.
 **Fix:** preserve the canonical declared factor independently of compact display, allow the full declared DXF factor range with 15 decimal storage, keep untouched rounded text from firing an edit, and explicitly cover microinches/mils and US survey foot/inch/yard/mile (one survey foot = 1200/3937 m). Explicit user changes remain authoritative. Twenty-four declared-unit cases exercise dialog completion, untouched interpretation, physical import and an actual edited override.
 **Lesson:** inspect the editor's numeric storage range/precision, not merely the formatter. Unknown units and known-but-unsupported units must not share a fallback by accident. Temporary diagnostics remain only in ignored local evidence.
+
+
+## Case study: canonical precision must be a constructor invariant (2026-10-08)
+
+**Symptom:** an imperial soil/container-height editor initialized at 15.875 cm (6¼ inches) held 15.88 cm; inch stepping accumulated that rounding.
+**Wrong theory:** overriding setDecimals covered every editor, since the geometry fields call it explicitly.
+**Key evidence:** the independent default-constructor probe measured 15.875 → 15.88. Actual soil-depth and container-height construction never called setDecimals, unlike geometry controls.
+**Root cause:** QDoubleSpinBox's two-decimal constructor default remained until callers changed it.
+**Fix:** initialize the canonical 15-decimal precision in LengthSpinBox.__init__, with a separate two-decimal metric presentation default. Three regressions cover constructor/untouched interpretation/unit switch/inch step and actual soil/container-height metadata updates; the 51-test workflow passed in 25.71 s.
+**Lesson:** enforce canonical numeric storage in the adapter constructor, so correctness does not depend on each caller's formatting choices. No production instrumentation remains.

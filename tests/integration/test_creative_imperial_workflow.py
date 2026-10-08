@@ -51,6 +51,38 @@ def test_unit_switch_refreshes_live_annotations_and_selection(window):
     assert "ft²" in window.selection_label.text()
 
 
+def test_default_length_editor_initialization_and_inch_step_preserve_precision(window, qtbot):
+    spin = LengthSpinBox(unit_source=window)
+    qtbot.addWidget(spin)
+    spin.setRange(1, 200)
+    spin.setValue(15.875)  # 6 1/4 inches
+    assert spin.value() == 15.875
+    spin.interpretText()
+    assert spin.value() == 15.875
+    spin.stepBy(1)
+    assert spin.value() == 18.415  # plus exactly one inch
+    spin.set_display_units(METRIC)
+    spin.interpretText()
+    assert spin.value() == 18.415
+
+
+@pytest.mark.parametrize(("kind", "key"), [
+    (ObjectType.GARDEN_BED, "soil_depth_cm"),
+    (ObjectType.CONTAINER, "container_height_cm"),
+])
+def test_fractional_soil_and_container_height_survive_initialization_and_inch_steps(window, kind, key):
+    item = RectangleItem(100, 100, 304.8, 304.8, object_type=kind, metadata={key: 15.875})
+    window.canvas_scene.addItem(item)
+    item.setSelected(True)
+    window.properties_panel.set_selected_items([item])
+    fields = [field for field in window.properties_panel.findChildren(LengthSpinBox)
+              if field.value() == 15.875]
+    assert fields
+    field = next(field for field in fields if field.maximum() <= 500)
+    field.stepBy(1)
+    assert item.metadata[key] == 18.415
+
+
 @pytest.mark.parametrize("kind", [CircleItem, PolygonItem, PolylineItem])
 def test_unit_switch_refreshes_other_live_shape_annotations(window, kind):
     if kind is CircleItem:

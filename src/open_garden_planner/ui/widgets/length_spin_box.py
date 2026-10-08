@@ -44,6 +44,8 @@ class LengthSpinBox(QDoubleSpinBox):
         self._unit_source = unit_source if unit_source is not None else parent
         self._display_units = widget_units(self._unit_source)
         super().__init__(parent)
+        self._requested_decimals = 2
+        super().setDecimals(15)
         self.setKeyboardTracking(False)
 
     def setDecimals(self, decimals: int) -> None:  # noqa: N802
