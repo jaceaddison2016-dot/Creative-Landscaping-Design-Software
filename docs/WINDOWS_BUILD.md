@@ -12,10 +12,12 @@ python -m venv .venv
 .venv/Scripts/python installer/build_installer.py --version 1.29.5 --skip-nsis
 .venv/Scripts/python scripts/collect_desktop_notices.py --output dist/OpenGardenPlanner/licenses --binding-sources dist/binding-sources
 .venv/Scripts/python installer/build_installer.py --version 1.29.5 --skip-pyinstaller
-$p = Start-Process dist/OpenGardenPlanner/OpenGardenPlanner.exe -ArgumentList '--selftest' -Wait -PassThru
-if ($p.ExitCode -ne 0) { throw 'Frozen self-test failed' }
 .venv/Scripts/python scripts/desktop_baseline_smoke.py --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-smoke
 ```
+
+For the required frozen subsystem check, use `ogp-change-control` section 2.8.
+The Windows workflow executes that check through `scripts/verify_windows_selftest.ps1`
+for both the portable and installed executable, and rejects nonzero child exit codes.
 
 The operational smoke script expects an isolated account with default API settings
 and refuses an occupied port. It creates synthetic plans, invokes inherited

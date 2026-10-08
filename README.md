@@ -1,181 +1,69 @@
-![Open Garden Planner Banner](src/open_garden_planner/resources/icons/banner.png)
+# Creative Landscape Studio
 
-# Open Garden Planner
+A desktop landscape planning prototype based on the actual
+[Open Garden Planner](https://github.com/cofade/open-garden-planner) editor.
+This branch implements **Milestone A** of the owner's [master plan](MASTER_PLAN.md):
+validate the inherited desktop foundation before changing units or redesigning it.
 
-[![Latest Release](https://img.shields.io/github/v/release/cofade/open-garden-planner?label=Latest%20Release)](https://github.com/cofade/open-garden-planner/releases/latest)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+## Try it on Windows
 
-**Precision garden planning for passionate gardeners who value independence and transparency.**
+The first deliverable is a **Windows x64 test download** with an installer and a
+portable ZIP. Follow [the simple download instructions](docs/WINDOWS_DOWNLOAD.md)
+from the draft pull request's successful Windows Actions run. No coding or Python
+installation is needed. These unsigned test artifacts are retained for 90 days.
 
-Open Garden Planner is an open-source desktop application that combines CAD-like metric accuracy with garden-specific features. Plan your garden with centimeter precision, track plants with rich metadata, and export to standard formats - all without subscription fees or vendor lock-in.
+The window and installer still say **Open Garden Planner**. The inherited editor
+provides drawing, plant placement, layers, undo/redo, `.ogp` save/load, autosave,
+exports, and date/time sun and shade controls. **Units are metric in this milestone.**
+Feet and inches and a simpler landscape workflow are the next stage.
+There is no verified Mac download. See [platform evidence](PLATFORM_STATUS.md).
 
-## Why Open Garden Planner?
+Use [the five-minute checklist](docs/WINDOWS_DOWNLOAD.md#five-minute-check) and
+report results in the draft pull request. It stays a draft until you confirm
+desktop testing.
 
-Existing tools are either:
-- **Expensive commercial software** with subscription fees and proprietary formats
-- **Visual-only planners** that lack metric precision
-- **General CAD tools** that require steep learning curves and lack garden features
+## Project records
 
-Open Garden Planner fills the gap: **engineering-grade precision meets gardener-friendly workflows**.
+- [Upstream assessment and exact provenance](UPSTREAM_PROVENANCE.md)
+- [Feature reuse matrix](FEATURE_REUSE_MATRIX.md) and [roadmap](ROADMAP.md)
+- [Validation and remaining checks](VALIDATION.md)
+- [License and asset/data attribution](THIRD_PARTY_NOTICES.md)
+- [Windows rebuild instructions](docs/WINDOWS_BUILD.md)
+- [Original upstream README](docs/upstream/README.md) and [architecture docs](docs/README.md)
 
-## Features
+The full source remains in `src/open_garden_planner`, with upstream tests and
+resources. The older browser experiment remains in draft PR #1 on its separate
+branch; its `.clp` projects are unrelated to `.ogp`.
 
-- **Metric Accuracy**: Plan with centimeter-level precision on a calibrated canvas
-- **Image Calibration**: Import satellite imagery and calibrate to real-world scale
-- **Rich Plant Metadata**: Track species, varieties, planting dates, and growing requirements
-- **Online Plant Database**: Search Trefle.io, Perenual, and Permapeople for plant data
-- **Object Library**: Property structures, garden beds, containers, trellises, plants, paths, fences
-- **CAD Precision Tools**: Relative/polar coordinate input, snapping (midpoint, intersection, tangent, perpendicular), Bezier/arc drawing, fillet/chamfer
-- **Smart Symbols**: Reusable parametric blocks (raised beds, pergolas, greenhouses) that regenerate on parameter edit
-- **Layers**: Organize objects into manageable layers with visibility/lock controls
-- **Standard Formats**: JSON project files (.ogp), PNG/SVG/PDF/DXF export, CSV plant lists
-- **Garden Smart Features**: Harvest tracking, task management & reminders, succession planting, soil health tracking
-- **AI Agent Integration**: Embedded MCP server exposes the live plan for reading, visualization, export, and optional token-gated editing (including stable low-level geometry)
-- **Modern UI**: Clean interface with light and dark modes, keyboard shortcuts
-- **Auto-Save**: Periodic auto-save with crash recovery
+## Development in the cloud
 
-## Installation
-
-### Windows Installer (recommended)
-
-Download the latest installer from the [Releases](https://github.com/cofade/open-garden-planner/releases) page:
-
-> **[Download Latest Installer](https://github.com/cofade/open-garden-planner/releases/latest)**
-
-Run the installer and follow the wizard. It will:
-- Install to `C:\Program Files (x86)\Open Garden Planner` (configurable)
-- Create Start Menu and optional desktop shortcuts
-- Optionally associate `.ogp` files so you can double-click to open them
-- Register in Add/Remove Programs for clean uninstallation
-
-**System requirements:** Windows 10+ (64-bit), 4 GB RAM, 200 MB disk space.
-
-#### Verify your download
-
-Each release includes a `SHA256SUMS.txt` file. To verify the installer integrity:
-
-```powershell
-# PowerShell — replace <version> with the actual version you downloaded
-(Get-FileHash .\OpenGardenPlanner-<version>-Setup.exe -Algorithm SHA256).Hash
-```
-
-Compare the output with the hash in `SHA256SUMS.txt` from the release page.
-
-From the next release onward, every release also carries a **build
-provenance attestation** — a cryptographic, GitHub-native proof (no paid
-certificate involved) that a release artifact was built by this project's
-public CI from a specific, inspectable commit of the public source, not
-tampered with or built anywhere else. Verify it with the
-[GitHub CLI](https://cli.github.com/):
+Use Python 3.12 and the supported pyproject editable install.
+Do not use the inherited, outdated requirements files.
 
 ```bash
-gh attestation verify OpenGardenPlanner-<version>-Setup.exe -R cofade/open-garden-planner --signer-workflow cofade/open-garden-planner/.github/workflows/release.yml
+UV_CACHE_DIR=/tmp/creative-uv-cache uv venv --allow-existing --python python3 .venv
+UV_CACHE_DIR=/tmp/creative-uv-cache uv pip install --python .venv/bin/python -c installer/constraints-desktop.txt -e '.[dev]' pyinstaller
+mkdir -p build/cloud-state/config build/cloud-state/data build/cloud-state/cache
+export XDG_CONFIG_HOME="$PWD/build/cloud-state/config"
+export XDG_DATA_HOME="$PWD/build/cloud-state/data"
+export XDG_CACHE_HOME="$PWD/build/cloud-state/cache"
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m open_garden_planner --selftest
+QT_QPA_PLATFORM=offscreen .venv/bin/python scripts/desktop_baseline_smoke.py --output build/source-smoke
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m ruff check src/ tests/ scripts/
+.venv/bin/python -m bandit -r src/ --severity-level high
+.venv/bin/python scripts/check_agent_context.py
+.venv/bin/python scripts/check_no_secrets.py
 ```
 
-The same command works against the **installed app exe** too — `C:\Program Files (x86)\Open Garden Planner\OpenGardenPlanner.exe` — which is the exact file Windows Defender has been reported flagging (issue #356); it is attested separately from the installer, not just implied by it. `--signer-workflow` pins the check to *this repo's own* release workflow, not merely "any workflow in this repository" (the plain `-R` form is still valid, just slightly less specific).
-
-**Why Windows may warn anyway:** the installer is not Authenticode-signed
-(see `docs/11-risks-and-technical-debt` §11.1/§11.2) — that costs a paid
-certificate this free/open-source project doesn't currently budget for. An
-unsigned, low-download-volume executable is exactly the profile Windows
-SmartScreen, Defender's ML heuristics (e.g. `Wacatac.B/C!ml`), and Norton's
-file-reputation engine (e.g. `FileRepMalware[Misc]`, issue #358) are prone to
-flag, which is a known false-positive pattern for PyInstaller-built apps in
-general, not something specific to this project. That's a real warning worth
-taking seriously, not something to click through blindly — verify the
-checksum and/or the attestation above first. If you've verified the file and
-still see a warning, please also report it as a false positive:
-[Microsoft's file submission](https://www.microsoft.com/en-us/wdsi/filesubmission)
-(or the [URL submission form](https://www.microsoft.com/en-us/wdsi/AppRepSubmission)
-for the release link) for Defender/SmartScreen, or the
-[Norton false-positive portal](https://submissions.norton.com/reportfalsepositive)
-(File tab) for Norton — every report helps the app build reputation faster.
-
-### Install from source
-
-Requires Python 3.11+ and Git.
-
-```bash
-git clone https://github.com/cofade/open-garden-planner.git
-cd open-garden-planner
-python -m venv venv
-venv\Scripts\activate     # Windows
-# source venv/bin/activate  # Linux/Mac
-pip install -e .
-python -m open_garden_planner
-```
-
-### Build the installer yourself
-
-If you prefer to build the installer from source:
-
-```bash
-git clone https://github.com/cofade/open-garden-planner.git
-cd open-garden-planner
-python -m venv venv
-venv\Scripts\activate
-pip install -e .
-pip install pyinstaller
-
-# Build PyInstaller bundle + NSIS installer (requires NSIS: https://nsis.sourceforge.io/)
-python installer/build_installer.py
-```
-
-The installer will be created in the `dist\` directory.
-
-### Plant Database (optional)
-
-To enable online plant search, see the [Plant API Setup Guide](docs/03-context-and-scope/PLANT_API_SETUP.md).
-
-## Tech Stack
-
-- **Python 3.11+** with **PyQt6** for desktop UI
-- **QGraphicsView** for hardware-accelerated 2D canvas
-- **Trefle.io / Perenual / Permapeople** APIs for plant species data
-- **pytest + pytest-qt** for testing
-
-## Status
-
-**Core 2D, 3D, and visual-refresh phases shipped** — CAD precision tooling and garden
-smart features are complete; the embedded AI Agent Integration's read/export and
-token-gated D1/D2 tool surfaces are live, with D3 domain intelligence next. See the
-[Development Roadmap](docs/roadmap.md) for the authoritative, up-to-date phase/user-story
-table and current version.
-
-## Documentation
-
-Project documentation follows the [arc42](https://arc42.org/) architecture template:
-
-| Document | Description |
-|----------|-------------|
-| [Introduction & Goals](docs/01-introduction-and-goals/) | Product vision, target users |
-| [Functional Requirements](docs/functional-requirements.md) | Detailed requirements specification |
-| [Solution Strategy](docs/04-solution-strategy/) | Technology choices and design decisions |
-| [Building Block View](docs/05-building-block-view/) | Architecture and module structure |
-| [Development Roadmap](docs/roadmap.md) | Phases, user stories, progress tracking |
-| [All Documentation](docs/01-introduction-and-goals/prd.md) | Documentation index |
-
-## Community
-
-- **[GitHub Discussions](https://github.com/cofade/open-garden-planner/discussions)** — questions, ideas, feature requests, and general chat
-- **[Issue Tracker](https://github.com/cofade/open-garden-planner/issues)** — bug reports and confirmed tasks; this is the authoritative list of open work
-- **[Roadmap](docs/roadmap.md)** — phases, user stories, and what is planned next
-
-## Contributing
-
-We welcome contributions! This project aims to be technically clean and attractive for both users and contributors.
-
-- Read the [Roadmap](docs/roadmap.md) and [Architecture](docs/05-building-block-view/) to understand the vision
-- Browse the **[Issue Tracker](https://github.com/cofade/open-garden-planner/issues)** for ready-to-pick work items — anything open and unassigned is fair game
-- Join **[GitHub Discussions](https://github.com/cofade/open-garden-planner/discussions)** if you have questions or ideas before opening a PR
-- PRs must pass CI (tests, linting, security scan); type checking is not yet a CI gate (#401)
-
-**AI-assisted development is welcome.** Feel free to use Claude Code, GitHub Copilot, Cursor, or other AI-powered coding tools. We care about the quality of the result, not how you got there. Just ensure every contribution includes proper tests - unit tests, integration tests, and UI tests where applicable.
+The offscreen smoke checks real application behavior through inherited loopback
+MCP, using synthetic plans and editing disabled. Use an isolated development
+account with no other app on port 8765. It cannot establish human usability or GPU
+rendering. Processes must restart in each cloud task.
 
 ## License
 
-[GPLv3](LICENSE) - Free software, free forever.
-
----
-
-*Built with passion for gardeners who demand precision.*
+Open Garden Planner is copyright its upstream contributors. This derived
+application remains **GPL-3.0-or-later**; see [LICENSE](LICENSE).
+Data and dependencies keep their respective licenses and notices.
+This project has no Land F/X affiliation and claims no professional feature parity.

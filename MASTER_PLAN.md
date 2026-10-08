@@ -196,3 +196,5 @@ The prior baseline was inspected locally; Codex must recheck the selected revisi
 • Dependencies/license declaration: https://github.com/cofade/open-garden-planner/blob/cb4a71db8649cc4e48f85f0bef671bb0ac58dd16/pyproject.toml
 • Upstream roadmap: https://github.com/cofade/open-garden-planner/blob/cb4a71db8649cc4e48f85f0bef671bb0ac58dd16/docs/roadmap.md
 • Existing browser prototype review: https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/pull/1
+
+Implementation steering received after this plan: prioritize a Windows download. Milestone A retains the desktop editor and metric baseline; Windows x64 test artifacts are immediate, Mac bundles/signing remain later work. No Mac hardware selected.

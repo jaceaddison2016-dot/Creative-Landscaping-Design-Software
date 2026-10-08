@@ -220,6 +220,11 @@ class TestDetectClients:
         (appdata / "Claude").mkdir(parents=True)
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setenv("APPDATA", str(appdata))
+        # This test simulates configuration discovery, not Windows executable
+        # lookup. Python 3.12 shutil.which consults _winapi when platform is
+        # mocked; that module does not exist on the Linux test host.
+        monkeypatch.setattr(onboarding.shutil, "which", lambda _cmd: None)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         clients = {c.client_id: c for c in onboarding.detect_clients()}
 

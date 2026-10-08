@@ -3,6 +3,10 @@ name: macOS dependency investigation
 on:
   push:
     branches: ['feature/milestone-a-*']
+    paths:
+      - 'src/**'
+      - 'pyproject.toml'
+      - '.github/workflows/macos-probe.yml'
   workflow_dispatch:
 
 permissions:

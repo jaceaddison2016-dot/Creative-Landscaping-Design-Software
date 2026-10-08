@@ -3,8 +3,26 @@ name: Windows prototype download
 on:
   push:
     branches: [main, 'feature/milestone-a-*']
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'installer/**'
+      - 'pyproject.toml'
+      - '.github/workflows/**'
+      - 'docs/WINDOWS*.md'
+      - 'THIRD_PARTY_NOTICES.md'
   pull_request:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'installer/**'
+      - 'pyproject.toml'
+      - '.github/workflows/**'
+      - 'docs/WINDOWS*.md'
+      - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
 
 permissions:
@@ -52,8 +70,7 @@ jobs:
       - name: Verify frozen subsystems without inherited console handles
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist/OpenGardenPlanner/OpenGardenPlanner.exe" -ArgumentList "--selftest" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Frozen self-test failed: $($p.ExitCode)" }
+          ./scripts/verify_windows_selftest.ps1 -Executable "dist/OpenGardenPlanner/OpenGardenPlanner.exe"
       - name: Exercise portable application startup, save, reopen and real exports
         run: >-
           python scripts/desktop_baseline_smoke.py
@@ -66,11 +83,10 @@ jobs:
           $installDir = Join-Path $env:RUNNER_TEMP "CreativeLandscapeBaseline"
           $p = Start-Process -FilePath "dist/OpenGardenPlanner-v1.29.5-Setup.exe" -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Installer failed: $($p.ExitCode)" }
-          $exe = Join-Path $installDir "OpenGardenPlanner.exe"
+          $installedAppPath = Join-Path $installDir "OpenGardenPlanner.exe"
           if (-not (Test-Path (Join-Path $installDir "licenses/GPL-3.0.txt"))) { throw 'Installed license is missing' }
-          $p = Start-Process -FilePath $exe -ArgumentList "--selftest" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "Installed self-test failed: $($p.ExitCode)" }
-          python scripts/desktop_baseline_smoke.py --exe "$exe" --output build/windows-installed-smoke
+          ./scripts/verify_windows_selftest.ps1 -Executable $installedAppPath
+          python scripts/desktop_baseline_smoke.py --exe "$installedAppPath" --output build/windows-installed-smoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Assemble download with source, notices, build evidence and checksums
         shell: pwsh
