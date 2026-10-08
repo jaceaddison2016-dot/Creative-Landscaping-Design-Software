@@ -30,10 +30,12 @@ def run_check(executable: Path | None, output: Path, sample: Path | None = None)
         env.pop("QT_QPA_PLATFORM", None)
     command += ["--prototype-check", str(output)]
     # Frozen Windows GUI mode has no console handles, like Explorer launch.
-    # Source mode retains a log for diagnosis; neither mode inherits stdin.
+    # All three streams must be None in frozen mode: on Windows, mixing
+    # stdin=DEVNULL with stdout/stderr=None duplicates the parent's handles.
+    # Source mode retains a log for diagnosis and has no interactive stdin.
     with (output / "source-process.log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
-            command, cwd=output, env=env, stdin=subprocess.DEVNULL,
+            command, cwd=output, env=env, stdin=None if executable else subprocess.DEVNULL,
             stdout=None if executable else log, stderr=None if executable else log,
             close_fds=True,
             creationflags=subprocess.DETACHED_PROCESS if executable and os.name == "nt" else 0,
@@ -50,7 +52,8 @@ def run_check(executable: Path | None, output: Path, sample: Path | None = None)
     if code != 0 or report.get("run_id") != run_id or report.get("status") != "PASS":
         raise RuntimeError(f"Application workflow failed (exit {code}): {report}")
     if executable and (not report.get("frozen") or report.get("os") != "nt"
-                       or report.get("platform_plugin") != "windows"):
+                       or report.get("platform_plugin") != "windows"
+                       or report.get("native_standard_handles_inherited", True)):
         raise RuntimeError(f"Expected frozen native Windows application: {report}")
     for name in ("imperial-roundtrip.ogp", "physical.png", "physical.pdf", "physical.dxf",
                  "physical.csv", "editor.png", "sun-study.png", "welcome.png",

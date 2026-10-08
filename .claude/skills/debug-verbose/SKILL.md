@@ -1757,3 +1757,33 @@ as new component strings. See the risk-log entry and
 **Root cause:** QDoubleSpinBox's two-decimal constructor default remained until callers changed it.
 **Fix:** initialize the canonical 15-decimal precision in LengthSpinBox.__init__, with a separate two-decimal metric presentation default. Three regressions cover constructor/untouched interpretation/unit switch/inch step and actual soil/container-height metadata updates; the 51-test workflow passed in 25.71 s.
 **Lesson:** enforce canonical numeric storage in the adapter constructor, so correctness does not depend on each caller's formatting choices. No production instrumentation remains.
+
+
+## Case study: Windows QA launch inherited CI console handles (Creative packaging)
+
+**Symptom:** Independent review found that a detached packaged GUI QA child could still receive the Actions runner's console handles, weakening its Explorer-startup evidence.
+
+**Wrong theory:** `DETACHED_PROCESS` and `close_fds=True` alone guarantee no standard-handle inheritance.
+
+**Key evidence:** CPython 3.12's Windows `Popen._get_handles` returns six `-1` values only when stdin/stdout/stderr are all `None`. Mixing `stdin=DEVNULL` with `stdout/stderr=None` duplicates parent handles and sets `STARTF_USESTDHANDLES`.
+
+**Root cause:** The source-mode input redirection was reused for the frozen-mode launch. Inspection of the installed interpreter's Windows implementation confirmed the review evidence before changing the launch.
+
+**Fix:** Keep all three streams `None` for the detached frozen child; preserve source-mode DEVNULL/logs. The actual frozen app calls `GetStdHandle` and rejects inherited handles, and the external driver requires that fresh native result. Fault-injection tests cover the launch contract, stale IDs, nonzero exits, inherited handles and unfrozen reports. Native execution remains a separate required gate.
+
+**Lesson:** Prove the Windows process contract inside the child; detachment and handle inheritance are separate behaviors. No temporary instrumentation is retained.
+
+
+## Case study: QA settings isolation did not protect untitled autosave recovery
+
+**Symptom:** The opt-in Creative diagnostic could discover/delete an existing untitled recovery despite its private QA settings account.
+
+**Wrong theory:** Changing the QSettings/QApplication identity isolates every persistence surface.
+
+**Key evidence:** An independent runtime probe printed QA identity, actual AutoSaveManager path, a new-plan call stack and `sentinel exists before=True / after=False`. A direct-CLI regression reproduced deletion with a synthetic sentinel under isolated TMP/TEMP/TMPDIR.
+
+**Root cause:** Untitled recovery uses `tempfile.gettempdir()/~autosave_untitled.ogp`; the actual `_new_project_document` clears that path. Settings identity cannot retarget Python temporary storage.
+
+**Fix:** The diagnostic retains a fresh TemporaryDirectory and assigns its path to process-local `tempfile.tempdir` before application construction or recovery timers. The normal app's autosave contract is unchanged. A real subprocess regression invokes the flag directly and requires unchanged sentinel bytes.
+
+**Lesson:** Trace each persistence path rather than inferring isolation from settings alone. Test protection of pre-existing data, including direct diagnostic invocation.

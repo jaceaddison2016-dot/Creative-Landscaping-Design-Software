@@ -4,7 +4,8 @@
 
 The Windows workflow freezes the normal app, verifies startup/subsystems and
 launches `--prototype-check` from an output directory outside the checkout.
-The probe uses a private QA settings account, creates QApplication and the real
+The probe uses a private QA settings account and a retained fresh Python temp
+directory so normal-account untitled autosave recovery is untouched. It creates QApplication and the real
 Creative window, then schedules drawing, key/mouse input, undo/redo, save/reopen
 and exports on the Qt event loop. A fresh run ID, process exit and JSON verdict
 must agree. Screenshots come from actual widgets. After silent NSIS installation,

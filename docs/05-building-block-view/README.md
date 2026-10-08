@@ -3,7 +3,8 @@
 ## Creative packaged-workflow diagnostic
 
 `app/packaged_check.py` is an opt-in observer of the real desktop window, entered
-only with `--prototype-check OUTPUT`. It isolates settings before window creation
+only with `--prototype-check OUTPUT`. It isolates settings and Python temporary
+storage before window creation (untitled recovery is otherwise process-wide)
 and schedules QtTest interaction after QApplication and the normal window exist.
 It writes synthetic projects, physical exports, screenshots and a JSON verdict.
 `scripts/run_packaged_creative_check.py` owns the child process, bounds its runtime

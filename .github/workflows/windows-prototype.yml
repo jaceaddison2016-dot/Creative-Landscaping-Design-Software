@@ -65,6 +65,7 @@ jobs:
           tests/integration/test_creative_design_preview.py
           tests/integration/test_creative_imperial_workflow.py
           tests/integration/test_creative_packaged_check.py
+          tests/unit/test_creative_packaged_driver.py
           --junitxml=build/windows-editor-tests.xml -q
       - name: Freeze the actual upstream desktop application
         run: python installer/build_installer.py --version 1.29.5 --skip-nsis

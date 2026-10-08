@@ -1036,3 +1036,13 @@ A declared-unit default can still be corrupted by a numeric widget: the retained
 ### Default physical editor precision (2026-10-08)
 
 LengthSpinBox now establishes canonical numeric precision in its constructor; caller formatting choices cannot leave soil/container-height controls at Qt's two-decimal storage default. Regressions preserve 6¼-inch initialization and one-inch steps in the actual metadata controls.
+
+
+### Creative packaged QA: Windows standard handles
+
+A detached Windows child can inherit explicit standard handles when Popen mixes DEVNULL input and None output streams. CPython then duplicates parent output handles despite close_fds. Frozen QA now uses all three None plus DETACHED_PROCESS, and GetStdHandle inside the actual app verifies absence of inherited handles. Fault injection tests reject stale, failed, inherited-handle and source-only reports. The separate Windows subsystem self-test remains mandatory. See ADR-052 and both debug-verbose skill case studies.
+
+
+### Creative QA: untitled recovery needs separate temp isolation
+
+Private QSettings alone left AutoSaveManager pointing at the shared Python temp untitled-recovery file. A synthetic sentinel was deleted by the diagnostic new-plan path. The opt-in diagnostic now establishes a retained fresh TemporaryDirectory before app construction, so startup recovery and reset cannot inspect or clear normal-account recovery. A direct subprocess test proves the sentinel bytes survive. Normal autosave semantics remain unchanged; see ADR-052.

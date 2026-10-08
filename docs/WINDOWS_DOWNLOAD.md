@@ -49,7 +49,7 @@ company identity text remains a placeholder until an approved logo is supplied.
 The download is uploaded only after the actual portable and installed app pass
 startup, Qt subsystem/server checks and real Qt key/mouse interaction: drawing,
 plant placement, fractional-inch editing, undo/redo, save/reopen, physical
-PNG/PDF/DXF/CSV exports, bundled fonts/icons and live sun/shade. Native screenshots
+PNG/PDF/DXF/CSV exports, font glyphs, bundled icons and live sun/shade. Native screenshots
 and JSON results are in **portable-creative-check** and **installed-creative-check**.
 The older API smoke evidence is in **portable-check** and **installed-check**;
 the source regression results are in **windows-editor-tests.xml**.

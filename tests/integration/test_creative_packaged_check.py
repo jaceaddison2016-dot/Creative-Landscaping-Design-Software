@@ -40,3 +40,23 @@ def test_prototype_check_rejects_extra_project_arguments(tmp_path, qtbot):
     )
     assert result.returncode == 2
     assert not (tmp_path / "result.json").exists()
+
+
+def test_direct_diagnostic_preserves_existing_untitled_recovery(tmp_path, qtbot):
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    recovery = system_temp / "~autosave_untitled.ogp"
+    sentinel = b"synthetic recovery sentinel: never delete another account's work"
+    recovery.write_bytes(sentinel)
+    env = os.environ.copy()
+    env.update({"QT_QPA_PLATFORM": "offscreen", "TMPDIR": str(system_temp),
+                "TEMP": str(system_temp), "TMP": str(system_temp),
+                "XDG_CONFIG_HOME": str(tmp_path / "config"),
+                "XDG_DATA_HOME": str(tmp_path / "data"), "XDG_CACHE_HOME": str(tmp_path / "cache")})
+    result = subprocess.run(
+        [sys.executable, "-m", "open_garden_planner", "--prototype-check", str(tmp_path / "check")],
+        env=env, capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert recovery.exists(), "Diagnostic deleted another account's untitled recovery"
+    assert recovery.read_bytes() == sentinel

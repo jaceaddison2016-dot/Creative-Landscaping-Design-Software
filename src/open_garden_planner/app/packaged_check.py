@@ -12,16 +12,27 @@ import json
 import math
 import os
 import sys
+import tempfile
 import traceback
 from datetime import datetime
 from pathlib import Path
 
+_probe_temp: tempfile.TemporaryDirectory[str] | None = None
+
 
 def configure_probe() -> None:
     """Keep the probe's settings, recents and cache apart from normal accounts."""
+    global _probe_temp
+
     from open_garden_planner.app import settings
     from open_garden_planner.ui.theme import ThemeMode
 
+    # Untitled autosave/recovery uses Python's process-wide temp path rather
+    # than QSettings. Isolate before constructing the app/startup timers, even
+    # when the diagnostic flag is invoked without the external driver.
+    if _probe_temp is None:
+        _probe_temp = tempfile.TemporaryDirectory(prefix="creative-probe-")
+    tempfile.tempdir = _probe_temp.name
     settings.ORGANIZATION_NAME = "Creative Prototype QA"
     settings.APPLICATION_NAME = "Packaged workflow checks"
     settings._settings_instance = None
@@ -98,6 +109,18 @@ def exercise_window(app, window, output: Path) -> dict:
         require(window.canvas_view.viewport().rect().contains(pixel), "Drawing point must be visible")
         QTest.mouseClick(window.canvas_view.viewport(), Qt.MouseButton.LeftButton, pos=pixel)
         QTest.qWait(100)
+
+    inherited_handles = None
+    if os.name == "nt" and getattr(sys, "frozen", False):
+        import ctypes
+        from ctypes import wintypes
+
+        get_std_handle = ctypes.windll.kernel32.GetStdHandle
+        get_std_handle.argtypes = [wintypes.DWORD]
+        get_std_handle.restype = wintypes.HANDLE
+        absent = (None, 0, ctypes.c_void_p(-1).value)
+        inherited_handles = any(get_std_handle(kind) not in absent for kind in (-10, -11, -12))
+        require(not inherited_handles, "Frozen check inherited console handles")
 
     require(isinstance(window, CreativePreviewWindow), "Normal executable must open Creative")
     require("Creative Landscape Studio" in window.windowTitle(), "Creative title missing")
@@ -223,6 +246,7 @@ def exercise_window(app, window, output: Path) -> dict:
     welcome.close()
     return {
         "frozen": bool(getattr(sys, "frozen", False)), "executable": sys.executable,
+        "native_standard_handles_inherited": inherited_handles,
         "os": os.name, "qt": qVersion(), "platform_plugin": app.platformName(),
         "control_font": control_font, "icons": icons,
         "imperial_width_cm": 321.31, "dxf_width_ft": max(xs) - min(xs),

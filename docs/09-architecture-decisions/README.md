@@ -8,11 +8,14 @@ Architecture Decision Records (ADRs) for significant technical choices.
 **Context**: Source/offscreen tests and the inherited MCP smoke cannot establish
 packaged imperial typing, shortcuts, fonts or bundled library interaction.
 **Decision**: Add an opt-in `--prototype-check OUTPUT` to the normal desktop
-entry point. Isolate its QSettings account, schedule QtTest after real window
+entry point. Isolate its QSettings account and Python temp storage before any
+startup recovery timer, schedule QtTest after real window
 creation, validate physical exports and save native widget captures. An external
 driver launches the frozen executable outside the checkout without console
 handles and requires a matching fresh run ID, successful child exit and native
-Windows plugin. Repeat against the NSIS-installed copy before artifact upload.
+Windows plugin and an in-process GetStdHandle check. All three Popen streams
+must be None in frozen mode to avoid CPython duplicating parent handles. Repeat
+against the NSIS-installed copy before artifact upload.
 **Consequences**: QtTest is included in the frozen bundle but unused during normal
 startup. The diagnostic is coupled to the real application's controls and must
 evolve with them. Automated evidence remains distinct from human/GPU testing.

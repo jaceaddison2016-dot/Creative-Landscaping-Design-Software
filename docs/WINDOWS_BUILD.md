@@ -28,9 +28,11 @@ isolate their settings in a separate test organization.
 
 The Creative check launches the actual executable outside the checkout without
 inherited console handles, using a private **Creative Prototype QA** settings
-account. It draws and types through QtTest in the normal Creative window, then
+account and fresh process-local temporary storage, protecting untitled recovery
+files. It draws and types through QtTest in the normal Creative window, then
 validates physical exports and captures screenshots. It requires a fresh run ID,
-exit zero, `frozen=true` and the native `windows` platform plugin. The workflow
+exit zero, `frozen=true`, the native `windows` platform plugin and an in-process
+GetStdHandle check confirming no inherited console handles. The workflow
 repeats it against the installed app and includes its evidence and the approved
 editable sample in the download. The runner uses Michigan's time zone for that
 sample; this does not alter an end user's computer. The opt-in
