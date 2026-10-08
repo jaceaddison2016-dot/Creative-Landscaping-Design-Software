@@ -308,7 +308,7 @@ class PolygonItem(VertexEditMixin, RotationHandleMixin, ResizeHandlesMixin, Gard
         # Use stored fill_pattern and color if available, otherwise use style defaults
         pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
         color = self.fill_color if self.fill_color is not None else style.fill_color
-        brush = create_pattern_brush(pattern, color)
+        brush = create_pattern_brush(pattern, color, getattr(self.scene(), "texture_strength", 1.0))
         self.setBrush(brush)
 
     def _setup_flags(self) -> None:

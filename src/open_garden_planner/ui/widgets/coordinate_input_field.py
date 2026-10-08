@@ -34,6 +34,8 @@ class CoordinateInputField(QLineEdit):
         # Translate via self.tr() inside __init__ so the active QTranslator
         # is honoured even if it was installed after this module's import.
         self.setPlaceholderText(self.tr("@dx,dy   @dist<angle   x,y"))
+        if getattr(buffer.units_source, "display_units", None) is not None and buffer.units_source.display_units.imperial:
+            self.setPlaceholderText('@10ft,0  10ft,5ft')
         self._help_tooltip = self.tr(
             "Typed coordinate input. Examples: @500,0 (relative), "
             "@300<45 (polar, 0deg = east, CCW positive), 1000,500 "

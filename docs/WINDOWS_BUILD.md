@@ -13,6 +13,7 @@ python -m venv .venv
 .venv/Scripts/python scripts/collect_desktop_notices.py --output dist/OpenGardenPlanner/licenses --binding-sources dist/binding-sources
 .venv/Scripts/python installer/build_installer.py --version 1.29.5 --skip-pyinstaller
 .venv/Scripts/python scripts/desktop_baseline_smoke.py --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-smoke
+.venv/Scripts/python scripts/run_packaged_creative_check.py --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-creative --sample "docs/design/creative-preview/revised-light/Southwest Michigan - sample landscape.ogp"
 ```
 
 For the required frozen subsystem check, use `ogp-change-control` section 2.8.
@@ -25,6 +26,23 @@ save/export tools, and stops only the child it starts. Never run it against an
 existing live project. It does not enable editing. Existing pytest fixtures
 isolate their settings in a separate test organization.
 
+The Creative check launches the actual executable outside the checkout without
+inherited console handles, using a private **Creative Prototype QA** settings
+account and fresh process-local temporary storage, protecting untitled recovery
+files. It draws and types through QtTest in the normal Creative window, then
+validates physical exports and captures screenshots. It requires a fresh run ID,
+exit zero, `frozen=true`, the native `windows` platform plugin and an in-process
+GetStdHandle check confirming no inherited console handles. The workflow
+repeats it against the installed app and includes its evidence and the approved
+editable sample in the download. The runner uses Michigan's time zone for that
+sample; this does not alter an end user's computer. The opt-in
+`--prototype-check OUTPUT` accepts no client project or additional arguments.
+
+The probe checks typed physical origin against the item's geometry as well as
+its dimensions. The inherited Properties position fields use the rendered
+bounding box (including padding), so they can differ from a rectangle corner
+without any coordinate snapping or save drift.
+
 The constraints record the validated Python 3.12 baseline. Windows-specific
 transitives and exact downloaded wheels/hashes are recorded by pip's
 `build-dependencies.json` report in each artifact. To relink with modified Qt,
@@ -35,3 +53,16 @@ key restricts rebuilding. Changes must preserve the GPL and dependency notices.
 The inherited upstream automatic release workflow is restricted to the upstream
 repository. This fork's workflow uploads test artifacts only; it creates no tags,
 publishes no production release, and merges no pull requests.
+
+Windows source GUI regressions use the native `windows` Qt plugin. Diagnostic
+runs found that the runner's `offscreen` plugin resolves no system font family
+and rejects even digits, giving invalid glyph and layout evidence. Linux remains
+offscreen. Font and measurement assertions stay intact.
+
+`scripts/record_creative_evidence.py` also records the installed synthetic check's
+four PNG captures and native/build JSON in API-readable GitHub logs, in numbered
+base64 chunks with SHA-256. It validates the successful frozen/native result and
+source SHA before recording. These are the same files preserved in the artifact;
+this review route supports cloud environments whose allowlist excludes Actions'
+Azure storage host. It includes only the known synthetic captures, no arbitrary
+projects or personal files. Reconstructed images must match their digests.

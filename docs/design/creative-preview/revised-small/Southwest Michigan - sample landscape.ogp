@@ -1,0 +1,756 @@
+{
+  "version": "1.4",
+  "metadata": {
+    "modified": "2026-10-08T10:30:58.859030+00:00"
+  },
+  "canvas": {
+    "width": 2438.4,
+    "height": 1828.8
+  },
+  "layers": [
+    {
+      "id": "3c708b75-95fb-4c37-a46e-6a862c6947fb",
+      "name": "Layer 1",
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0,
+      "z_order": 0
+    },
+    {
+      "id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "name": "Structures & hardscape",
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0,
+      "z_order": 1
+    },
+    {
+      "id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "name": "Planting",
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0,
+      "z_order": 2
+    },
+    {
+      "id": "bb7433a5-0967-4bfd-ba8c-68673094038d",
+      "name": "Labels",
+      "visible": true,
+      "locked": false,
+      "opacity": 1.0,
+      "z_order": 3
+    }
+  ],
+  "objects": [
+    {
+      "type": "rectangle",
+      "item_id": "348f660b-6805-4eec-87ad-bdc5d900f19c",
+      "x": 80.0,
+      "y": 80.0,
+      "width": 2240.0,
+      "height": 1640.0,
+      "object_type": "LAWN",
+      "name": "Lawn",
+      "layer_id": "3c708b75-95fb-4c37-a46e-6a862c6947fb",
+      "fill_color": "#60e7edd9",
+      "stroke_color": "#ff3c821e",
+      "stroke_width": 2.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 1024
+    },
+    {
+      "type": "polygon",
+      "item_id": "f6aab2ec-1530-4ebb-bcd2-49f9628a1c30",
+      "points": [
+        {
+          "x": 850.0,
+          "y": 520.0
+        },
+        {
+          "x": 847.0912528670956,
+          "y": 560.3737860147127
+        },
+        {
+          "x": 838.4147809382832,
+          "y": 599.5283803735798
+        },
+        {
+          "x": 824.1190410538375,
+          "y": 636.3014606914326
+        },
+        {
+          "x": 804.4486372867092,
+          "y": 669.6410161513776
+        },
+        {
+          "x": 779.7401356990199,
+          "y": 698.6521617235685
+        },
+        {
+          "x": 750.4163056034262,
+          "y": 722.6345596729059
+        },
+        {
+          "x": 716.9788858629651,
+          "y": 741.1083013185469
+        },
+        {
+          "x": 680.0,
+          "y": 753.8268590217984
+        },
+        {
+          "x": 640.1123670041305,
+          "y": 760.7765637250578
+        },
+        {
+          "x": 597.9984753348571,
+          "y": 762.1629400464857
+        },
+        {
+          "x": 554.3789053548176,
+          "y": 758.3850799200773
+        },
+        {
+          "x": 510.0,
+          "y": 750.0
+        },
+        {
+          "x": 465.62109464518244,
+          "y": 737.6795563118756
+        },
+        {
+          "x": 422.001524665143,
+          "y": 722.1629400464857
+        },
+        {
+          "x": 379.8876329958696,
+          "y": 704.2080212301341
+        },
+        {
+          "x": 340.0000000000001,
+          "y": 684.5448267190433
+        },
+        {
+          "x": 303.02111413703494,
+          "y": 663.8342352154214
+        },
+        {
+          "x": 269.58369439657383,
+          "y": 642.6345596729059
+        },
+        {
+          "x": 240.2598643009801,
+          "y": 621.3780956204431
+        },
+        {
+          "x": 215.5513627132908,
+          "y": 600.3589838486224
+        },
+        {
+          "x": 195.88095894616254,
+          "y": 579.7329181965088
+        },
+        {
+          "x": 181.58521906171683,
+          "y": 559.5283803735798
+        },
+        {
+          "x": 172.90874713290447,
+          "y": 539.6682624065111
+        },
+        {
+          "x": 170.0,
+          "y": 520.0
+        },
+        {
+          "x": 172.90874713290447,
+          "y": 500.3317375934889
+        },
+        {
+          "x": 181.58521906171677,
+          "y": 480.4716196264202
+        },
+        {
+          "x": 195.88095894616248,
+          "y": 460.2670818034913
+        },
+        {
+          "x": 215.5513627132908,
+          "y": 439.6410161513776
+        },
+        {
+          "x": 240.25986430098004,
+          "y": 418.621904379557
+        },
+        {
+          "x": 269.5836943965737,
+          "y": 397.3654403270941
+        },
+        {
+          "x": 303.02111413703494,
+          "y": 376.16576478457876
+        },
+        {
+          "x": 339.9999999999999,
+          "y": 355.4551732809567
+        },
+        {
+          "x": 379.8876329958696,
+          "y": 335.7919787698659
+        },
+        {
+          "x": 422.001524665143,
+          "y": 317.8370599535143
+        },
+        {
+          "x": 465.62109464518244,
+          "y": 302.32044368812444
+        },
+        {
+          "x": 509.99999999999994,
+          "y": 290.0
+        },
+        {
+          "x": 554.3789053548174,
+          "y": 281.6149200799228
+        },
+        {
+          "x": 597.998475334857,
+          "y": 277.8370599535143
+        },
+        {
+          "x": 640.1123670041303,
+          "y": 279.2234362749421
+        },
+        {
+          "x": 680.0,
+          "y": 286.1731409782016
+        },
+        {
+          "x": 716.9788858629647,
+          "y": 298.8916986814531
+        },
+        {
+          "x": 750.416305603426,
+          "y": 317.365440327094
+        },
+        {
+          "x": 779.7401356990199,
+          "y": 341.34783827643145
+        },
+        {
+          "x": 804.4486372867091,
+          "y": 370.3589838486223
+        },
+        {
+          "x": 824.1190410538375,
+          "y": 403.6985393085675
+        },
+        {
+          "x": 838.4147809382832,
+          "y": 440.47161962641997
+        },
+        {
+          "x": 847.0912528670956,
+          "y": 479.6262139852873
+        }
+      ],
+      "object_type": "GARDEN_BED",
+      "name": "Curved planting bed",
+      "layer_id": "3c708b75-95fb-4c37-a46e-6a862c6947fb",
+      "fill_color": "#ff8b5a2b",
+      "stroke_color": "#ff228b22",
+      "stroke_width": 2.5,
+      "fill_pattern": "SOIL",
+      "stroke_style": "SOLID",
+      "stack_order": 2048
+    },
+    {
+      "type": "rectangle",
+      "item_id": "5e94c188-e1c1-43c4-ab2a-0266022b895e",
+      "x": 1680.0,
+      "y": 1210.0,
+      "width": 440.0,
+      "height": 300.0,
+      "object_type": "GARDEN_BED",
+      "name": "Foundation planting",
+      "layer_id": "3c708b75-95fb-4c37-a46e-6a862c6947fb",
+      "fill_color": "#ff8b5a2b",
+      "stroke_color": "#ff228b22",
+      "stroke_width": 2.5,
+      "fill_pattern": "SOIL",
+      "stroke_style": "SOLID",
+      "stack_order": 3072
+    },
+    {
+      "type": "rectangle",
+      "item_id": "34ba28b1-06ec-4ba5-8208-8e719c3b3425",
+      "x": 850.0,
+      "y": 1150.0,
+      "width": 800.0,
+      "height": 500.0,
+      "object_type": "HOUSE",
+      "name": "Residence",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ffd2b48c",
+      "stroke_color": "#ff8b5a2b",
+      "stroke_width": 2.5,
+      "fill_pattern": "ROOF_TILES",
+      "stroke_style": "SOLID",
+      "stack_order": 1024
+    },
+    {
+      "type": "rectangle",
+      "item_id": "40b165ea-820f-4ef8-bc5c-1a84eb9ac4cb",
+      "x": 900.0,
+      "y": 740.0,
+      "width": 609.6,
+      "height": 365.76,
+      "object_type": "TERRACE_PATIO",
+      "name": "Patio",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ffdeb887",
+      "stroke_color": "#ffa0522d",
+      "stroke_width": 2.0,
+      "fill_pattern": "WOOD",
+      "stroke_style": "SOLID",
+      "stack_order": 2048
+    },
+    {
+      "type": "rectangle",
+      "item_id": "60a3e674-c88c-4ff7-b44f-ed1b8c1e0d59",
+      "x": 1580.0,
+      "y": 100.0,
+      "width": 300.0,
+      "height": 640.0,
+      "object_type": "DRIVEWAY",
+      "name": "Driveway",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ff708090",
+      "stroke_color": "#ff2f4f4f",
+      "stroke_width": 2.0,
+      "fill_pattern": "GRAVEL",
+      "stroke_style": "SOLID",
+      "stack_order": 3072
+    },
+    {
+      "type": "rectangle",
+      "item_id": "f8a9fd63-b3a8-4434-9827-f50d16d09ec1",
+      "x": 1240.0,
+      "y": 100.0,
+      "width": 100.0,
+      "height": 640.0,
+      "object_type": "TERRACE_PATIO",
+      "name": "Walk",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ffdeb887",
+      "stroke_color": "#ffa0522d",
+      "stroke_width": 2.0,
+      "fill_pattern": "WOOD",
+      "stroke_style": "SOLID",
+      "stack_order": 4096
+    },
+    {
+      "type": "circle",
+      "item_id": "8a337be0-8335-43f6-9244-ebbb4d7f9592",
+      "center_x": 1260.0,
+      "center_y": 940.0,
+      "radius": 80,
+      "object_type": "TABLE_ROUND",
+      "name": "Table",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ffa07850",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 5120
+    },
+    {
+      "type": "rectangle",
+      "item_id": "40d3b6c7-f9a6-4fce-8989-bf2150a732ba",
+      "x": 980.0,
+      "y": 920.0,
+      "width": 55.0,
+      "height": 55.0,
+      "object_type": "CHAIR",
+      "name": "Chair",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ff8c6946",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 6144
+    },
+    {
+      "type": "rectangle",
+      "item_id": "a4222f55-3dc1-4ad2-954a-c6c4e479333d",
+      "x": 1480.0,
+      "y": 920.0,
+      "width": 55.0,
+      "height": 55.0,
+      "object_type": "CHAIR",
+      "name": "Chair",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ff8c6946",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 7168
+    },
+    {
+      "type": "rectangle",
+      "item_id": "9f604045-94e4-4e1b-9d90-aba95272b342",
+      "x": 1260.0,
+      "y": 1070.0,
+      "width": 55.0,
+      "height": 55.0,
+      "object_type": "CHAIR",
+      "name": "Chair",
+      "layer_id": "689d8d8b-d2f0-410b-9127-94cac1eaf81e",
+      "fill_color": "#ff8c6946",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 8192
+    },
+    {
+      "type": "circle",
+      "item_id": "eb842522-d5dd-42ae-9df4-f2b1cae69075",
+      "center_x": 350.0,
+      "center_y": 1250.0,
+      "radius": 160,
+      "object_type": "TREE",
+      "name": "Shade tree",
+      "metadata": {
+        "object_height_cm": 650
+      },
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff228b22",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 1024
+    },
+    {
+      "type": "circle",
+      "item_id": "dfa24ba0-d3cf-4010-ae4e-befd69ae1aa6",
+      "center_x": 2040.0,
+      "center_y": 820.0,
+      "radius": 130,
+      "object_type": "TREE",
+      "name": "Ornamental tree",
+      "metadata": {
+        "object_height_cm": 450
+      },
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff228b22",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 2048
+    },
+    {
+      "type": "circle",
+      "item_id": "c7a544ad-b4f0-4689-8a36-d40780a2f3ae",
+      "center_x": 380.0,
+      "center_y": 380.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 3072
+    },
+    {
+      "type": "circle",
+      "item_id": "69c542bb-da84-4adf-8b34-9d58a8235cd2",
+      "center_x": 570.0,
+      "center_y": 420.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 4096
+    },
+    {
+      "type": "circle",
+      "item_id": "c6ff2f13-c5f9-4f64-81f7-f3e22f7418c4",
+      "center_x": 760.0,
+      "center_y": 410.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 5120
+    },
+    {
+      "type": "circle",
+      "item_id": "2665293c-46ea-40d0-9389-645278fc2f37",
+      "center_x": 370.0,
+      "center_y": 610.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 6144
+    },
+    {
+      "type": "circle",
+      "item_id": "ea7096bf-09d3-4ef8-a74b-0504ca9fa19c",
+      "center_x": 570.0,
+      "center_y": 650.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 7168
+    },
+    {
+      "type": "circle",
+      "item_id": "c6ca65b8-a3dd-428a-96d7-a867e5e94f29",
+      "center_x": 1780.0,
+      "center_y": 1350.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 8192
+    },
+    {
+      "type": "circle",
+      "item_id": "0332bdcb-3f8e-46d2-9712-916aa2431580",
+      "center_x": 1950.0,
+      "center_y": 1350.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 9216
+    },
+    {
+      "type": "circle",
+      "item_id": "d11548bf-da33-473a-8d56-6ff116fc69a0",
+      "center_x": 2080.0,
+      "center_y": 1350.0,
+      "radius": 70,
+      "object_type": "SHRUB",
+      "name": "Shrub",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff6b8e23",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 10240
+    },
+    {
+      "type": "circle",
+      "item_id": "993e034e-bb0c-491d-b41f-4e1dc14e9a73",
+      "center_x": 260.0,
+      "center_y": 490.0,
+      "radius": 36,
+      "object_type": "PERENNIAL",
+      "name": "Perennial",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff9acd32",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 11264
+    },
+    {
+      "type": "circle",
+      "item_id": "a07b7f83-c54e-49ad-9fe4-a9b2cada121a",
+      "center_x": 300.0,
+      "center_y": 580.0,
+      "radius": 36,
+      "object_type": "PERENNIAL",
+      "name": "Perennial",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff9acd32",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 12288
+    },
+    {
+      "type": "circle",
+      "item_id": "b8e89690-1834-4c59-aabd-9196dcd52216",
+      "center_x": 720.0,
+      "center_y": 590.0,
+      "radius": 36,
+      "object_type": "PERENNIAL",
+      "name": "Perennial",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff9acd32",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 13312
+    },
+    {
+      "type": "circle",
+      "item_id": "8ffbc09d-1492-465f-bf64-687ec65dc212",
+      "center_x": 760.0,
+      "center_y": 520.0,
+      "radius": 36,
+      "object_type": "PERENNIAL",
+      "name": "Perennial",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff9acd32",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 14336
+    },
+    {
+      "type": "circle",
+      "item_id": "0822acdf-dd37-4697-9635-5c2575ec0fbc",
+      "center_x": 1930.0,
+      "center_y": 1260.0,
+      "radius": 36,
+      "object_type": "PERENNIAL",
+      "name": "Perennial",
+      "layer_id": "b3398744-4d03-424f-8902-ab965e7ceb91",
+      "fill_color": "#ff9acd32",
+      "stroke_color": "#ff000000",
+      "stroke_width": 1.0,
+      "fill_pattern": "SOLID",
+      "stroke_style": "SOLID",
+      "stack_order": 15360
+    },
+    {
+      "type": "text",
+      "item_id": "c5f1e0f9-765a-4e5b-925a-f7ee65470657",
+      "x": 980.0,
+      "y": 1530.0,
+      "content": "RESIDENCE",
+      "font_family": "Arial",
+      "font_size": 0.9,
+      "bold": false,
+      "italic": false,
+      "text_color": "#ff000000",
+      "layer_id": "bb7433a5-0967-4bfd-ba8c-68673094038d",
+      "stack_order": 1024
+    },
+    {
+      "type": "text",
+      "item_id": "86078cd5-a06f-4481-9743-739ffbe0e601",
+      "x": 995.0,
+      "y": 790.0,
+      "content": "PATIO  20 ft x 12 ft",
+      "font_family": "Arial",
+      "font_size": 0.9,
+      "bold": false,
+      "italic": false,
+      "text_color": "#ff000000",
+      "layer_id": "bb7433a5-0967-4bfd-ba8c-68673094038d",
+      "stack_order": 2048
+    },
+    {
+      "type": "text",
+      "item_id": "f05a15f1-a450-4f4f-a451-43a345c142e1",
+      "x": 1010.0,
+      "y": 460.0,
+      "content": "OPEN LAWN",
+      "font_family": "Arial",
+      "font_size": 0.9,
+      "bold": false,
+      "italic": false,
+      "text_color": "#ff000000",
+      "layer_id": "bb7433a5-0967-4bfd-ba8c-68673094038d",
+      "stack_order": 3072
+    },
+    {
+      "type": "text",
+      "item_id": "48efb149-43e8-4bec-9da6-8228fcee4c18",
+      "x": 170.0,
+      "y": 1550.0,
+      "content": "N  \u2191",
+      "font_family": "Arial",
+      "font_size": 0.9,
+      "bold": false,
+      "italic": false,
+      "text_color": "#ff000000",
+      "layer_id": "bb7433a5-0967-4bfd-ba8c-68673094038d",
+      "stack_order": 4096
+    }
+  ],
+  "constraints": [
+    {
+      "constraint_id": "43da7228-f98e-4a79-a0d6-5de7a69ff4cb",
+      "anchor_a": {
+        "item_id": "40b165ea-820f-4ef8-bc5c-1a84eb9ac4cb",
+        "anchor_type": "CORNER",
+        "anchor_index": 0
+      },
+      "anchor_b": {
+        "item_id": "40b165ea-820f-4ef8-bc5c-1a84eb9ac4cb",
+        "anchor_type": "CORNER",
+        "anchor_index": 1
+      },
+      "target_distance": 609.6,
+      "visible": true,
+      "constraint_type": "DISTANCE"
+    }
+  ],
+  "location": {
+    "latitude": 42.1,
+    "longitude": -86.48,
+    "name": "Southwest Michigan (synthetic)"
+  },
+  "display_units": {
+    "system": "imperial",
+    "length_format": "feet_inches"
+  },
+  "presentation": {
+    "plant_symbols": "architectural",
+    "texture_strength": 0.3,
+    "grid_spacing_cm": 30.48
+  }
+}

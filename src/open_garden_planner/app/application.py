@@ -33,6 +33,8 @@ from open_garden_planner.core import (
 )
 from open_garden_planner.core.plant_renderer import is_plant_type
 from open_garden_planner.core.tools import ToolType
+from open_garden_planner.core.units import format_length as display_length
+from open_garden_planner.core.units import units_for
 from open_garden_planner.services.companion_planting_service import (
     ANTAGONISTIC,
     BENEFICIAL,
@@ -5631,7 +5633,11 @@ class GardenPlannerApp(QMainWindow):
         height_m = height_cm / 100.0
         status_bar = self.statusBar()
         if status_bar:
+            units = getattr(self, "default_new_project_units", units_for(self.canvas_scene))
             status_bar.showMessage(
+                self.tr("New project created: {width} x {height}").format(
+                    width=display_length(width_cm, units), height=display_length(height_cm, units)
+                ) if units.imperial else
                 self.tr("New project created: {width}m x {height}m").format(
                     width=f"{width_m:.1f}", height=f"{height_m:.1f}"
                 )
@@ -5641,7 +5647,7 @@ class GardenPlannerApp(QMainWindow):
         """Handle Canvas Size action — resize the current canvas."""
         from open_garden_planner.ui.dialogs import NewProjectDialog
 
-        dialog = NewProjectDialog(self)
+        dialog = NewProjectDialog(self, display_units=units_for(self.canvas_scene))
         dialog.setWindowTitle(self.tr("Canvas Size"))
         dialog.set_dimensions_cm(
             self.canvas_scene.width_cm,
@@ -5659,6 +5665,10 @@ class GardenPlannerApp(QMainWindow):
             status_bar = self.statusBar()
             if status_bar:
                 status_bar.showMessage(
+                    self.tr("Canvas resized to {width} x {height}").format(
+                        width=display_length(width_cm, units_for(self.canvas_scene)),
+                        height=display_length(height_cm, units_for(self.canvas_scene)),
+                    ) if units_for(self.canvas_scene).imperial else
                     self.tr("Canvas resized to {width}m x {height}m").format(
                         width=f"{width_m:.1f}", height=f"{height_m:.1f}"
                     )
@@ -7427,11 +7437,14 @@ class GardenPlannerApp(QMainWindow):
         self._system_theme_action.setChecked(mode == ThemeMode.SYSTEM)
 
         # Apply theme to application
-        apply_theme(QApplication.instance(), mode)
+        self._apply_application_theme(mode)
 
         # Show feedback
         theme_name = mode.value.capitalize()
         self.statusBar().showMessage(self.tr("Theme changed to {theme}").format(theme=theme_name), 2000)
+
+    def _apply_application_theme(self, mode: ThemeMode) -> None:
+        apply_theme(QApplication.instance(), mode)
 
     def _update_language_menu_state(self) -> None:
         """Update language menu checkmarks from settings."""
@@ -8119,7 +8132,12 @@ class GardenPlannerApp(QMainWindow):
             x: X coordinate in centimeters
             y: Y coordinate in centimeters
         """
-        self.coord_label.setText(self.tr("X: {x} cm  Y: {y} cm").format(x=f"{x:.2f}", y=f"{y:.2f}"))
+        self._last_coordinates = (x, y)
+        if units_for(self.canvas_scene).imperial:
+            self.coord_label.setText(self.tr("X: {x}  Y: {y}").format(
+                x=display_length(x, units_for(self.canvas_scene)), y=display_length(y, units_for(self.canvas_scene))))
+        else:
+            self.coord_label.setText(self.tr("X: {x} cm  Y: {y} cm").format(x=f"{x:.2f}", y=f"{y:.2f}"))
 
     def update_zoom(self, zoom_percent: float) -> None:
         """Update the zoom display in the status bar.
@@ -8145,8 +8163,8 @@ class GardenPlannerApp(QMainWindow):
                 measurements = calculate_area_and_perimeter(item)
                 if measurements:
                     area, perimeter = measurements
-                    area_str = format_area(area)
-                    length_str = format_length(perimeter)
+                    area_str = format_area(area, units_for(self.canvas_scene))
+                    length_str = format_length(perimeter, units_for(self.canvas_scene))
                     self.selection_label.setText(
                         self.tr("1 object | Area: {area} | Perimeter: {perimeter}").format(
                             area=area_str, perimeter=length_str
@@ -8172,8 +8190,8 @@ class GardenPlannerApp(QMainWindow):
                         measurable_count += 1
 
                 if measurable_count > 0:
-                    area_str = format_area(total_area)
-                    length_str = format_length(total_perimeter)
+                    area_str = format_area(total_area, units_for(self.canvas_scene))
+                    length_str = format_length(total_perimeter, units_for(self.canvas_scene))
                     self.selection_label.setText(
                         self.tr(
                             "{count} objects | Total Area: {area} | Total Perimeter: {perimeter}"

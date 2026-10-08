@@ -85,7 +85,9 @@ class CategoryToolbar(QToolBar):
         else:
             button.setText(category.name[:2])
 
-        dropdown = CategoryDropdown(category)
+        # Popup window flags keep it floating; QObject ownership keeps its
+        # thumbnail widgets from surviving a destroyed toolbar/main window.
+        dropdown = CategoryDropdown(category, self)
         dropdown.tool_selected.connect(self.tool_selected)
         dropdown.item_selected.connect(self.item_selected)
 

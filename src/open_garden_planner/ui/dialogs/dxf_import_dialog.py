@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QSignalBlocker, Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -15,6 +15,18 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class _ScaleFactorSpinBox(QDoubleSpinBox):
+    """Compact scale display without rounding the stored conversion factor."""
+
+    def textFromValue(self, value: float) -> str:  # noqa: N802
+        return self.locale().toString(value, "g", 15)
+
+    def valueFromText(self, text: str) -> float:  # noqa: N802
+        if text.strip() == self.textFromValue(self.value()):
+            return self.value()
+        return super().valueFromText(text)
 
 
 class DxfImportDialog(QDialog):
@@ -54,13 +66,17 @@ class DxfImportDialog(QDialog):
         scale_group = QGroupBox(self.tr("Scale Factor"))
         scale_form = QFormLayout(scale_group)
 
-        self._scale_spin = QDoubleSpinBox()
-        self._scale_spin.setRange(0.001, 10000.0)
+        self._scale_spin = _ScaleFactorSpinBox()
+        self._scale_spin.setDecimals(15)
+        self._scale_spin.setRange(1e-12, 1e20)
         self._scale_spin.setValue(1.0)
-        self._scale_spin.setDecimals(3)
+        self._declared_factor = 1.0
+        self._scale_edited = False
+        self._scale_spin.valueChanged.connect(self._on_scale_edited)
         self._scale_spin.setToolTip(
             self.tr("Multiply DXF coordinates by this factor to get centimeters.\n"
                     "Use 0.1 for DXF in mm, 100 for DXF in metres.")
+            + "\n" + self.tr("Declared DXF units set the default. Unknown or unitless files default to 1 cm per unit; adjust this factor when needed.")
         )
         scale_form.addRow(self.tr("Scale (DXF units → cm):"), self._scale_spin)
         layout.addWidget(scale_group)
@@ -101,11 +117,19 @@ class DxfImportDialog(QDialog):
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
+    def _on_scale_edited(self, _value: float) -> None:
+        self._scale_edited = True
+
     def _load_layers(self) -> None:
         from open_garden_planner.services.dxf_service import DxfImportService
 
         try:
             layers = DxfImportService.get_dxf_layers(self._file_path)
+            if not self._scale_edited:
+                self._declared_factor = DxfImportService.default_scale_factor(self._file_path)
+                blocker = QSignalBlocker(self._scale_spin)
+                self._scale_spin.setValue(self._declared_factor)
+                del blocker
         except Exception as exc:
             self._loading_label.setText(self.tr("Failed to read DXF: {error}").format(error=exc))
             return
@@ -133,7 +157,7 @@ class DxfImportDialog(QDialog):
     @property
     def scale_factor(self) -> float:
         """Scale factor to apply to DXF coordinates."""
-        return self._scale_spin.value()
+        return self._scale_spin.value() if self._scale_edited else self._declared_factor
 
     @property
     def selected_layers(self) -> list[str] | None:

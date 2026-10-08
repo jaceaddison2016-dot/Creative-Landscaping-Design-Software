@@ -30,6 +30,21 @@ TEST_ORGANIZATION = "cofade_test"
 # harmless because `_reset_app_settings` wipes at SETUP, not only at teardown.
 TEST_APPLICATION = f"Open Garden Planner Test {os.getpid()}"
 
+
+@pytest.fixture(autouse=True)
+def _flush_qt_deferred_deletes():
+    """Complete pytest-qt's deleteLater work between tests.
+
+    processEvents alone does not drain DeferredDelete without an exec loop.
+    Pending closed windows otherwise accumulate thousands of live widgets and
+    turn subsequent global styling into minutes of unnecessary work.
+    """
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+    if QApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
 # Redirect at conftest IMPORT time, not inside a fixture. pytest imports this
 # file before it collects any test module in this tree, hence before any
 # `open_garden_planner` module a test imports — so every store the app builds is

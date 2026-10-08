@@ -1,5 +1,22 @@
 # 6. Runtime View
 
+## Creative Windows validation runtime
+
+The Windows workflow freezes the normal app, verifies startup/subsystems and
+launches `--prototype-check` from an output directory outside the checkout.
+The probe uses a private QA settings account and a retained fresh Python temp
+directory so normal-account untitled autosave recovery is untouched. It creates QApplication and the real
+Creative window, then schedules drawing, key/mouse input, undo/redo, save/reopen
+and exports on the Qt event loop. A fresh run ID, process exit and JSON verdict
+must agree. Screenshots come from actual widgets. After silent NSIS installation,
+the workflow repeats these checks against the installed executable, preserves
+source/licenses/evidence and assembles the download. Before artifact upload, the
+evidence recorder verifies the installed result, source SHA and four synthetic
+PNGs, then records numbered image frames and SHA-256 in GitHub logs. The cloud
+review can reconstruct those exact files through the GitHub API, requiring
+complete frames and hashes before viewing. The workflow uploads the artifact
+after the recorder succeeds. It does not create a release.
+
 ## 6.1 Drawing Workflow
 
 ```mermaid
@@ -287,3 +304,24 @@ The soil prompt extracts one bed from the status/mismatch envelopes. Calendar
 generation selects a year independently of `today`; urgency uses `today` after
 the full requested period is generated. Refused writes return an error without
 changing project data or either undo/redo stack.
+
+## Creative preview startup (experimental only)
+
+The development runner chooses a separate settings organization/application
+before any store exists (ADR-041), creates QApplication after the required
+WebEngine pre-import, loads the saved translator, applies proposed tokens, and constructs a
+`CreativePreviewWindow`. The inherited startup/recovery sequence and project
+manager remain intact. Gallery activation emits tool selection first and plant
+metadata second; subsequent canvas gestures use existing commands.
+
+Capture mode uses a separate capture account and fixture path, resets its UI state,
+loads a synthetic saved plan, enables
+the existing sun study and records real widget grabs after layout/accordion
+settling. Interactive mode retains saved sample edits, language, theme, window/dock
+preferences and the inherited welcome-on-startup choice. Normal app
+startup does not import the experiment. Details: [design validation](../design/VALIDATION.md).
+
+
+### Creative unit-edit sequence
+
+Imperial text → LengthSpinBox/core.units.parse_length → canonical cm → existing property/drawing command → existing scene/solver → project serializer. A unit switch executes SetDisplayUnitsCommand, refreshes views and dimensions, and leaves canonical geometry untouched. Loading defaults missing preferences to metric before installing the validated document. Sun workspace changes toolbar visibility; the existing sun QAction owns simulation state. See ADR-051.

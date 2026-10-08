@@ -36,6 +36,8 @@ from typing import Literal
 
 from PyQt6.QtCore import QPointF
 
+from open_garden_planner.core.units import METRIC, DisplayUnits, parse_length
+
 _NUMBER_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
 
 
@@ -64,6 +66,7 @@ def parse(
     last_point: QPointF | None = None,
     *,
     prefer_locale_decimal: bool = True,
+    units: DisplayUnits = METRIC,
 ) -> ParsedCoordinate:
     """Parse a coordinate string into a ``ParsedCoordinate``.
 
@@ -88,6 +91,21 @@ def parse(
         s = s[1:].strip()
         if not s:
             raise ParseError("Missing coordinate after '@'")
+
+    if units.imperial or re.search(r"(?:\b(?:mm|cm|m|ft|feet|foot|in|inch|inches)\b|['\"′″])", s):
+        try:
+            if "<" in s:
+                distance, angle = s.split("<")
+                converted = f"{parse_length(distance, units):.12f}<{angle}"
+            else:
+                separator = ";" if ";" in s else "," if "," in s else None
+                parts = s.split(separator) if separator else s.split()
+                if len(parts) != 2:
+                    raise ValueError("Use a comma or semicolon between coordinates")
+                converted = ";".join(f"{parse_length(part, units):.12f}" for part in parts)
+            return parse(("@" if relative else "") + converted, last_point)
+        except ValueError as exc:
+            raise ParseError(str(exc)) from exc
 
     # Rule C: polar
     if "<" in s.lower():

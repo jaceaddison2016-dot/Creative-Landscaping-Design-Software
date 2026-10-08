@@ -201,6 +201,7 @@ class ThemeColors:
 # ---------------------------------------------------------------------------
 
 _current_colors: dict[str, str] = ThemeColors.LIGHT
+_current_dark_theme = False
 _theme_listeners: list[Callable[[dict[str, str]], None]] = []
 
 
@@ -247,7 +248,7 @@ def current_colors() -> dict[str, str]:
 
 def is_dark_theme() -> bool:
     """True when the most recently applied palette is the dark one."""
-    return _current_colors is ThemeColors.DARK
+    return _current_dark_theme
 
 
 def theme_color(name: str) -> str:
@@ -314,7 +315,9 @@ def set_text_role(
         style.polish(widget)
 
 
-def generate_stylesheet(mode: ThemeMode) -> str:
+def generate_stylesheet(
+    mode: ThemeMode, *, color_overrides: dict[str, str] | None = None
+) -> str:
     """Generate complete application stylesheet for the given theme mode.
 
     Args:
@@ -324,6 +327,8 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         Complete CSS stylesheet as string
     """
     colors = ThemeColors.get_colors(mode)
+    if color_overrides is not None:
+        colors = {**colors, **color_overrides}
 
     # Write tiny SVG arrow files to temp dir — Qt QSS image: url() requires
     # file paths; inline data URIs are not supported by Qt's QSS image loader.
@@ -1193,23 +1198,29 @@ def _set_windows_dark_titlebar(window, dark: bool) -> None:
         pass
 
 
-def apply_theme(app: QApplication, mode: ThemeMode) -> None:
+def apply_theme(
+    app: QApplication, mode: ThemeMode, *, color_overrides: dict[str, str] | None = None,
+    component_stylesheet: str = "",
+) -> None:
     """Apply the specified theme to the application.
 
     Args:
         app: QApplication instance
         mode: Theme mode to apply
     """
-    global _current_colors
+    global _current_colors, _current_dark_theme
 
     # Publish the resolved palette BEFORE restyling so listeners and
     # re-polished widgets that call theme_color() during the restyle
     # already see the new values.
     colors = ThemeColors.get_colors(mode)
+    _current_dark_theme = colors is ThemeColors.DARK
+    if color_overrides is not None:
+        colors = {**colors, **color_overrides}
     _current_colors = colors
 
-    stylesheet = generate_stylesheet(mode)
-    app.setStyleSheet(stylesheet)
+    stylesheet = generate_stylesheet(mode, color_overrides=color_overrides)
+    app.setStyleSheet(stylesheet + component_stylesheet)
 
     # Notify subscribers (e.g. the icon provider) of the new palette.
     # Failures are logged, never swallowed silently, and never abort the
@@ -1221,7 +1232,7 @@ def apply_theme(app: QApplication, mode: ThemeMode) -> None:
             logger.exception("Theme listener failed")
 
     # Apply dark title bar on Windows if using dark mode
-    is_dark = colors is ThemeColors.DARK
+    is_dark = _current_dark_theme
 
     # Update all top-level windows
     for widget in app.topLevelWidgets():

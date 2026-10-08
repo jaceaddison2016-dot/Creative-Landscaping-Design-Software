@@ -5,6 +5,7 @@ import math
 from PyQt6.QtWidgets import QGraphicsItem
 
 from open_garden_planner.core.geometry import Point, Polygon
+from open_garden_planner.core.units import METRIC, DisplayUnits
 
 
 def calculate_area_and_perimeter(item: QGraphicsItem) -> tuple[float, float] | None:
@@ -65,7 +66,7 @@ def calculate_area_and_perimeter(item: QGraphicsItem) -> tuple[float, float] | N
     return None
 
 
-def format_area(area_cm2: float) -> str:
+def format_area(area_cm2: float, units: DisplayUnits = METRIC) -> str:
     """Format area for display with appropriate units.
 
     Args:
@@ -74,6 +75,9 @@ def format_area(area_cm2: float) -> str:
     Returns:
         Formatted string (e.g., "2.35 m²", "45.2 cm²")
     """
+    if units.imperial:
+        from open_garden_planner.core.units import format_area as display_area
+        return display_area(area_cm2, units)
     if area_cm2 >= 10000:  # >= 1 m²
         area_m2 = area_cm2 / 10000
         return f"{area_m2:.2f} m²"
@@ -81,7 +85,7 @@ def format_area(area_cm2: float) -> str:
         return f"{area_cm2:.1f} cm²"
 
 
-def format_length(length_cm: float) -> str:
+def format_length(length_cm: float, units: DisplayUnits = METRIC) -> str:
     """Format length for display with appropriate units.
 
     Args:
@@ -90,6 +94,9 @@ def format_length(length_cm: float) -> str:
     Returns:
         Formatted string (e.g., "2.35 m", "45.2 cm")
     """
+    if units.imperial:
+        from open_garden_planner.core.units import format_length as display_length
+        return display_length(length_cm, units)
     if length_cm >= 100:  # >= 1 m
         length_m = length_cm / 100
         return f"{length_m:.2f} m"

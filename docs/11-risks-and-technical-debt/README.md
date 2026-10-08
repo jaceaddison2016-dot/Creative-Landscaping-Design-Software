@@ -979,3 +979,75 @@ before saying a fix changed it.*
 - Pull requests welcome with review process
 - CONTRIBUTING.md with code style and testing requirements (planned; today the rules live in CLAUDE.md/AGENTS.md — audit-2026-10 §5.10)
 - PRs are expected to pass CI (tests, ruff, Bandit, secrets scan, agent-context parity), but none of these is a required status check on `master` today (#399); type checking is configured but not enforced (#401)
+
+### Creative preview gallery signal ordering and inherited translations
+
+The new compact library initially emitted only `item_selected`; a genuine Qt
+click selected a row but left SelectTool active. Debug output showed
+`[PREVIEW_ACTIVATE] emitted Round Deciduous ToolType.TREE` followed by
+`[PREVIEW_GESTURE] tool SelectTool after press 0`. The existing category
+dropdown emits `tool_selected` BEFORE `item_selected`; the latter only assigns
+plant metadata to an already-active CircleTool. The preview now follows that
+contract. A real two-click center/rim gesture yields one undoable tree. Pinned by
+`test_library_click_places_undoable_tree_and_round_trips` in
+`tests/integration/test_creative_design_preview.py`.
+
+A compiled-translator probe also showed the welcome subclass changed the Qt
+context used by inherited footer methods: New/Open translated, while Close and
+the startup checkbox stayed English. Register the inherited strings under
+CreativeWelcomeDialog too. Pinned by `test_german_preview_and_inherited_footer`.
+These lessons change no upstream placement or translation algorithm.
+
+The same Qt context change affected the main-window subclass: a compiled German
+probe returned `&File` from the inherited call versus `&Datei` from the registered
+GardenPlannerApp context. CreativePreviewWindow now forwards inherited `tr()`
+calls to that original context; new preview strings keep their explicit context.
+The real menu and the shared header New action are covered by the German test.
+
+Capture preparation must not run unconditionally during interactive startup.
+Independent review found it overwrote the loaded sample (and therefore Ctrl+S
+edits), reset window/docks/theme and ignored the visible welcome preference.
+Capture now uses a separate account and fixture path; interactive startup loads
+the saved language and honors existing sample, theme, geometry, docks and welcome
+preference. `test_interactive_runner_keeps_saved_language_geometry_and_docks`
+launches real subprocesses before and after a real capture to pin these seams.
+
+
+### 11.4. Creative continuation: popup ownership and test-loop deletion
+
+CategoryDropdown was created without a Qt parent. Its Qt.Popup flags kept it floating but did not tie its C++ lifetime to the toolbar. Deleting a full window left 11 popup windows / 493 widgets. Headless pytest-qt cleanup also queued ordinary deleteLater work without an exec loop; the integration prefix reached 79,779 retained widgets, and apply_theme restyled that growing population. Parent the popups to CategoryToolbar, drain DeferredDelete between tests, and consolidate Creative theme application. A full-window lifetime probe then returned 1,252 widgets to zero; the clean 133-test focus run completed in 56.02 s. The ownership regression clicks a real popup and verifies destruction, preserving functionality. See the matching debug-verbose case study and current [Creative continuation validation](../design/CONTINUATION_VALIDATION.md).
+
+Presentation refresh revealed a separate rectangle load inconsistency: the loader restored a custom brush color without storing the same base fill_color. A later styling refresh reinstated the type's default color. The real load probe showed saved lawn #E7EDD9 becoming #64B43C. Store the restored base color; retain the actual pen when refreshing material texture strength. Presentation changes must not reset stored colors or strokes.
+
+
+The normal-entry-point subprocess test initially scheduled QTimer.singleShot before QApplication existed. The editor opened, but the observer never fired: the diagnostic reported a missing application and a destroyed event dispatcher; only the post-application timer ran. Schedule the test observer after window.show and propagate assertion failures through a nonzero exit. The corrected source startup check passed without increasing the timeout. See the corresponding debug-verbose case.
+
+
+### Continuation review: shared presentation paths (2026-10-08)
+
+Independent desktop probes found six gaps missed by the initial 7,669-test suite: stale annotation/status units, rounded peer dimensions, full-strength brushes after edits, recovery grid drift, Ctrl+F ambiguity, and feet DXF reimport at centimeter scale. Fixes now share loaded-grid synchronization and current-strength brush creation, preserve canonical spin-box precision beneath the metric display, refresh existing annotations, retain the original Find & Replace shortcut and derive CAD import defaults from declared units. Regression coverage includes real keyboard dispatch, precise rectangle/ellipse peers, snapping after recovery and a physical export/reimport. Native packaging remains gated by renewed layout approval.
+
+
+### DXF conversion-factor precision (2026-10-08)
+
+A declared-unit default can still be corrupted by a numeric widget: the retained factor editor clamped kilometer factors from 100000 to 10000 and micron factors from 0.0001 to 0.001. Its compact formatter now preserves the canonical factor until a real user edit, with the range/precision needed by declared DXF units. Explicit standard and US survey conversion factors also avoid ezdxf's unsupported-unit fallback. All 24 declared units have dialog/service/override regressions; unknown and unitless files continue to need user-confirmed scaling when their physical meaning is absent.
+
+
+### Default physical editor precision (2026-10-08)
+
+LengthSpinBox now establishes canonical numeric precision in its constructor; caller formatting choices cannot leave soil/container-height controls at Qt's two-decimal storage default. Regressions preserve 6¼-inch initialization and one-inch steps in the actual metadata controls.
+
+
+### Creative packaged QA: Windows standard handles
+
+A detached Windows child can inherit explicit standard handles when Popen mixes DEVNULL input and None output streams. CPython then duplicates parent output handles despite close_fds. Frozen QA now uses all three None plus DETACHED_PROCESS, and GetStdHandle inside the actual app verifies absence of inherited handles. Fault injection tests reject stale, failed, inherited-handle and source-only reports. The separate Windows subsystem self-test remains mandatory. See ADR-052 and both debug-verbose skill case studies.
+
+
+### Creative QA: untitled recovery needs separate temp isolation
+
+Private QSettings alone left AutoSaveManager pointing at the shared Python temp untitled-recovery file. A synthetic sentinel was deleted by the diagnostic new-plan path. The opt-in diagnostic now establishes a retained fresh TemporaryDirectory before app construction, so startup recovery and reset cannot inspect or clear normal-account recovery. A direct subprocess test proves the sentinel bytes survive. Normal autosave semantics remain unchanged; see ADR-052.
+
+
+### Windows source GUI checks need native Qt fonts
+
+The Windows runner offscreen plugin resolves no system font family, reports every ASCII digit missing and supplies unusable font metrics. Source GUI and subprocess checks now use windows on Windows and offscreen on Linux; assertions remain unchanged. Native evidence verifies fonts and width using the shipped plugin. See WINDOWS_BUILD and both debug case studies.

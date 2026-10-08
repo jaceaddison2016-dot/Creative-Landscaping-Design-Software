@@ -18,6 +18,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.core.units import format_length
+from open_garden_planner.ui.widgets.length_spin_box import widget_units
+
 # Scale presets: display name -> scale denominator (0 = fit to page)
 SCALE_PRESETS = [
     ("Fit to Page", 0),
@@ -114,6 +117,11 @@ class PrintOptionsDialog(QDialog):
                 h=f"{self._canvas_height_cm / 100:.1f}",
             )
         )
+        if widget_units(self).imperial:
+            from PyQt6.QtCore import QCoreApplication
+            info_label.setText(QCoreApplication.translate("CreativePreview", "Canvas: {width} × {height}").format(
+                width=format_length(self._canvas_width_cm, widget_units(self)),
+                height=format_length(self._canvas_height_cm, widget_units(self))))
         info_label.setProperty("secondary", True)
         layout.addWidget(info_label)
 

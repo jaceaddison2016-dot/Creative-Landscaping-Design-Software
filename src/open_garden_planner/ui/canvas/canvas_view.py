@@ -27,7 +27,7 @@ from PyQt6.QtGui import (
     QTransform,
     QWheelEvent,
 )
-from PyQt6.QtWidgets import QGraphicsItem, QGraphicsView, QInputDialog, QLineEdit, QMenu
+from PyQt6.QtWidgets import QGraphicsItem, QGraphicsView, QLineEdit, QMenu
 
 from open_garden_planner.core import (
     AddConstraintCommand,
@@ -104,6 +104,7 @@ from open_garden_planner.core.tools import (
     VerticalConstraintTool,
     VerticalDistanceConstraintTool,
 )
+from open_garden_planner.core.units import FOOT_CM, format_length, parse_length, units_for
 from open_garden_planner.services.soil_service import (
     ALL_PARAMS,
     PARAM_OVERALL,
@@ -119,6 +120,7 @@ from open_garden_planner.ui.canvas.items.resize_handle import (
     RotationHandle,
     VertexHandle,
 )
+from open_garden_planner.ui.widgets.length_input import get_length
 
 _log = logging.getLogger(__name__)
 
@@ -299,6 +301,7 @@ class CanvasView(QGraphicsView):
 
         # Shared typed-coordinate buffer (Package A US-A1/A2/A4).
         self._input_buffer = CoordinateInputBuffer(self)
+        self._input_buffer.units_source = self._canvas_scene
         # Lazily-created cursor overlay (US-A4).
         self._dynamic_overlay: object | None = None
 
@@ -1221,6 +1224,7 @@ class CanvasView(QGraphicsView):
     def set_grid_size(self, size: float) -> None:
         """Set grid size in centimeters."""
         self._grid_size = size
+        self._canvas_scene.grid_spacing_cm = size
         if self._grid_visible:
             self.viewport().update()
 
@@ -4184,10 +4188,11 @@ class CanvasView(QGraphicsView):
 
     def _pick_ruler_interval(self) -> float:
         """Choose a tick interval in cm so ticks are at least _RULER_MIN_TICK_PX apart."""
-        for interval in self._RULER_NICE_INTERVALS:
+        intervals = [v * FOOT_CM for v in (.5, 1, 2, 5, 10, 20, 50, 100, 200, 500)] if units_for(self._canvas_scene).imperial else self._RULER_NICE_INTERVALS
+        for interval in intervals:
             if interval * self._zoom_factor >= self._RULER_MIN_TICK_PX:
                 return float(interval)
-        return float(self._RULER_NICE_INTERVALS[-1])
+        return float(intervals[-1])
 
     def _draw_rulers(self, painter: QPainter) -> None:
         """Draw horizontal (top) and vertical (left) rulers in viewport coordinates.
@@ -4229,7 +4234,7 @@ class CanvasView(QGraphicsView):
             vp_x = int(self.mapFromScene(x, 0).x())
             if rs <= vp_x <= vp.width():
                 painter.drawLine(vp_x, rs - 4, vp_x, rs - 1)  # tick mark
-                lbl = self._ruler_label(x)
+                lbl = f"{x / FOOT_CM:g}'" if units_for(self._canvas_scene).imperial else self._ruler_label(x)
                 # Center label horizontally on the tick (40px box centered at vp_x)
                 painter.drawText(
                     vp_x - 20,
@@ -4254,7 +4259,7 @@ class CanvasView(QGraphicsView):
             vp_y = int(self.mapFromScene(0, y).y())
             if rs <= vp_y <= vp.height():
                 painter.drawLine(rs - 4, vp_y, rs - 1, vp_y)  # tick mark
-                lbl = self._ruler_label(y)
+                lbl = f"{y / FOOT_CM:g}'" if units_for(self._canvas_scene).imperial else self._ruler_label(y)
                 # Draw label rotated 90° for vertical ruler.
                 # After rotate(-90) at (tx, ty), screen_y_center = ty - 20 for a
                 # 40px-tall rotated box.  Set ty = vp_y + 20 so the text centers on
@@ -4314,7 +4319,7 @@ class CanvasView(QGraphicsView):
         """Show input dialog to set guide position numerically."""
         axis = self.tr("Y") if guide.is_horizontal else self.tr("X")
         label = self.tr("{axis} position (cm)").format(axis=axis)
-        value, ok = QInputDialog.getDouble(
+        value, ok = get_length(
             self,
             self.tr("Guide position"),
             label,
@@ -4376,10 +4381,11 @@ class CanvasView(QGraphicsView):
             Distance in cm that produces a bar of reasonable pixel width.
         """
         target_px = 150.0
-        best = self._SCALE_BAR_NICE_DISTANCES[0]
+        distances = [v * FOOT_CM for v in (1, 2, 5, 10, 20, 50, 100, 200, 500)] if units_for(self._canvas_scene).imperial else self._SCALE_BAR_NICE_DISTANCES
+        best = distances[0]
         best_diff = abs(best * self._zoom_factor - target_px)
 
-        for d in self._SCALE_BAR_NICE_DISTANCES:
+        for d in distances:
             px = d * self._zoom_factor
             diff = abs(px - target_px)
             if diff < best_diff:
@@ -4399,7 +4405,7 @@ class CanvasView(QGraphicsView):
         """
         distance_cm = self._pick_scale_bar_distance()
         bar_width_px = distance_cm * self._zoom_factor
-        label = self._format_distance(distance_cm)
+        label = format_length(distance_cm, units_for(self._canvas_scene)) if units_for(self._canvas_scene).imperial else self._format_distance(distance_cm)
 
         margin = self._SCALE_BAR_MARGIN
         tick_h = self._SCALE_BAR_TICK_H
@@ -5458,14 +5464,14 @@ class CanvasView(QGraphicsView):
         """Handle Enter key in calibration input."""
         text = self._calibration_input.text().strip()
         try:
-            distance_cm = float(text)
+            distance_cm = parse_length(text, units_for(self._canvas_scene))
             if distance_cm > 0:
                 self._canvas_scene.finish_calibration(distance_cm)
             else:
                 self.set_status_message(self.tr("Distance must be positive"))
         except ValueError:
             self.set_status_message(
-                self.tr("Invalid distance. Enter a number in centimeters.")
+                self.tr("Invalid distance. Enter a physical length.")
             )
 
     def _clamp_individual_deltas(

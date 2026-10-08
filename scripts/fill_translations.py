@@ -234,6 +234,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
 
     "CanvasView": {
+        "Created {dir} offset of {dist}": "{dir}-Versatz von {dist} erstellt",
         "Created {dir} offset of {dist:.1f} cm": "{dir}-Versatz von {dist:.1f} cm erstellt",
         "Distance in cm": "Abstand in cm",
         "House": "Haus",
@@ -937,6 +938,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Recovery Failed": "Wiederherstellung fehlgeschlagen",
         "Failed to recover from auto-save:\n{error}":
             "Wiederherstellung von automatischer Speicherung fehlgeschlagen:\n{error}",
+        "New project created: {width} x {height}": "Neues Projekt erstellt: {width} x {height}",
         "New project created: {width}m x {height}m":
             "Neues Projekt erstellt: {width}m x {height}m",
         "Open Project": "Projekt öffnen",
@@ -1078,6 +1080,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Companion Planting": "Mischkulturen",
         "Crop Rotation": "Fruchtfolge",
         "Canvas Size": "Leinwandgröße",
+        "Canvas resized to {width} x {height}": "Leinwand auf {width} x {height} geändert",
         "Canvas resized to {width}m x {height}m": "Leinwand auf {width}m x {height}m geändert",
         "<p>Version {v}</p>": "<p>Version {v}</p>",
         "Garden location updated": "Gartenstandort aktualisiert",
@@ -1864,6 +1867,67 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Das Enddatum eines Vermehrungsschritts kann nicht vor seinem Startdatum liegen — der Schritt wurde nicht geändert.",
     },
 
+    # Experimental desktop design; not enabled by the normal entry point.
+    "CreativeWelcomeDialog": {
+        "Close": "Schließen",
+        "Show this screen on startup": "Diesen Bildschirm beim Start anzeigen",
+        "No recent projects": "Keine aktuellen Projekte",
+        "{name} (not found)": "{name} (nicht gefunden)",
+        "File not found: {path}": "Datei nicht gefunden: {path}",
+    },
+    "CreativePreview": {
+        "Creative Landscape Studio": "Creative Landscape Studio",
+        "Text placeholder · identity approval pending": "Textplatzhalter · Freigabe der Markenidentität ausstehend",
+        "Identity placeholder": "Markenplatzhalter",
+        "A workspace for landscape planning": "Ein Arbeitsbereich für die Landschaftsplanung",
+        "Search objects and plants": "Objekte und Pflanzen suchen",
+        "Search object library": "Objektbibliothek durchsuchen",
+        "Filter the built-in object library": "Die integrierte Objektbibliothek filtern",
+        "Object category": "Objektkategorie",
+        "All objects": "Alle Objekte",
+        "Placeable objects": "Platzierbare Objekte",
+        "Choose an object, then place it on the canvas": "Ein Objekt auswählen und auf der Zeichenfläche platzieren",
+        "Creative design preview": "Creative-Designvorschau",
+        "Start a project": "Ein Projekt starten",
+        "Create a landscape plan or return to your work.": "Einen Landschaftsplan erstellen oder die Arbeit fortsetzen.",
+        "New project": "Neues Projekt",
+        "Create a new landscape plan": "Einen neuen Landschaftsplan erstellen",
+        "Open project…": "Projekt öffnen…",
+        "Open an existing .ogp project": "Ein vorhandenes .ogp-Projekt öffnen",
+        "Recent projects": "Aktuelle Projekte",
+        "Open selected": "Ausgewähltes öffnen",
+        "Clear recent list": "Verlauf löschen",
+        "Built on Open Garden Planner · GPL-3.0-or-later": "Auf Basis von Open Garden Planner · GPL-3.0-or-later",
+        "{name}\nModified {date}": "{name}\nGeändert am {date}",
+        "Selection & properties": "Auswahl & Eigenschaften",
+        "Library": "Bibliothek",
+        "Layers": "Ebenen",
+        "Objects & plants": "Objekte & Pflanzen",
+        "Project": "Projekt",
+        "Beds & surfaces": "Beete & Flächen",
+        "Shapes": "Formen",
+        "Trees": "Bäume",
+        "Shrubs": "Sträucher",
+        "Perennials": "Stauden",
+        "Vegetables": "Gemüse",
+        "Structures": "Bauwerke",
+        "Furniture": "Möbel",
+        "Fences": "Zäune",
+        "Utilities": "Infrastruktur",
+        "Containers": "Pflanzgefäße",
+        "Select": "Auswählen",
+        "Measure": "Messen",
+        "Text": "Text",
+        "Callout": "Beschriftung",
+        "Journal": "Tagebuch",
+        "Focus canvas": "Zeichenfläche fokussieren",
+        "Reset workspace": "Arbeitsbereich zurücksetzen",
+        "Geometric shade · computer time ({zone})": "Geometrischer Schatten · Computerzeit ({zone})",
+        "Unsaved changes": "Ungespeicherte Änderungen",
+        "No unsaved changes": "Keine ungespeicherten Änderungen",
+        "{name}  ·  {state}": "{name}  ·  {state}",
+    },
+
     # ── WelcomeDialog ──
     "WelcomeDialog": {
         "Welcome to Open Garden Planner": "Willkommen bei Open Garden Planner",
@@ -2139,6 +2203,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Import DXF": "DXF importieren",
         "File: {name}": "Datei: {name}",
         "Scale Factor": "Skalierungsfaktor",
+        "Declared DXF units set the default. Unknown or unitless files default to 1 cm per unit; adjust this factor when needed.": "Deklarierte DXF-Einheiten bestimmen den Standard. Unbekannte oder einheitenlose Dateien verwenden 1 cm pro Einheit; passen Sie diesen Faktor bei Bedarf an.",
         "Scale (DXF units → cm):": "Skalierung (DXF-Einheiten → cm):",
         "Multiply DXF coordinates by this factor to get centimeters.\n"
         "Use 0.1 for DXF in mm, 100 for DXF in metres.":
@@ -3052,6 +3117,88 @@ _I366_TRANSLATIONS: dict[str, dict[str, str]] = {
 for _ctx, _strings in _I366_TRANSLATIONS.items():
     TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
 
+
+# Creative continuation: all new UI text, including grouped-menu labels.
+TRANSLATIONS.setdefault('CreativePreview', {}).update(
+{'Select/Edit': 'Auswahl/Bearbeiten',
+ 'Site & Structures': 'Grundstück & Bauwerke',
+ 'Hardscape': 'Beläge',
+ 'Planting': 'Bepflanzung',
+ 'Dimensions': 'Maße',
+ 'Sun Study': 'Sonnenstudie',
+ 'Export': 'Export',
+ 'Landscape': 'Landschaft',
+ 'Gardening': 'Gartenpflege',
+ 'Workspace': 'Arbeitsbereich',
+ 'Landscape tools': 'Landschaftswerkzeuge',
+ 'Advanced tools': 'Weitere Werkzeuge',
+ 'Project units': 'Projekteinheiten',
+ 'Feet & inches': 'Fuß & Zoll',
+ 'Decimal feet': 'Dezimalfuß',
+ 'Metric': 'Metrisch',
+ 'Grid spacing…': 'Rasterabstand…',
+ 'Grid spacing': 'Rasterabstand',
+ 'Grid spacing (cm):': 'Rasterabstand (cm):',
+ 'Open sun workspace': 'Sonnenarbeitsbereich öffnen',
+ 'Drawing presentation': 'Plandarstellung',
+ 'Architectural plant symbols': 'Architektonische Pflanzensymbole',
+ 'Detailed plant symbols': 'Detaillierte Pflanzensymbole',
+ 'Material texture strength…': 'Stärke der Materialtexturen…',
+ 'Material texture strength': 'Stärke der Materialtexturen',
+ 'Texture detail (%):': 'Texturdetails (%):',
+ 'Gardening workspace': 'Gartenpflege-Arbeitsbereich',
+ 'Essentials': 'Grunddaten',
+ 'Appearance': 'Darstellung',
+ 'Advanced': 'Erweitert',
+ 'Change project units': 'Projekteinheiten ändern',
+ 'Change drawing presentation': 'Plandarstellung ändern',
+ 'Change grid spacing': 'Rasterabstand ändern',
+ 'Target distance (ft/in):': 'Zielabstand (ft/in):',
+ 'Distance (ft/in)': 'Abstand (ft/in)',
+ 'Enter a length within the allowed range, such as 10\' 6 1/2" or 10.5 ft.': 'Eine Länge im zulässigen '
+                                                                             'Bereich eingeben, z. B. '
+                                                                             '10\' 6 1/2" oder 10.5 ft.',
+ 'Bare numbers mean feet. Use commas between coordinates; fractions such as 10\' 6 1/2" are accepted. @ means relative; < introduces a polar angle.': 'Zahlen '
+                                                                                                                                                      'ohne '
+                                                                                                                                                      'Einheit '
+                                                                                                                                                      'sind '
+                                                                                                                                                      'Fuß. '
+                                                                                                                                                      'Koordinaten '
+                                                                                                                                                      'mit '
+                                                                                                                                                      'Kommas '
+                                                                                                                                                      'trennen; '
+                                                                                                                                                      'Brüche '
+                                                                                                                                                      'wie '
+                                                                                                                                                      "10' "
+                                                                                                                                                      '6 '
+                                                                                                                                                      '1/2" '
+                                                                                                                                                      'sind '
+                                                                                                                                                      'erlaubt. '
+                                                                                                                                                      '@ '
+                                                                                                                                                      'bedeutet '
+                                                                                                                                                      'relativ; '
+                                                                                                                                                      '< '
+                                                                                                                                                      'leitet '
+                                                                                                                                                      'einen '
+                                                                                                                                                      'Polarwinkel '
+                                                                                                                                                      'ein.',
+ 'Canvas: {width} × {height}': 'Zeichenfläche: {width} × {height}',
+ 'A4 Landscape (11.69 in wide)': 'A4 quer (11.69 in breit)',
+ 'A3 Landscape (16.54 in wide)': 'A3 quer (16.54 in breit)',
+ 'Letter Landscape (11 in wide)': 'Letter quer (11 in breit)'}
+)
+TRANSLATIONS.setdefault('GardenPlannerApp', {}).update(
+{'X: {x}  Y: {y}': 'X: {x}  Y: {y}'}
+)
+TRANSLATIONS.setdefault('CanvasView', {}).update(
+{'Invalid distance. Enter a physical length.': 'Ungültiger Abstand. Eine Länge mit Einheit eingeben.'}
+)
+TRANSLATIONS.setdefault('ConstraintListItem', {}).update(
+{'{a} to {b}: {distance}': '{a} zu {b}: {distance}'}
+)
+TRANSLATIONS.setdefault('PdfReportService', {}).update(
+{'Position (ft/in)': 'Position (ft/in)'}
+)
 
 def fill_translations() -> None:
     """Fill in German translations in the .ts file."""

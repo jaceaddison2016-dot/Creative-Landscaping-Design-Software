@@ -11,8 +11,8 @@ import math
 from enum import Enum, auto
 from pathlib import Path
 
-from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
 from .object_types import ObjectType
@@ -31,6 +31,34 @@ _SPECIES_DIR = _PLANTS_DIR / "species"
 # allocation site, so every caller is protected -- not just the one that
 # happened to add its own validation first.
 _MAX_RENDER_DIAMETER_PX = 5000
+
+
+def render_architectural_plant(diameter: float, object_type: ObjectType) -> QPixmap:
+    """Original vector linework; the detailed SVG options stay intact."""
+    size = max(32, min(int(diameter), 1024))
+    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor("#48614C"), max(1, size / 130)))
+    painter.setBrush(QColor("#D7E2CD"))
+    margin = size * .075
+    painter.drawEllipse(QRectF(margin, margin, size - 2 * margin, size - 2 * margin))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    center = QPointF(size / 2, size / 2)
+    if object_type == ObjectType.TREE:
+        for index in range(8):
+            angle = index * math.pi / 4
+            end = QPointF(center.x() + math.cos(angle) * size * .37,
+                          center.y() + math.sin(angle) * size * .37)
+            painter.drawLine(center, end)
+        painter.drawEllipse(center, size * .06, size * .06)
+    else:
+        painter.drawEllipse(QRectF(size * .28, size * .28, size * .44, size * .44))
+        painter.drawLine(QPointF(size * .43, size * .5), QPointF(size * .57, size * .5))
+        painter.drawLine(QPointF(size * .5, size * .43), QPointF(size * .5, size * .57))
+    painter.end()
+    return QPixmap.fromImage(image)
 
 
 class PlantCategory(Enum):

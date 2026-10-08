@@ -2,6 +2,25 @@
 
 Architecture Decision Records (ADRs) for significant technical choices.
 
+## ADR-052: Verify Creative workflows inside the native packaged application
+
+**Status**: Accepted for the approved Windows test-build stage.
+**Context**: Source/offscreen tests and the inherited MCP smoke cannot establish
+packaged imperial typing, shortcuts, fonts or bundled library interaction.
+**Decision**: Add an opt-in `--prototype-check OUTPUT` to the normal desktop
+entry point. Isolate its QSettings account and Python temp storage before any
+startup recovery timer, schedule QtTest after real window
+creation, validate physical exports and save native widget captures. An external
+driver launches the frozen executable outside the checkout without console
+handles and requires a matching fresh run ID, successful child exit and native
+Windows plugin and an in-process GetStdHandle check. All three Popen streams
+must be None in frozen mode to avoid CPython duplicating parent handles. Repeat
+against the NSIS-installed copy before artifact upload.
+**Consequences**: QtTest is included in the frozen bundle but unused during normal
+startup. The diagnostic is coupled to the real application's controls and must
+evolve with them. Automated evidence remains distinct from human/GPU testing.
+Preserve installer identity, licensing and source distribution; create no release.
+
 ## ADR-001: PyQt6 as GUI Framework
 
 **Status**: Accepted
@@ -1990,3 +2009,50 @@ reader counts it from the frost. Measured over all 118 bundled species, **both**
 `tests/unit/test_harvest_offset_semantics.py` is the pinned baseline, and that
 test also asserts that `days_to_maturity` is reference data no computation reads —
 which is what keeps the correction out of the generator.
+
+## ADR-050: Opt-in Creative desktop design preview
+
+**Status:** Accepted for the experimental mechanism; visual direction awaiting owner approval.
+
+**Context:** The Creative redesign brief requires genuine editor/welcome previews
+and owner approval before broad application changes or installer publication.
+Existing semantic theme/listener infrastructure, GPL notices, command routing
+and ADR-030's ordered sidebar must be preserved.
+
+**Decision:** Use an explicitly invoked GardenPlannerApp subclass in the app
+wiring layer, with shared theme color overrides and small named-component
+styles. Wrap the sidebar container in a dock; retain all individual panel
+parents/order. Add a pure second layer view wired to the same commands. Reuse
+the welcome opening/recents contract and gallery registry. The preview runner
+isolates settings/data through the ADR-041 name redirection seam before stores
+exist. Capture mode resets only preview UiState for reproducible screenshots.
+
+**Alternatives rejected:** A separate website/static mockup would not validate
+the real editor. Replacing the app's global stylesheet or reparenting accordion
+panels would duplicate existing mechanisms or repeat ADR-030's ordering failure.
+Changing the default entry point would pass the owner's approval gate prematurely.
+
+**Consequences:** Normal startup, centimeters, schema, exports and package IDs
+remain unchanged. No fonts/company photos are downloaded or bundled. Existing
+apply_theme without overrides retains the upstream palette; normal startup or
+`--original` supplies the existing interface. The experiment has real editing
+controls but is not a production redesign or a new packaged release. Automated
+contrast/workflow tests and genuine captures support a visual review; native
+platform QA and broad component rollout follow approval.
+
+Evidence: `tests/integration/test_creative_design_preview.py`,
+`tests/unit/test_creative_contrast.py`, [design review](../design/README.md),
+[asset inventory](../../assets/creative/README.md).
+
+
+## ADR-051: Project-scoped display units and the Creative desktop workspace
+
+**Status:** implemented on the Creative draft branch; owner visual review and native packaging pending.
+
+Keep canonical centimeter geometry, command arguments, solar math and provider/Agent API data unchanged. Add `display_units` and `presentation` keys to `.ogp` 1.4; absent keys mean metric, detailed symbols and existing full-strength textures. New Creative projects default to imperial. Unit switches are undoable preferences, never geometry transforms. Frozen units in each numeric editor prevent a switch from reinterpreting a focused control's old text; untouched rounded displays do not write rounding into canonical values. LengthSpinBox separates canonical numeric precision from requested metric display precision, so editing one rectangle/ellipse/position component preserves its precise peer. LengthSpinBox emits cm; VolumeSpinBox emits litres. Fractions, explicit units and negative lengths live in Qt-free core/units.py. Imperial bare numbers mean feet and coordinate pairs require comma/semicolon separators.
+
+Imperial DXF modelspace is physically scaled to feet with INSUNITS=2; metric DXF declares centimeter units (5). Import derives its default centimeter scale from declared DXF units, retains explicit overrides, and treats unknown/unitless files as one centimeter per unit. CSV imperial columns explicitly use `_ft`. Soil/mulch quantities display yd³/ft², with prices converted in the opposite direction; persisted prices retain their canonical per-m³/per-m² meaning. No geometry conversion is saved back into a project.
+
+Reuse GardenPlannerApp through CreativePreviewWindow (retained internal name). The normal entry point now selects Creative, with --classic preserving the inherited shell. Existing menus, controllers, command manager and serializer remain authoritative. Two compact toolbar rows and optional Gardening/Sun workspaces replace permanently visible rows; simulation enablement follows its QAction independently of toolbar visibility. Side docks persist via existing QMainWindow state. Loaded grid spacing synchronizes every attached canvas/snap view through CanvasScene, including autosave recovery. Material edit/state/undo brushes use the current scene texture strength. Ctrl+F retains Find & Replace; View → Search object library uses Ctrl+Shift+F. Properties groups move the real editors without replacing their signal/undo paths. Original procedural architectural plant linework is a presentation option alongside the existing detailed SVG symbols.
+
+No new dependency, official logo, portfolio photograph or proprietary asset was introduced. Packaging follows revised visual approval and successful checks; this decision does not establish a Windows or Mac installer. See [coverage and evidence](../design/CONTINUATION_VALIDATION.md).

@@ -25,6 +25,7 @@ from open_garden_planner.core.constraints import (
     ConstraintType,
 )
 from open_garden_planner.core.measure_snapper import AnchorType, get_anchor_points
+from open_garden_planner.core.units import format_dimension, units_for
 from open_garden_planner.ui.canvas.items import GardenItemMixin
 
 # Colors
@@ -550,8 +551,7 @@ class DimensionLineManager:
         self._add_arrowhead(group, dim_b, -nx, -ny, color)
 
         # Distance text
-        dist_m = target_distance / 100.0
-        text_str = f"{dist_m:.2f} m"
+        text_str = format_dimension(target_distance, units_for(self._scene))
         text_item = QGraphicsSimpleTextItem(text_str)
         font = QFont()
         font.setPointSize(10)
@@ -621,8 +621,7 @@ class DimensionLineManager:
         self._add_arrowhead(group, dim_b, -1.0, 0.0, color)  # pointing left
 
         # Distance text
-        dist_m = target_distance / 100.0
-        text_str = f"↔ {dist_m:.2f} m"
+        text_str = "↔ " + format_dimension(target_distance, units_for(self._scene))
         text_item = QGraphicsSimpleTextItem(text_str)
         font = QFont()
         font.setPointSize(10)
@@ -686,8 +685,7 @@ class DimensionLineManager:
         self._add_arrowhead(group, dim_b, 0.0, -1.0, color)  # pointing up
 
         # Distance text
-        dist_m = target_distance / 100.0
-        text_str = f"↕ {dist_m:.2f} m"
+        text_str = "↕ " + format_dimension(target_distance, units_for(self._scene))
         text_item = QGraphicsSimpleTextItem(text_str)
         font = QFont()
         font.setPointSize(10)

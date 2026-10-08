@@ -1,5 +1,26 @@
 # 5. Building Block View
 
+## Creative packaged-workflow diagnostic
+
+`app/packaged_check.py` is an opt-in observer of the real desktop window, entered
+only with `--prototype-check OUTPUT`. It isolates settings and Python temporary
+storage before window creation (untitled recovery is otherwise process-wide)
+and schedules QtTest interaction after QApplication and the normal window exist.
+It writes synthetic projects, physical exports, screenshots and a JSON verdict.
+`scripts/run_packaged_creative_check.py` owns the child process, bounds its runtime
+and rejects stale results or non-native/non-frozen Windows evidence. Normal
+startup does not import QtTest. PyInstaller includes QtTest for this diagnostic;
+the normal editor, project format and settings identity retain their contracts.
+
+`scripts/record_creative_evidence.py` reads the installed synthetic diagnostic's
+four fixed PNGs, native JSON and BUILD-INFO. It requires successful frozen Windows
+evidence, no inherited handles and a source SHA matching the job. It verifies
+PNG integrity with the existing Pillow dependency, then emits numbered base64
+frames, image SHA-256 and metadata into API-readable GitHub logs. This supplements
+the same files in the artifact when the cloud cannot reach Actions' storage host.
+The consumer requires the expected build SHA, complete frames and matching hashes;
+no arbitrary projects or personal files are recorded.
+
 ## 5.1 High-Level Architecture
 
 ```mermaid
@@ -401,3 +422,26 @@ Black-box view of the GO/NO-GO spike for the renderer switch. It is **not part o
 | `scripts/make_bench_plans.py` | Deterministic `tests/fixtures/plans/bench_small.ogp` / `bench_large.ogp` through the real serializer (`--check` pins them); writes to a throwaway settings store. | → `.ogp` fixtures |
 
 Engine facts measured here live in the `ogp-3d-renderer` skill; the art-direction contract in `ogp-lush-cinematic`; the evidence in ADR-048 and `docs/09-architecture-decisions/adr-048-evidence/`.
+
+## 5.9 Creative desktop design experiment (approval pending)
+
+`app/creative_preview.py::CreativePreviewWindow` composes the existing main
+window, real canvas/controllers, a docked sidebar container and a second pure
+layer view. Individual SidebarController panels retain their canonical parents
+and order. `ui/creative_preview.py` provides the searchable existing gallery
+view and an inherited-contract welcome dialog; `ui/creative_theme.py` owns the
+proposed palette and installed-font fallbacks. `ui/theme.py` accepts optional
+color overrides through its existing stylesheet/listener pipeline.
+
+Only `scripts/creative_design_preview.py` imports the opt-in window. It redirects
+settings/data to a preview account before construction, creates an absent
+interactive sample through ProjectManager and preserves saved edits on restart.
+Captures use a separate account and synthetic fixture path and grab actual Qt
+widgets. Normal startup
+remains unchanged. See [ADR-050](../09-architecture-decisions/README.md#adr-050-opt-in-creative-desktop-design-preview)
+and [design review](../design/README.md); no approved production redesign is claimed.
+
+
+### Creative display adapters (draft continuation)
+
+`core/units.py` parses/formats physical quantities without Qt. `core/display_commands.py` provides undoable unit, grid and drawing-presentation preferences. `ui/widgets/length_spin_box.py`, `volume_spin_box.py` and `length_input.py` retain canonical cm/L at the Qt boundary. `app/creative_preview.py` reuses GardenPlannerApp and supplies compact workspace navigation. `ui/project_thumbnails.py` caches only locally captured user canvases; no network or portfolio assets. Details: ADR-051.

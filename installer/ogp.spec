@@ -141,6 +141,8 @@ a = Analysis(
         "PyQt6.QtWebEngineCore",
         "PyQt6.QtWebEngineWidgets",
         "PyQt6.QtWebChannel",
+        # Opt-in --prototype-check exercises actual packaged controls.
+        "PyQt6.QtTest",
         # Qt3D — US-E6 3D view (ADR-038; engine imports live only in
         # ui/view3d/qt3d_adapter.py, loaded lazily). PyInstaller's PyQt6 hook
         # collects the Qt3D DLLs once these bindings are named. NOTE: all four

@@ -114,3 +114,17 @@ exports/save are available to local clients by default; scene editing requires
 the preference **and** a configured token. Main-thread bridging and network
 guards remain untouched. Ordinary local editing needs no account or API keys.
 Optional provider lookup/weather/map behavior is not verified here.
+
+## Creative visual-preview customization
+
+The `feature/creative-design-preview` branch starts at desktop-foundation
+`439e486414070161d9fea58a6123644e8d0afdc3`. It adds an opt-in Qt editor/welcome
+experiment and a shared theme override seam, without changing the source import,
+license notices, dependencies, package identifiers, schema or internal units.
+Company assets remain placeholders. See BRAND_DESIGN_SYSTEM.md and
+docs/design/VALIDATION.md for scope/evidence; this branch is not a new installer.
+
+
+### Creative continuation, 2026-10-08 (draft)
+
+Further fork-only changes add project-scoped imperial UI adapters, compatible presentation keys, compact landscape workspaces, local recent-project thumbnails, original procedural architectural plant linework, and a Qt popup ownership/headless-test cleanup fix. Existing data/art attribution and GPL notices remain. No upstream version bump or production release accompanies these changes; no company logo or restricted imagery was added. The original import and source licenses remain unchanged.

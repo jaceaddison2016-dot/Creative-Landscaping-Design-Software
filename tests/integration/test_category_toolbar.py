@@ -18,6 +18,19 @@ from open_garden_planner.ui.widgets.gallery_data import build_toolbar_categories
 from open_garden_planner.ui.widgets.global_search import GlobalSearchField
 
 
+def test_destroyed_toolbar_releases_popup_widgets(qtbot):
+    from PyQt6 import sip
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    toolbar = CategoryToolbar()
+    popups = list(toolbar._category_dropdowns)
+    toolbar._category_buttons[0].click()
+    assert popups[0].isVisible()
+    toolbar.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert all(sip.isdeleted(popup) for popup in popups)
+
+
 class TestCategoryToolbarStructure:
     """Static structure: categories, icons, and search field are all wired up."""
 

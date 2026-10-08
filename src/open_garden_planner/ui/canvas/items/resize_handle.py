@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import (
     QMenu,
 )
 
+from open_garden_planner.core.units import METRIC, format_length, units_for
+
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGraphicsItem as ParentItem
 
@@ -1669,7 +1671,7 @@ class AnnotationLabel(QGraphicsItem):
         painter.drawText(QPointF(0, fm.ascent()), self._text)
 
 
-def _format_coordinate(x_cm: float, y_cm: float) -> str:
+def _format_coordinate(x_cm: float, y_cm: float, units=METRIC) -> str:
     """Format a vertex coordinate for display.
 
     Args:
@@ -1679,12 +1681,14 @@ def _format_coordinate(x_cm: float, y_cm: float) -> str:
     Returns:
         Formatted string like "(3.50, 2.10) m" or "(45.2, 30.1) cm"
     """
+    if units.imperial:
+        return f"({format_length(x_cm, units)}, {format_length(y_cm, units)})"
     if abs(x_cm) >= 100 or abs(y_cm) >= 100:
         return f"({x_cm / 100:.2f}, {y_cm / 100:.2f}) m"
     return f"({x_cm:.1f}, {y_cm:.1f}) cm"
 
 
-def _format_edge_length(length_cm: float) -> str:
+def _format_edge_length(length_cm: float, units=METRIC) -> str:
     """Format an edge length for display.
 
     Args:
@@ -1693,6 +1697,8 @@ def _format_edge_length(length_cm: float) -> str:
     Returns:
         Formatted string like "2.35 m" or "45.2 cm"
     """
+    if units.imperial:
+        return format_length(length_cm, units)
     if length_cm >= 100:
         return f"{length_cm / 100:.2f} m"
     return f"{length_cm:.1f} cm"
@@ -1868,7 +1874,7 @@ class VertexEditMixin:
             point = polygon.at(i)
             scene_pt = self.mapToScene(point)  # type: ignore[attr-defined]
             label = AnnotationLabel(self)  # type: ignore[arg-type]
-            label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y()))
+            label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y(), units_for(self.scene())))
             label.setPos(point.x(), point.y())
             self._coord_labels.append(label)
 
@@ -1881,7 +1887,7 @@ class VertexEditMixin:
             scene_p2 = self.mapToScene(p2)  # type: ignore[attr-defined]
             length = _edge_length(scene_p1, scene_p2)
             label = AnnotationLabel(self)  # type: ignore[arg-type]
-            label.set_text(_format_edge_length(length))
+            label.set_text(_format_edge_length(length, units_for(self.scene())))
             label.setPos(midpoint.x(), midpoint.y())
             self._edge_labels.append(label)
 
@@ -1910,7 +1916,7 @@ class VertexEditMixin:
             if i < count:
                 point = polygon.at(i)
                 scene_pt = self.mapToScene(point)  # type: ignore[attr-defined]
-                label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y()))
+                label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y(), units_for(self.scene())))
                 label.setPos(point.x(), point.y())
 
         # Update edge length labels
@@ -1922,7 +1928,7 @@ class VertexEditMixin:
                 scene_p1 = self.mapToScene(p1)  # type: ignore[attr-defined]
                 scene_p2 = self.mapToScene(p2)  # type: ignore[attr-defined]
                 length = _edge_length(scene_p1, scene_p2)
-                label.set_text(_format_edge_length(length))
+                label.set_text(_format_edge_length(length, units_for(self.scene())))
                 label.setPos(midpoint.x(), midpoint.y())
 
     def _get_vertex_position(self, index: int) -> QPointF:
@@ -2504,7 +2510,7 @@ class RectVertexEditMixin:
         for corner in corners:
             scene_pt = self.mapToScene(corner)  # type: ignore[attr-defined]
             label = AnnotationLabel(self)  # type: ignore[arg-type]
-            label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y()))
+            label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y(), units_for(self.scene())))
             label.setPos(corner.x(), corner.y())
             self._rect_coord_labels.append(label)
 
@@ -2517,7 +2523,7 @@ class RectVertexEditMixin:
             scene_p2 = self.mapToScene(p2)  # type: ignore[attr-defined]
             length = _edge_length(scene_p1, scene_p2)
             label = AnnotationLabel(self)  # type: ignore[arg-type]
-            label.set_text(_format_edge_length(length))
+            label.set_text(_format_edge_length(length, units_for(self.scene())))
             label.setPos(midpoint.x(), midpoint.y())
             self._rect_edge_labels.append(label)
 
@@ -2551,7 +2557,7 @@ class RectVertexEditMixin:
             if i < len(corners):
                 corner = corners[i]
                 scene_pt = self.mapToScene(corner)  # type: ignore[attr-defined]
-                label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y()))
+                label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y(), units_for(self.scene())))
                 label.setPos(corner.x(), corner.y())
 
         # Update edge length labels
@@ -2563,7 +2569,7 @@ class RectVertexEditMixin:
                 scene_p1 = self.mapToScene(p1)  # type: ignore[attr-defined]
                 scene_p2 = self.mapToScene(p2)  # type: ignore[attr-defined]
                 length = _edge_length(scene_p1, scene_p2)
-                label.set_text(_format_edge_length(length))
+                label.set_text(_format_edge_length(length, units_for(self.scene())))
                 label.setPos(midpoint.x(), midpoint.y())
 
     def _move_corner_to(
@@ -2888,7 +2894,7 @@ class PolylineVertexEditMixin:
         for point in points:
             scene_pt = self.mapToScene(point)  # type: ignore[attr-defined]
             label = AnnotationLabel(self)  # type: ignore[arg-type]
-            label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y()))
+            label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y(), units_for(self.scene())))
             label.setPos(point.x(), point.y())
             self._coord_labels.append(label)
 
@@ -2901,7 +2907,7 @@ class PolylineVertexEditMixin:
             scene_p2 = self.mapToScene(p2)  # type: ignore[attr-defined]
             length = _edge_length(scene_p1, scene_p2)
             label = AnnotationLabel(self)  # type: ignore[arg-type]
-            label.set_text(_format_edge_length(length))
+            label.set_text(_format_edge_length(length, units_for(self.scene())))
             label.setPos(midpoint.x(), midpoint.y())
             self._edge_labels.append(label)
 
@@ -2929,7 +2935,7 @@ class PolylineVertexEditMixin:
             if i < len(points):
                 point = points[i]
                 scene_pt = self.mapToScene(point)  # type: ignore[attr-defined]
-                label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y()))
+                label.set_text(_format_coordinate(scene_pt.x(), scene_pt.y(), units_for(self.scene())))
                 label.setPos(point.x(), point.y())
 
         # Update edge length labels
@@ -2941,7 +2947,7 @@ class PolylineVertexEditMixin:
                 scene_p1 = self.mapToScene(p1)  # type: ignore[attr-defined]
                 scene_p2 = self.mapToScene(p2)  # type: ignore[attr-defined]
                 length = _edge_length(scene_p1, scene_p2)
-                label.set_text(_format_edge_length(length))
+                label.set_text(_format_edge_length(length, units_for(self.scene())))
                 label.setPos(midpoint.x(), midpoint.y())
 
     def _rebuild_path(self) -> None:

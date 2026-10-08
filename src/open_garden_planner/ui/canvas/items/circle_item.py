@@ -23,9 +23,11 @@ from open_garden_planner.core.object_types import ObjectType, StrokeStyle, get_s
 from open_garden_planner.core.plant_renderer import (
     PlantCategory,
     is_plant_type,
+    render_architectural_plant,
     render_plant_pixmap,
 )
 from open_garden_planner.core.plant_sizing import sizing_for_item
+from open_garden_planner.core.units import units_for
 
 from .garden_item import GardenItemMixin
 from .resize_handle import (
@@ -215,7 +217,7 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         # Use stored fill_pattern and color if available, otherwise use style defaults
         pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
         color = self.fill_color if self.fill_color is not None else style.fill_color
-        brush = create_pattern_brush(pattern, color)
+        brush = create_pattern_brush(pattern, color, getattr(self.scene(), "texture_strength", 1.0))
         self.setBrush(brush)
 
     def _setup_flags(self) -> None:
@@ -376,14 +378,17 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
             # Render at a larger size so organic shapes fill the circle
             render_diameter = diameter * self._PLANT_FILL_SCALE
 
-            pixmap = render_plant_pixmap(
-                object_type=self.object_type,
-                diameter=render_diameter,
-                item_id=str(self._item_id),
-                species=self._plant_species,
-                category=self._plant_category,
-                tint_color=self.fill_color,
-            )
+            if getattr(self.scene(), "plant_symbol_style", "detailed") == "architectural":
+                pixmap = render_architectural_plant(render_diameter, self.object_type)
+            else:
+                pixmap = render_plant_pixmap(
+                    object_type=self.object_type,
+                    diameter=render_diameter,
+                    item_id=str(self._item_id),
+                    species=self._plant_species,
+                    category=self._plant_category,
+                    tint_color=self.fill_color,
+                )
 
             if pixmap is not None:
                 painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -620,7 +625,7 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         # Center coordinate label
         if self._center_label is None:
             self._center_label = AnnotationLabel(self)
-        self._center_label.set_text(_format_coordinate(center_scene.x(), center_scene.y()))
+        self._center_label.set_text(_format_coordinate(center_scene.x(), center_scene.y(), units_for(self.scene())))
         self._center_label.setPos(center_item.x(), center_item.y())
         self._center_label.show()
 
@@ -628,7 +633,7 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         right_mid = QPointF(rect.right(), rect.y() + rect.height() / 2)
         if self._diameter_label is None:
             self._diameter_label = AnnotationLabel(self)
-        self._diameter_label.set_text(f"\u2300 {_format_edge_length(diameter_cm)}")
+        self._diameter_label.set_text(f"\u2300 {_format_edge_length(diameter_cm, units_for(self.scene()))}")
         self._diameter_label.setPos(right_mid.x(), right_mid.y())
         self._diameter_label.show()
 
@@ -649,12 +654,12 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         center_item = QPointF(rect.x() + rect.width() / 2, rect.y() + rect.height() / 2)
         center_scene = self.mapToScene(center_item)
 
-        self._center_label.set_text(_format_coordinate(center_scene.x(), center_scene.y()))
+        self._center_label.set_text(_format_coordinate(center_scene.x(), center_scene.y(), units_for(self.scene())))
         self._center_label.setPos(center_item.x(), center_item.y())
 
         right_mid = QPointF(rect.right(), rect.y() + rect.height() / 2)
         if self._diameter_label is not None:
-            self._diameter_label.set_text(f"\u2300 {_format_edge_length(diameter_cm)}")
+            self._diameter_label.set_text(f"\u2300 {_format_edge_length(diameter_cm, units_for(self.scene()))}")
             self._diameter_label.setPos(right_mid.x(), right_mid.y())
 
     def _on_resize_start(self) -> None:

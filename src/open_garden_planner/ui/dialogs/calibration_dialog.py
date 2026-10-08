@@ -14,6 +14,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.core.units import parse_length
+from open_garden_planner.ui.widgets.length_spin_box import widget_units
+
 
 class CalibrationDialog(QDialog):
     """Dialog for calibrating background image scale using two points.
@@ -82,11 +85,11 @@ class CalibrationDialog(QDialog):
         distance_layout.addWidget(QLabel(self.tr("Real-world distance:")))
 
         self._distance_input = QLineEdit()
-        self._distance_input.setPlaceholderText("e.g., 1200 (cm) or 12 (m)")
+        self._distance_input.setPlaceholderText('20 ft or 20\' 6"' if widget_units(self).imperial else "1200 cm or 12 m")
         self._distance_input.setEnabled(False)
         distance_layout.addWidget(self._distance_input)
 
-        self._unit_label = QLabel("cm")
+        self._unit_label = QLabel("ft/in" if widget_units(self).imperial else "cm")
         distance_layout.addWidget(self._unit_label)
 
         self._reset_button = QPushButton(self.tr("Reset Points"))
@@ -192,7 +195,7 @@ class CalibrationDialog(QDialog):
         # Parse distance input
         try:
             distance_text = self._distance_input.text().strip()
-            distance = float(distance_text)
+            distance = parse_length(distance_text, widget_units(self))
             if distance <= 0:
                 return None
             # Distance is already in cm

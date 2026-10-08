@@ -463,9 +463,9 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Key signal**: in the live session, both bed and plant had `zValue() == 0`. The plant was on top. After load, both still had `zValue() == 0` — but the bed was on top. So the *tie-break* between same-z items had flipped between sessions.
 
-**Root cause**: `ui/canvas/canvas_scene.py:321` `_refresh_layer_z` set every item's z to `layer.z_order * 100` (since revised by #338/ADR-043 into a per-item ranked z within that band — §8.25). Items in the same layer get *the same z*. Qt's `QGraphicsScene` then tie-breaks by item insertion order. The live session inserts bed first, then plant — plant on top. The post-load reconstruction inserts items in scene-traversal order from the saved JSON, which is reversed by serialization, putting the plant first and the bed on top.
+**Root cause**: `ui/canvas/canvas_scene.py:1008` `_refresh_layer_z` set every item's z to `layer.z_order * 100` (since revised by #338/ADR-043 into a per-item ranked z within that band — §8.25). Items in the same layer get *the same z*. Qt's `QGraphicsScene` then tie-breaks by item insertion order. The live session inserts bed first, then plant — plant on top. The post-load reconstruction inserts items in scene-traversal order from the saved JSON, which is reversed by serialization, putting the plant first and the bed on top.
 
-**Fix**: Add a third pass in `_update_items_z_order` (mirroring the existing ROOF_RIDGE special case, now `ui/canvas/canvas_scene.py:854` `ROOF_RIDGE` inside `_stack_entries` since #338/ADR-043's rewrite — §8.25) that walks every item with `_parent_bed_id` set and bumps its z to `parent.zValue() + 1`. Now plants always have a strictly higher z than their bed, regardless of insertion order.
+**Fix**: Add a third pass in `_update_items_z_order` (mirroring the existing ROOF_RIDGE special case, now `ui/canvas/canvas_scene.py:889` `ROOF_RIDGE` inside `_stack_entries` since #338/ADR-043's rewrite — §8.25) that walks every item with `_parent_bed_id` set and bumps its z to `parent.zValue() + 1`. Now plants always have a strictly higher z than their bed, regardless of insertion order.
 
 **Lesson**: Identical zValues are a footgun across save/load boundaries because `QGraphicsScene` tie-breaks by *insertion order*, which is **not stable** between live mutation order and JSON-load order. Whenever a parent-child draw relationship matters, encode it explicitly via `parent.zValue() + 1` — never rely on "I inserted them in the right order, it'll just work". Pattern: anywhere `_update_items_z_order` touches multiple item categories, add an explicit ordering pass per parent-child relationship.
 
@@ -1655,3 +1655,150 @@ site by AST — because a bare literal is invisible to any scan for translations
 that is how this survived one round of scanning.
 
 Related: §11.4.6, `tests/unit/test_status_literals_are_translated.py`.
+
+## Case study: Creative library activation omitted tool selection (2026-10-07)
+
+**Symptom:** A genuine click in the new compact object library selected a tree
+row, but a following canvas gesture created nothing.
+
+**Wrong theories:** The Qt row click was not delivered; perhaps a single click
+or drag should have committed a tree.
+
+**Key logs:** `[PREVIEW_ACTIVATE] emitted Round Deciduous ToolType.TREE`;
+`[PREVIEW_GESTURE] tool SelectTool after press 0`. After restoring the existing
+signal ordering: `tool CircleTool after press 0`, then `after second click 1`.
+
+**Root cause:** `_on_gallery_item_selected` only sets species/category metadata
+on an already-active CircleTool. CategoryDropdown emits tool_selected first,
+then item_selected. The new view had omitted the first signal.
+
+**Fix:** Follow the existing two-signal contract; drive the actual center/rim
+gesture in the integration test. Remove instrumentation before commit.
+
+**Lesson:** A metadata-selection signal is not necessarily a tool-activation
+signal. Observe the active tool and completed gesture before assuming placement
+semantics. Pinned by `test_library_click_places_undoable_tree_and_round_trips`
+in `tests/integration/test_creative_design_preview.py`; risk-log cross-reference
+in `docs/11-risks-and-technical-debt/README.md`.
+
+## Case study: a desktop preview subclass changed inherited translation context (2026-10-07)
+
+**Symptom:** With the actual German QM installed, the preview File menu stayed
+English even though the welcome proposal translated.
+
+**Wrong theory:** Registering the new CreativePreview strings and welcome footer
+was enough to preserve inherited localization.
+
+**Key logs:** `[TRANSLATION_PROBE] inherited: &File`;
+`[TRANSLATION_PROBE] original context: &Datei`;
+`[TRANSLATION_PROBE] actual menu: &File`.
+
+**Root cause:** QObject.tr used the new CreativePreviewWindow class context for
+inherited methods. Existing menu strings were registered under GardenPlannerApp.
+The runner also omitted normal startup's load_translator initialization, caught
+by independent review.
+
+**Fix:** Forward inherited tr calls to GardenPlannerApp, keep new strings in
+CreativePreview, and load the saved translator before constructing the window.
+Compiled-German tests inspect the real menu/header actions; a real launcher
+subprocess test verifies the saved language on restart. Remove probe logging.
+
+**Lesson:** A subclass can change a framework's implicit lookup context without
+changing any inherited text. Check the actual launcher and main window as well
+as new component strings. See the risk-log entry and
+`docs/reviews/CREATIVE_DESIGN_PREVIEW.md`.
+
+
+## Case study: accumulated Qt windows and orphaned category popups (Creative continuation, 2026-10-08)
+
+**Symptom:** full-suite theme changes took minutes, with roughly 79,779 live widgets.
+**Wrong theories:** the welcome dialog was blocking; only repeated stylesheet passes caused the stall.
+**Key logs:** `[OWNERSHIP_PROBE] unparented 11 widgets 517`; after DeferredDelete, `surviving popups 11 widgets 493`. A real main-window destruction probe left exactly the 11 unowned CategoryDropdown top-level windows (493 widgets). After parenting the popups and draining DeferredDelete, a 1,252-widget window returned to zero. Prefix timing: 652 passed / 13 skipped in 351.92 s with instrumentation; clean focused lifetime/theme run: 133 passed in 56.02 s.
+**Root cause:** Qt popup window flags provided no QObject ownership; pytest-qt's close/deleteLater calls also remained queued when tests never entered QApplication.exec(). Global theme work then restyled all accumulated windows. Stack dumps and traceback logging located app.setStyleSheet, not modal welcome execution.
+**Fix:** CategoryDropdown(category, toolbar); a real destroy-and-click popup regression; flush QEvent.DeferredDelete at test teardown. Creative applies the combined theme once rather than a base pass plus an appended pass; its inherited theme handler uses one overridable hook. No tests or assertions were removed and no timeout was raised. The diagnostic lifetime run was intentionally interrupted after identifying ownership; it is not a passing check.
+**Lesson:** distinguish C++ ownership from window flags, and process deferred deletion explicitly in a headless Qt test harness. All temporary instrumentation was removed.
+
+
+## Case study: a startup probe scheduled before QApplication (2026-10-08)
+
+**Symptom:** a new subprocess entry-point test timed out while the actual editor stayed open.
+**Wrong theory:** the new Creative entry point did not start.
+**Key evidence:** `[TIMER_DIAG] pre-application None`, followed by Qt's `QBasicTimer::start: current thread's event dispatcher has already been destroyed`; only `[TIMER_DIAG] post-timer fired` appeared. The probe also printed its scheduling stack.
+**Root cause:** the test registered QTimer.singleShot before main created QApplication, so its inspector never fired.
+**Fix:** schedule inspection after the real window's show call, catch probe assertions into a nonzero subprocess exit, and keep the original 30 s timeout. The real normal-entry-point test then passed in 3.58 s. No production startup workaround was needed.
+**Lesson:** install headless startup observers only after Qt owns an event dispatcher; a hanging test is not evidence of a hanging product.
+
+
+## Case study: display preferences missed retained workflows (2026-10-08)
+
+**Symptom:** existing edit annotations kept feet after selecting Metric; changing width rounded an untouched height; texture edits ignored the current strength; recovery snapping kept the old grid; Ctrl+F became ambiguous; an exported 20 ft patio imported at 20 cm.
+**Wrong theories:** refreshing the Properties panel covered all measurement displays; signal blocking prevented precision loss; ordinary file-open synchronization covered recovery; preserving old tool actions guaranteed shortcut compatibility.
+**Key evidence:** six independent real-widget probes failed. `[PEER_DIAG] model after ... 500.0, 198.7` versus canonical height 198.654321, with the callback stack from Return → valueChanged → _on_dimension_changed; `TEXTURE_EQ False STRENGTH 0.0`; `RECOVERED_GRID 30.48 SAVED_GRID 15.24`; `CTRL_F_COUNTS 0 0 SEARCH_FOCUS False`; DXF width 20.0 versus expected 609.6. The diagnostic wrappers lived only in a temporary runner and were removed from the execution path.
+**Root cause:** presentation was only handled at new UI entry points. Retained annotations, coupled numeric editors, brush callbacks, recovery loading and CAD import still had their old assumptions. QDoubleSpinBox decimals controlled its stored numeric precision as well as its displayed precision.
+**Fix:** refresh live item annotations and selection measurements; separate spin-box numeric precision from locale-aware metric display; use a current-strength material brush helper for edit/undo/state restore; synchronize loaded grid spacing through CanvasScene for every attached view; retain Find & Replace Ctrl+F and expose library search Ctrl+Shift+F; derive import defaults from declared DXF units, preserving explicit overrides and unitless defaults. Integration regressions exercise the actual Qt workflows, peer positions/ellipse dimensions, and physical DXF round trips.
+**Lesson:** presentation preferences must cross existing callback and loading seams. Test a changed component with a precise unchanged peer, and test both directions of a physical format conversion.
+
+
+## Case study: a unit-aware DXF default still passed through a lossy editor (2026-10-08)
+
+**Symptom:** valid kilometer and micron DXF imports silently used a factor ten times too small/large; US survey feet defaulted to centimeters.
+**Wrong theory:** using the file header plus ezdxf.conversion_factor was sufficient.
+**Key evidence:** `[DXF_UNIT_DIAG] 7 service 100000.0 dialog 10000.0`; `13 service 0.0001 dialog 0.001`; `21 service 1.0 dialog 1.0`, with diagnostic caller stacks. The retained dialog range/three decimal places changed the header-derived value, and ezdxf's conversion table marks survey units unsupported.
+**Root cause:** correct service conversion still traversed a bounded rounded QDoubleSpinBox; unsupported library conversions were mistaken for unitless input.
+**Fix:** preserve the canonical declared factor independently of compact display, allow the full declared DXF factor range with 15 decimal storage, keep untouched rounded text from firing an edit, and explicitly cover microinches/mils and US survey foot/inch/yard/mile (one survey foot = 1200/3937 m). Explicit user changes remain authoritative. Twenty-four declared-unit cases exercise dialog completion, untouched interpretation, physical import and an actual edited override.
+**Lesson:** inspect the editor's numeric storage range/precision, not merely the formatter. Unknown units and known-but-unsupported units must not share a fallback by accident. Temporary diagnostics remain only in ignored local evidence.
+
+
+## Case study: canonical precision must be a constructor invariant (2026-10-08)
+
+**Symptom:** an imperial soil/container-height editor initialized at 15.875 cm (6¼ inches) held 15.88 cm; inch stepping accumulated that rounding.
+**Wrong theory:** overriding setDecimals covered every editor, since the geometry fields call it explicitly.
+**Key evidence:** the independent default-constructor probe measured 15.875 → 15.88. Actual soil-depth and container-height construction never called setDecimals, unlike geometry controls.
+**Root cause:** QDoubleSpinBox's two-decimal constructor default remained until callers changed it.
+**Fix:** initialize the canonical 15-decimal precision in LengthSpinBox.__init__, with a separate two-decimal metric presentation default. Three regressions cover constructor/untouched interpretation/unit switch/inch step and actual soil/container-height metadata updates; the 51-test workflow passed in 25.71 s.
+**Lesson:** enforce canonical numeric storage in the adapter constructor, so correctness does not depend on each caller's formatting choices. No production instrumentation remains.
+
+
+## Case study: Windows QA launch inherited CI console handles (Creative packaging)
+
+**Symptom:** Independent review found that a detached packaged GUI QA child could still receive the Actions runner's console handles, weakening its Explorer-startup evidence.
+
+**Wrong theory:** `DETACHED_PROCESS` and `close_fds=True` alone guarantee no standard-handle inheritance.
+
+**Key evidence:** CPython 3.12's Windows `Popen._get_handles` returns six `-1` values only when stdin/stdout/stderr are all `None`. Mixing `stdin=DEVNULL` with `stdout/stderr=None` duplicates parent handles and sets `STARTF_USESTDHANDLES`.
+
+**Root cause:** The source-mode input redirection was reused for the frozen-mode launch. Inspection of the installed interpreter's Windows implementation confirmed the review evidence before changing the launch.
+
+**Fix:** Keep all three streams `None` for the detached frozen child; preserve source-mode DEVNULL/logs. The actual frozen app calls `GetStdHandle` and rejects inherited handles, and the external driver requires that fresh native result. Fault-injection tests cover the launch contract, stale IDs, nonzero exits, inherited handles and unfrozen reports. Native execution remains a separate required gate.
+
+**Lesson:** Prove the Windows process contract inside the child; detachment and handle inheritance are separate behaviors. No temporary instrumentation is retained.
+
+
+## Case study: QA settings isolation did not protect untitled autosave recovery
+
+**Symptom:** The opt-in Creative diagnostic could discover/delete an existing untitled recovery despite its private QA settings account.
+
+**Wrong theory:** Changing the QSettings/QApplication identity isolates every persistence surface.
+
+**Key evidence:** An independent runtime probe printed QA identity, actual AutoSaveManager path, a new-plan call stack and `sentinel exists before=True / after=False`. A direct-CLI regression reproduced deletion with a synthetic sentinel under isolated TMP/TEMP/TMPDIR.
+
+**Root cause:** Untitled recovery uses `tempfile.gettempdir()/~autosave_untitled.ogp`; the actual `_new_project_document` clears that path. Settings identity cannot retarget Python temporary storage.
+
+**Fix:** The diagnostic retains a fresh TemporaryDirectory and assigns its path to process-local `tempfile.tempdir` before application construction or recovery timers. The normal app's autosave contract is unchanged. A real subprocess regression invokes the flag directly and requires unchanged sentinel bytes.
+
+**Lesson:** Trace each persistence path rather than inferring isolation from settings alone. Test protection of pre-existing data, including direct diagnostic invocation.
+
+
+## Case study: Windows offscreen Qt supplied no system fonts
+
+**Symptom:** Native Windows build preparation passed 272 checks but failed three glyph/narrow-window checks; Linux checks passed.
+
+**Wrong theories:** The approved application font lacks superscripts, or a redesign is required to fix Windows status spacing.
+
+**Key evidence:** Two unchanged-assertion diagnostic runs reported requested `Sans Serif`, an empty resolved font family, `platform=offscreen`, and False for every digit, quote, slash and superscript. The same synthetic selection needed 564px with this font engine while its allocated label was 459px.
+
+**Root cause:** The Windows workflow and subprocess tests forced Qt's offscreen plugin, which has no system font database on this runner. Its font metrics do not represent the shipped native Windows app.
+
+**Fix:** Select the native windows plugin for Windows GUI tests and subprocess probes; retain offscreen on Linux. Keep all glyph, width and timeout assertions. Native validation is still required to prove this correction. No product layout or fonts are changed to satisfy an empty-font test backend.
+
+**Lesson:** Record the actual platform plugin and resolved font before attributing cross-platform glyph/layout failures to the UI. Diagnostic failure messages remain useful; no temporary print instrumentation is retained.

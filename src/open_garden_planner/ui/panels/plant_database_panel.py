@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core.object_types import ObjectType
+from open_garden_planner.core.units import units_for
 from open_garden_planner.models.plant_data import (
     FlowerType,
     PlantCycle,
@@ -41,6 +42,7 @@ from open_garden_planner.ui.plant_species_assignment import (
     plant_source_label,
 )
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox
 
 
 class ClickableDateEdit(QDateEdit):
@@ -476,7 +478,7 @@ class PlantDatabasePanel(QWidget):
         # === GROWTH INFORMATION ===
 
         # Max Height
-        self.max_height_spin = QDoubleSpinBox()
+        self.max_height_spin = LengthSpinBox(unit_source=self)
         self.max_height_spin.setRange(0, 10000)
         self.max_height_spin.setSingleStep(10)
         self.max_height_spin.setDecimals(0)
@@ -489,7 +491,7 @@ class PlantDatabasePanel(QWidget):
         self.details_form.addRow(self.tr("Max Height:"), self.max_height_spin)
 
         # Max Spread
-        self.max_spread_spin = QDoubleSpinBox()
+        self.max_spread_spin = LengthSpinBox(unit_source=self)
         self.max_spread_spin.setRange(0, 10000)
         self.max_spread_spin.setSingleStep(10)
         self.max_spread_spin.setDecimals(0)
@@ -500,7 +502,7 @@ class PlantDatabasePanel(QWidget):
         self.details_form.addRow(self.tr("Max Spread:"), self.max_spread_spin)
 
         # Current Height (instance-specific)
-        self.current_height_spin = QDoubleSpinBox()
+        self.current_height_spin = LengthSpinBox(unit_source=self)
         self.current_height_spin.setRange(0, 10000)
         self.current_height_spin.setSingleStep(10)
         self.current_height_spin.setDecimals(0)
@@ -511,7 +513,7 @@ class PlantDatabasePanel(QWidget):
         self.details_form.addRow(self.tr("Current Height:"), self.current_height_spin)
 
         # Current Spread (instance-specific)
-        self.current_spread_spin = QDoubleSpinBox()
+        self.current_spread_spin = LengthSpinBox(unit_source=self)
         self.current_spread_spin.setRange(0, 10000)
         self.current_spread_spin.setSingleStep(10)
         self.current_spread_spin.setDecimals(0)
@@ -1151,6 +1153,10 @@ class PlantDatabasePanel(QWidget):
         if object_type not in (ObjectType.TREE, ObjectType.SHRUB, ObjectType.PERENNIAL):
             self._hide_details()
             return
+
+        for spin in (self.max_height_spin, self.max_spread_spin,
+                     self.current_height_spin, self.current_spread_spin):
+            spin.set_display_units(units_for(item.scene()))
 
         # Store current plant item for Create Custom functionality
         self._current_plant_item = item

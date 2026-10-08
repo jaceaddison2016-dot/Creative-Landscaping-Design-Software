@@ -764,6 +764,14 @@
             <source>Created {dir} offset of {dist:.1f} cm</source>
             <translation>{dir}-Versatz von {dist:.1f} cm erstellt</translation>
         </message>
+        <message>
+            <source>Invalid distance. Enter a physical length.</source>
+            <translation>Ungültiger Abstand. Eine Länge mit Einheit eingeben.</translation>
+        </message>
+        <message>
+            <source>Created {dir} offset of {dist}</source>
+            <translation>{dir}-Versatz von {dist} erstellt</translation>
+        </message>
     </context>
     <context>
         <name>CircleItem</name>
@@ -1262,6 +1270,10 @@
         <message>
             <source>{a} lies on the circle of {b}</source>
             <translation>{a} liegt auf dem Kreis von {b}</translation>
+        </message>
+        <message>
+            <source>{a} to {b}: {distance}</source>
+            <translation>{a} zu {b}: {distance}</translation>
         </message>
     </context>
     <context>
@@ -3650,6 +3662,18 @@ Details: {error}</translation>
         <message>
             <source>Warning: {count} unrecognized item(s) could not be loaded and were skipped.</source>
             <translation>Warnung: {count} nicht erkannte(s) Objekt(e) konnten nicht geladen werden und wurden übersprungen.</translation>
+        </message>
+        <message>
+            <source>X: {x}  Y: {y}</source>
+            <translation>X: {x}  Y: {y}</translation>
+        </message>
+        <message>
+            <source>New project created: {width} x {height}</source>
+            <translation>Neues Projekt erstellt: {width} x {height}</translation>
+        </message>
+        <message>
+            <source>Canvas resized to {width} x {height}</source>
+            <translation>Leinwand auf {width} x {height} geändert</translation>
         </message>
     </context>
     <context>
@@ -7955,6 +7979,10 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</source>
             <source>{n} layer(s) found.</source>
             <translation>{n} Ebene(n) gefunden.</translation>
         </message>
+        <message>
+            <source>Declared DXF units set the default. Unknown or unitless files default to 1 cm per unit; adjust this factor when needed.</source>
+            <translation>Deklarierte DXF-Einheiten bestimmen den Standard. Unbekannte oder einheitenlose Dateien verwenden 1 cm pro Einheit; passen Sie diesen Faktor bei Bedarf an.</translation>
+        </message>
     </context>
     <context>
         <name>PdfReportDialog</name>
@@ -8140,6 +8168,10 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</source>
         <message>
             <source>(photo: {filename})</source>
             <translation>(Foto: {filename})</translation>
+        </message>
+        <message>
+            <source>Position (ft/in)</source>
+            <translation>Position (ft/in)</translation>
         </message>
     </context>
     <context>
@@ -11323,6 +11355,398 @@ Details: {error}</translation>
         <message>
             <source>Calibration complete</source>
             <translation>Kalibrierung abgeschlossen</translation>
+        </message>
+    </context>
+    <context>
+        <name>CreativePreview</name>
+        <message>
+            <source>Creative Landscape Studio</source>
+            <translation>Creative Landscape Studio</translation>
+        </message>
+        <message>
+            <source>Text placeholder · identity approval pending</source>
+            <translation>Textplatzhalter · Freigabe der Markenidentität ausstehend</translation>
+        </message>
+        <message>
+            <source>Identity placeholder</source>
+            <translation>Markenplatzhalter</translation>
+        </message>
+        <message>
+            <source>A workspace for landscape planning</source>
+            <translation>Ein Arbeitsbereich für die Landschaftsplanung</translation>
+        </message>
+        <message>
+            <source>Search objects and plants</source>
+            <translation>Objekte und Pflanzen suchen</translation>
+        </message>
+        <message>
+            <source>Filter the built-in object library</source>
+            <translation>Die integrierte Objektbibliothek filtern</translation>
+        </message>
+        <message>
+            <source>Object category</source>
+            <translation>Objektkategorie</translation>
+        </message>
+        <message>
+            <source>All objects</source>
+            <translation>Alle Objekte</translation>
+        </message>
+        <message>
+            <source>Placeable objects</source>
+            <translation>Platzierbare Objekte</translation>
+        </message>
+        <message>
+            <source>Choose an object, then place it on the canvas</source>
+            <translation>Ein Objekt auswählen und auf der Zeichenfläche platzieren</translation>
+        </message>
+        <message>
+            <source>Creative design preview</source>
+            <translation>Creative-Designvorschau</translation>
+        </message>
+        <message>
+            <source>Start a project</source>
+            <translation>Ein Projekt starten</translation>
+        </message>
+        <message>
+            <source>Create a landscape plan or return to your work.</source>
+            <translation>Einen Landschaftsplan erstellen oder die Arbeit fortsetzen.</translation>
+        </message>
+        <message>
+            <source>New project</source>
+            <translation>Neues Projekt</translation>
+        </message>
+        <message>
+            <source>Create a new landscape plan</source>
+            <translation>Einen neuen Landschaftsplan erstellen</translation>
+        </message>
+        <message>
+            <source>Open project…</source>
+            <translation>Projekt öffnen…</translation>
+        </message>
+        <message>
+            <source>Open an existing .ogp project</source>
+            <translation>Ein vorhandenes .ogp-Projekt öffnen</translation>
+        </message>
+        <message>
+            <source>Recent projects</source>
+            <translation>Aktuelle Projekte</translation>
+        </message>
+        <message>
+            <source>Open selected</source>
+            <translation>Ausgewähltes öffnen</translation>
+        </message>
+        <message>
+            <source>Clear recent list</source>
+            <translation>Verlauf löschen</translation>
+        </message>
+        <message>
+            <source>Built on Open Garden Planner · GPL-3.0-or-later</source>
+            <translation>Auf Basis von Open Garden Planner · GPL-3.0-or-later</translation>
+        </message>
+        <message>
+            <source>{name}
+Modified {date}</source>
+            <translation>{name}
+Geändert am {date}</translation>
+        </message>
+        <message>
+            <source>Selection &amp; properties</source>
+            <translation>Auswahl &amp; Eigenschaften</translation>
+        </message>
+        <message>
+            <source>Library</source>
+            <translation>Bibliothek</translation>
+        </message>
+        <message>
+            <source>Layers</source>
+            <translation>Ebenen</translation>
+        </message>
+        <message>
+            <source>Objects &amp; plants</source>
+            <translation>Objekte &amp; Pflanzen</translation>
+        </message>
+        <message>
+            <source>Project</source>
+            <translation>Projekt</translation>
+        </message>
+        <message>
+            <source>Beds &amp; surfaces</source>
+            <translation>Beete &amp; Flächen</translation>
+        </message>
+        <message>
+            <source>Shapes</source>
+            <translation>Formen</translation>
+        </message>
+        <message>
+            <source>Trees</source>
+            <translation>Bäume</translation>
+        </message>
+        <message>
+            <source>Shrubs</source>
+            <translation>Sträucher</translation>
+        </message>
+        <message>
+            <source>Perennials</source>
+            <translation>Stauden</translation>
+        </message>
+        <message>
+            <source>Vegetables</source>
+            <translation>Gemüse</translation>
+        </message>
+        <message>
+            <source>Structures</source>
+            <translation>Bauwerke</translation>
+        </message>
+        <message>
+            <source>Furniture</source>
+            <translation>Möbel</translation>
+        </message>
+        <message>
+            <source>Fences</source>
+            <translation>Zäune</translation>
+        </message>
+        <message>
+            <source>Utilities</source>
+            <translation>Infrastruktur</translation>
+        </message>
+        <message>
+            <source>Containers</source>
+            <translation>Pflanzgefäße</translation>
+        </message>
+        <message>
+            <source>Select</source>
+            <translation>Auswählen</translation>
+        </message>
+        <message>
+            <source>Measure</source>
+            <translation>Messen</translation>
+        </message>
+        <message>
+            <source>Text</source>
+            <translation>Text</translation>
+        </message>
+        <message>
+            <source>Callout</source>
+            <translation>Beschriftung</translation>
+        </message>
+        <message>
+            <source>Journal</source>
+            <translation>Tagebuch</translation>
+        </message>
+        <message>
+            <source>Focus canvas</source>
+            <translation>Zeichenfläche fokussieren</translation>
+        </message>
+        <message>
+            <source>Reset workspace</source>
+            <translation>Arbeitsbereich zurücksetzen</translation>
+        </message>
+        <message>
+            <source>Geometric shade · computer time ({zone})</source>
+            <translation>Geometrischer Schatten · Computerzeit ({zone})</translation>
+        </message>
+        <message>
+            <source>Unsaved changes</source>
+            <translation>Ungespeicherte Änderungen</translation>
+        </message>
+        <message>
+            <source>No unsaved changes</source>
+            <translation>Keine ungespeicherten Änderungen</translation>
+        </message>
+        <message>
+            <source>{name}  ·  {state}</source>
+            <translation>{name}  ·  {state}</translation>
+        </message>
+        <message>
+            <source>Select/Edit</source>
+            <translation>Auswahl/Bearbeiten</translation>
+        </message>
+        <message>
+            <source>Site &amp; Structures</source>
+            <translation>Grundstück &amp; Bauwerke</translation>
+        </message>
+        <message>
+            <source>Hardscape</source>
+            <translation>Beläge</translation>
+        </message>
+        <message>
+            <source>Planting</source>
+            <translation>Bepflanzung</translation>
+        </message>
+        <message>
+            <source>Dimensions</source>
+            <translation>Maße</translation>
+        </message>
+        <message>
+            <source>Sun Study</source>
+            <translation>Sonnenstudie</translation>
+        </message>
+        <message>
+            <source>Export</source>
+            <translation>Export</translation>
+        </message>
+        <message>
+            <source>Landscape</source>
+            <translation>Landschaft</translation>
+        </message>
+        <message>
+            <source>Gardening</source>
+            <translation>Gartenpflege</translation>
+        </message>
+        <message>
+            <source>Workspace</source>
+            <translation>Arbeitsbereich</translation>
+        </message>
+        <message>
+            <source>Landscape tools</source>
+            <translation>Landschaftswerkzeuge</translation>
+        </message>
+        <message>
+            <source>Advanced tools</source>
+            <translation>Weitere Werkzeuge</translation>
+        </message>
+        <message>
+            <source>Project units</source>
+            <translation>Projekteinheiten</translation>
+        </message>
+        <message>
+            <source>Feet &amp; inches</source>
+            <translation>Fuß &amp; Zoll</translation>
+        </message>
+        <message>
+            <source>Decimal feet</source>
+            <translation>Dezimalfuß</translation>
+        </message>
+        <message>
+            <source>Metric</source>
+            <translation>Metrisch</translation>
+        </message>
+        <message>
+            <source>Grid spacing…</source>
+            <translation>Rasterabstand…</translation>
+        </message>
+        <message>
+            <source>Grid spacing</source>
+            <translation>Rasterabstand</translation>
+        </message>
+        <message>
+            <source>Grid spacing (cm):</source>
+            <translation>Rasterabstand (cm):</translation>
+        </message>
+        <message>
+            <source>Open sun workspace</source>
+            <translation>Sonnenarbeitsbereich öffnen</translation>
+        </message>
+        <message>
+            <source>Drawing presentation</source>
+            <translation>Plandarstellung</translation>
+        </message>
+        <message>
+            <source>Architectural plant symbols</source>
+            <translation>Architektonische Pflanzensymbole</translation>
+        </message>
+        <message>
+            <source>Detailed plant symbols</source>
+            <translation>Detaillierte Pflanzensymbole</translation>
+        </message>
+        <message>
+            <source>Material texture strength…</source>
+            <translation>Stärke der Materialtexturen…</translation>
+        </message>
+        <message>
+            <source>Material texture strength</source>
+            <translation>Stärke der Materialtexturen</translation>
+        </message>
+        <message>
+            <source>Texture detail (%):</source>
+            <translation>Texturdetails (%):</translation>
+        </message>
+        <message>
+            <source>Gardening workspace</source>
+            <translation>Gartenpflege-Arbeitsbereich</translation>
+        </message>
+        <message>
+            <source>Essentials</source>
+            <translation>Grunddaten</translation>
+        </message>
+        <message>
+            <source>Appearance</source>
+            <translation>Darstellung</translation>
+        </message>
+        <message>
+            <source>Advanced</source>
+            <translation>Erweitert</translation>
+        </message>
+        <message>
+            <source>Change project units</source>
+            <translation>Projekteinheiten ändern</translation>
+        </message>
+        <message>
+            <source>Change drawing presentation</source>
+            <translation>Plandarstellung ändern</translation>
+        </message>
+        <message>
+            <source>Change grid spacing</source>
+            <translation>Rasterabstand ändern</translation>
+        </message>
+        <message>
+            <source>Target distance (ft/in):</source>
+            <translation>Zielabstand (ft/in):</translation>
+        </message>
+        <message>
+            <source>Distance (ft/in)</source>
+            <translation>Abstand (ft/in)</translation>
+        </message>
+        <message>
+            <source>Enter a length within the allowed range, such as 10' 6 1/2" or 10.5 ft.</source>
+            <translation>Eine Länge im zulässigen Bereich eingeben, z. B. 10' 6 1/2" oder 10.5 ft.</translation>
+        </message>
+        <message>
+            <source>Bare numbers mean feet. Use commas between coordinates; fractions such as 10' 6 1/2" are accepted. @ means relative; &lt; introduces a polar angle.</source>
+            <translation>Zahlen ohne Einheit sind Fuß. Koordinaten mit Kommas trennen; Brüche wie 10' 6 1/2" sind erlaubt. @ bedeutet relativ; &lt; leitet einen Polarwinkel ein.</translation>
+        </message>
+        <message>
+            <source>Canvas: {width} × {height}</source>
+            <translation>Zeichenfläche: {width} × {height}</translation>
+        </message>
+        <message>
+            <source>A4 Landscape (11.69 in wide)</source>
+            <translation>A4 quer (11.69 in breit)</translation>
+        </message>
+        <message>
+            <source>A3 Landscape (16.54 in wide)</source>
+            <translation>A3 quer (16.54 in breit)</translation>
+        </message>
+        <message>
+            <source>Letter Landscape (11 in wide)</source>
+            <translation>Letter quer (11 in breit)</translation>
+        </message>
+        <message>
+            <source>Search object library</source>
+            <translation>Objektbibliothek durchsuchen</translation>
+        </message>
+    </context>
+    <context>
+        <name>CreativeWelcomeDialog</name>
+        <message>
+            <source>Close</source>
+            <translation>Schließen</translation>
+        </message>
+        <message>
+            <source>Show this screen on startup</source>
+            <translation>Diesen Bildschirm beim Start anzeigen</translation>
+        </message>
+        <message>
+            <source>No recent projects</source>
+            <translation>Keine aktuellen Projekte</translation>
+        </message>
+        <message>
+            <source>{name} (not found)</source>
+            <translation>{name} (nicht gefunden)</translation>
+        </message>
+        <message>
+            <source>File not found: {path}</source>
+            <translation>Datei nicht gefunden: {path}</translation>
         </message>
     </context>
 </TS>
