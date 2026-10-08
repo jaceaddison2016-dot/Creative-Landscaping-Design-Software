@@ -1,0 +1,234 @@
+"""Polyline drawing tool for fences, walls, and paths."""
+
+from typing import TYPE_CHECKING
+
+from PyQt6.QtCore import QT_TR_NOOP, QPointF, Qt
+from PyQt6.QtGui import QBrush, QColor, QKeyEvent, QMouseEvent, QPainterPath, QPen
+from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsPathItem
+
+from open_garden_planner.core.object_types import ObjectType
+
+from .base_tool import BaseTool, ToolType
+from .preview_z import PREVIEW_Z_HANDLE, PREVIEW_Z_LINE
+
+if TYPE_CHECKING:
+    from open_garden_planner.ui.canvas.canvas_view import CanvasView
+
+
+class PolylineTool(BaseTool):
+    """Tool for drawing polylines (open paths) by clicking vertices.
+
+    Usage:
+        - Click to add vertices
+        - Double-click or press Enter to finish
+        - Press Escape to cancel
+        - Press Backspace to remove last vertex
+    """
+
+    tool_type = ToolType.FENCE
+    display_name = QT_TR_NOOP("Polyline")
+    shortcut = ""  # Will be set by specific instances
+    cursor = Qt.CursorShape.CrossCursor
+
+    VERTEX_MARKER_SIZE = 8.0
+
+    def __init__(
+        self,
+        view: "CanvasView",
+        object_type: ObjectType = ObjectType.FENCE,
+    ) -> None:
+        """Initialize the polyline tool.
+
+        Args:
+            view: The canvas view
+            object_type: Type of property object to create
+        """
+        super().__init__(view)
+        self._object_type = object_type
+        self._points: list[QPointF] = []
+        # Per-vertex snap context (Package B follow-up) — parallel to
+        # _points; each entry is the SnapCandidate that produced the
+        # vertex, or None for a free-placed click. Used by
+        # `auto_constraint.emit_for_polyline` on finalization.
+        self._snap_contexts: list[object | None] = []
+        self._preview_path: QGraphicsPathItem | None = None
+        self._vertex_markers: list[QGraphicsEllipseItem] = []
+        self._is_drawing = False
+
+    def mouse_press(self, event: QMouseEvent, scene_pos: QPointF) -> bool:
+        """Add vertex on left click."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+
+        # Snap the position to grid if enabled
+        snapped_pos = self._view.snap_point(scene_pos)
+
+        # Capture the click-time snap candidate before any further
+        # mouse movement clears it; this drives the auto-constraint
+        # emitter on finalization.
+        self._snap_contexts.append(self._view.current_snap_candidate)
+
+        # Add point
+        self._points.append(snapped_pos)
+        self._add_vertex_marker(snapped_pos)
+
+        if not self._is_drawing:
+            self._is_drawing = True
+            self._create_preview_path()
+
+        self._update_preview_path(snapped_pos)
+        return True
+
+    def mouse_move(self, _event: QMouseEvent, scene_pos: QPointF) -> bool:
+        """Update rubber band line while drawing."""
+        if not self._is_drawing or not self._points:
+            return False
+
+        # Snap the position to grid if enabled
+        snapped_pos = self._view.snap_point(scene_pos)
+        self._update_preview_path(snapped_pos)
+        return True
+
+    def mouse_release(self, _event: QMouseEvent, _scene_pos: QPointF) -> bool:
+        """Mouse release - no action needed for polyline."""
+        return False
+
+    def mouse_double_click(self, _event: QMouseEvent, _scene_pos: QPointF) -> bool:
+        """Finish polyline on double-click."""
+        if self._is_drawing and len(self._points) >= 2:
+            self._finish_polyline()
+            return True
+        return False
+
+    def key_press(self, event: QKeyEvent) -> bool:
+        """Handle keyboard input."""
+        if event.key() == Qt.Key.Key_Escape and self._is_drawing:
+            self.cancel()
+            return True
+        if (
+            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and self._is_drawing
+            and len(self._points) >= 2
+        ):
+            self._finish_polyline()
+            return True
+        if event.key() == Qt.Key.Key_Backspace and self._is_drawing and self._points:
+            self._remove_last_point()
+            return True
+        return False
+
+    def cancel(self) -> None:
+        """Cancel current drawing operation."""
+        self._cleanup_preview()
+        self._reset_state()
+
+    @property
+    def last_point(self) -> QPointF | None:
+        """Anchor for relative/polar typed input."""
+        if self._points:
+            return QPointF(self._points[-1])
+        return None
+
+    def commit_typed_coordinate(self, point: QPointF) -> bool:
+        """Add a vertex at ``point`` exactly (no grid snap)."""
+        self._points.append(QPointF(point))
+        # Typed coordinates aren't snapped — record None so the indices
+        # of _points and _snap_contexts stay aligned.
+        self._snap_contexts.append(None)
+        self._add_vertex_marker(point)
+        if not self._is_drawing:
+            self._is_drawing = True
+            self._create_preview_path()
+        self._update_preview_path(point)
+        return True
+
+    def _reset_state(self) -> None:
+        """Reset tool state."""
+        self._points = []
+        self._snap_contexts = []
+        self._preview_path = None
+        self._vertex_markers = []
+        self._is_drawing = False
+
+    def _create_preview_path(self) -> None:
+        """Create preview path item."""
+        self._preview_path = QGraphicsPathItem()
+        self._preview_path.setPen(QPen(QColor(0, 100, 255), 2, Qt.PenStyle.DashLine))
+        self._preview_path.setZValue(PREVIEW_Z_LINE)
+        self._view.scene().addItem(self._preview_path)
+
+    def _add_vertex_marker(self, pos: QPointF) -> None:
+        """Add visual marker at vertex position."""
+        size = self.VERTEX_MARKER_SIZE / self._view.zoom_factor
+        marker = QGraphicsEllipseItem(
+            pos.x() - size / 2,
+            pos.y() - size / 2,
+            size,
+            size,
+        )
+        marker.setPen(QPen(QColor(0, 100, 255), 1))
+        marker.setBrush(QBrush(QColor(0, 100, 255)))
+        marker.setZValue(PREVIEW_Z_HANDLE)
+        self._view.scene().addItem(marker)
+        self._vertex_markers.append(marker)
+
+    def _update_preview_path(self, cursor_pos: QPointF) -> None:
+        """Update the preview path to show current polyline + rubber band."""
+        if not self._preview_path or not self._points:
+            return
+
+        path = QPainterPath()
+        path.moveTo(self._points[0])
+
+        # Draw all segments
+        for point in self._points[1:]:
+            path.lineTo(point)
+
+        # Add rubber band to cursor
+        path.lineTo(cursor_pos)
+
+        self._preview_path.setPath(path)
+
+    def _remove_last_point(self) -> None:
+        """Remove the last added point."""
+        if self._points:
+            self._points.pop()
+        if self._snap_contexts:
+            self._snap_contexts.pop()
+        if self._vertex_markers:
+            marker = self._vertex_markers.pop()
+            self._view.scene().removeItem(marker)
+
+        # Update preview
+        if self._points:
+            self._update_preview_path(self._points[-1])
+        else:
+            self.cancel()
+
+    def _finish_polyline(self) -> None:
+        """Finalize the polyline."""
+        self._cleanup_preview()
+
+        if len(self._points) >= 2:
+            from open_garden_planner.ui.canvas.items import PolylineItem
+            # Get active layer from scene
+            scene = self._view.scene()
+            layer_id = scene.active_layer.id if hasattr(scene, 'active_layer') and scene.active_layer else None
+            item = PolylineItem(self._points, object_type=self._object_type, layer_id=layer_id)
+            self._view.add_item(item, "polyline")
+            # Auto-emit constraints for any vertex that landed on a snap
+            # (nearest / midpoint / perpendicular / tangent → POINT_ON_EDGE /
+            # COINCIDENT / POINT_ON_CIRCLE / TANGENT). See auto_constraint.
+            from open_garden_planner.core.auto_constraint import (
+                emit_for_polyline,
+            )
+            emit_for_polyline(self._view, item, self._snap_contexts)
+
+        self._reset_state()
+
+    def _cleanup_preview(self) -> None:
+        """Remove all preview items from scene."""
+        if self._preview_path:
+            self._view.scene().removeItem(self._preview_path)
+        for marker in self._vertex_markers:
+            self._view.scene().removeItem(marker)

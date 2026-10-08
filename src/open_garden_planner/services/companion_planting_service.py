@@ -1,0 +1,443 @@
+"""Companion planting service — loads and queries companion planting compatibility data.
+
+The bundled JSON database covers 60+ common vegetables, herbs, and flowers with
+beneficial and antagonistic relationships.  Users can extend it with custom rules
+that are persisted per-machine in the app-data directory.
+
+Lookups are bidirectional: if A–B is stored, querying either A or B returns it.
+Names are matched case-insensitively by common name, scientific name, or alias.
+"""
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from open_garden_planner.services.plant_library import get_app_data_dir
+
+_DATA_DIR = Path(__file__).parent.parent / "resources" / "data"
+_CUSTOM_RULES_FILENAME = "custom_companion_rules.json"
+
+# Relationship type constants
+BENEFICIAL = "beneficial"
+ANTAGONISTIC = "antagonistic"
+NEUTRAL = "neutral"
+
+
+@dataclass
+class CompanionRelationship:
+    """A companion planting relationship between two plants.
+
+    Attributes:
+        plant_a: Canonical common name of the first plant.
+        plant_b: Canonical common name of the second plant.
+        type: Relationship type — "beneficial", "antagonistic", or "neutral".
+        reason: Human-readable explanation of the relationship (English).
+        reason_de: German translation of the reason, or empty string.
+        is_custom: True if this rule was added by the user.
+    """
+
+    plant_a: str
+    plant_b: str
+    type: str
+    reason: str
+    reason_de: str = field(default="")
+    is_custom: bool = field(default=False)
+    # Where the rule came from: "bundled", "custom", or "permapeople".
+    # A DECLARED field, not a dynamically attached attribute: the reverse copy
+    # built in _add_to_adjacency copies declared fields only, so a dynamic
+    # ``_source`` was silently dropped and the same rule reported
+    # 'permapeople' in one direction and 'bundled' in the other (P1-3).
+    source: str = field(default="bundled")
+
+
+class CompanionPlantingService:
+    """Service for querying companion planting relationships.
+
+    Loads a bundled JSON database and optionally user-defined custom rules.
+    All lookups are bidirectional and case-insensitive.
+
+    Usage::
+
+        svc = CompanionPlantingService()
+        good, bad = svc.get_companions("tomato")
+        rel = svc.get_relationship("tomato", "basil")
+    """
+
+    def __init__(self) -> None:
+        self._db: dict[str, Any] = {}
+        # canonical_name -> {scientific_name, family, aliases}
+        self._plant_meta: dict[str, dict[str, Any]] = {}
+        # alias / scientific_name (lowercased) -> canonical common name
+        self._name_index: dict[str, str] = {}
+        # canonical_name -> list[CompanionRelationship] (this plant as plant_a)
+        self._adjacency: dict[str, list[CompanionRelationship]] = {}
+        self._custom_rules: list[CompanionRelationship] = []
+        # Provider-sourced rules (e.g., Permapeople companions)
+        self._provider_rules: list[CompanionRelationship] = []
+
+        self._load_db()
+        self._load_custom_rules()
+        self._load_provider_rules()
+
+    # ------------------------------------------------------------------
+    # Public query API
+    # ------------------------------------------------------------------
+
+    def get_companions(
+        self, plant_name: str
+    ) -> tuple[list[CompanionRelationship], list[CompanionRelationship]]:
+        """Return beneficial and antagonistic companions for a plant.
+
+        Args:
+            plant_name: Common name, scientific name, or alias (case-insensitive).
+
+        Returns:
+            Tuple of (beneficial_relationships, antagonistic_relationships).
+        """
+        canonical = self._resolve(plant_name)
+        all_rels = self._adjacency.get(canonical, [])
+        beneficial = [r for r in all_rels if r.type == BENEFICIAL]
+        antagonistic = [r for r in all_rels if r.type == ANTAGONISTIC]
+        return beneficial, antagonistic
+
+    def get_relationship(
+        self, plant_a: str, plant_b: str
+    ) -> CompanionRelationship | None:
+        """Return the relationship between two specific plants, or None.
+
+        Args:
+            plant_a: Name of the first plant.
+            plant_b: Name of the second plant.
+
+        Returns:
+            CompanionRelationship if one exists, else None.
+        """
+        can_a = self._resolve(plant_a)
+        can_b = self._resolve(plant_b)
+        for rel in self._adjacency.get(can_a, []):
+            if rel.plant_b == can_b:
+                return rel
+        return None
+
+    def get_display_name(self, plant_name: str, lang: str = "en") -> str:
+        """Return the display name for a plant in the requested language.
+
+        Falls back to the title-cased canonical name if no translation exists.
+
+        Args:
+            plant_name: Canonical common name (e.g. "tomato").
+            lang: Language code (e.g. "en", "de").
+
+        Returns:
+            Localised display name string.
+        """
+        canonical = self._resolve(plant_name)
+        meta = self._plant_meta.get(canonical, {})
+        key = f"name_{lang}"
+        return meta.get(key) or canonical.title()
+
+    def get_relationship_reason(self, rel: "CompanionRelationship", lang: str = "en") -> str:
+        """Return the relationship reason in the requested language.
+
+        Falls back to the English reason if no translation exists.
+
+        Args:
+            rel: The companion relationship.
+            lang: Language code (e.g. "en", "de").
+
+        Returns:
+            Localised reason string.
+        """
+        if lang == "en" or not rel.reason_de:
+            return rel.reason
+        return rel.reason_de
+
+    def get_all_plant_names(self) -> list[str]:
+        """Return all canonical common names in the database, sorted."""
+        return sorted(self._plant_meta.keys())
+
+    def get_plant_family(self, plant_name: str) -> str | None:
+        """Return the botanical family for a plant, or None if unknown."""
+        canonical = self._resolve(plant_name)
+        return self._plant_meta.get(canonical, {}).get("family") or None
+
+    def get_plant_scientific_name(self, plant_name: str) -> str | None:
+        """Return the scientific name for a plant, or None if unknown."""
+        canonical = self._resolve(plant_name)
+        return self._plant_meta.get(canonical, {}).get("scientific_name") or None
+
+    def get_plants_by_family(self, family: str) -> list[str]:
+        """Return canonical names of all plants belonging to a botanical family."""
+        family_lower = family.lower()
+        return [
+            name
+            for name, meta in self._plant_meta.items()
+            if meta.get("family", "").lower() == family_lower
+        ]
+
+    # ------------------------------------------------------------------
+    # Custom rule management
+    # ------------------------------------------------------------------
+
+    def add_custom_rule(self, rule: CompanionRelationship) -> None:
+        """Add or replace a custom companion planting rule.
+
+        If a rule already exists for the same plant pair it is replaced.
+        The rule is persisted to the user app-data directory.
+
+        Args:
+            rule: The custom relationship to add.
+        """
+        rule.is_custom = True
+        rule.plant_a = rule.plant_a.lower()
+        rule.plant_b = rule.plant_b.lower()
+        # Remove existing rule for this pair first, then rebuild adjacency
+        self._remove_rule_from_lists(rule.plant_a, rule.plant_b)
+        self._custom_rules.append(rule)
+        self._rebuild_adjacency()
+        self._save_custom_rules()
+
+    def remove_custom_rule(self, plant_a: str, plant_b: str) -> bool:
+        """Remove a custom rule by plant pair.
+
+        Args:
+            plant_a: Name of the first plant.
+            plant_b: Name of the second plant.
+
+        Returns:
+            True if a rule was removed, False if none was found.
+        """
+        can_a = self._resolve(plant_a)
+        can_b = self._resolve(plant_b)
+        original_count = len(self._custom_rules)
+        self._remove_rule_from_lists(can_a, can_b)
+        if len(self._custom_rules) < original_count:
+            self._rebuild_adjacency()
+            self._save_custom_rules()
+            return True
+        return False
+
+    def get_custom_rules(self) -> list[CompanionRelationship]:
+        """Return all user-defined custom rules."""
+        return list(self._custom_rules)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def resolve_name(self, name: str) -> str:
+        """Resolve any name to its canonical lowercase common name.
+
+        Falls back to returning the lowercased input if no entry is found,
+        so unknown plants still work for custom-rule lookups. Public because
+        callers outside the service (succession dialog, application code)
+        need to canonicalise free-text plant names before storing or
+        comparing.
+        """
+        return self._name_index.get(name.lower(), name.lower())
+
+    # Internal alias retained because every existing internal call site uses
+    # ``self._resolve(...)``; switching all of them is a separate cleanup.
+    _resolve = resolve_name
+
+    def _add_to_adjacency(self, rel: CompanionRelationship) -> None:
+        """Insert a relationship into the adjacency index in both directions.
+
+        The reverse direction must carry the same ``reason``, ``reason_de`` AND
+        ``source`` — otherwise queries in the reverse direction (e.g. basil↔fennel
+        when the DB stores fennel↔basil) fall back to English because
+        ``reason_de`` is empty on the reversed copy, and a provider-sourced rule
+        reports itself as bundled data.
+        """
+        self._adjacency.setdefault(rel.plant_a, []).append(rel)
+        reversed_rel = CompanionRelationship(
+            plant_a=rel.plant_b,
+            plant_b=rel.plant_a,
+            type=rel.type,
+            reason=rel.reason,
+            reason_de=rel.reason_de,
+            is_custom=rel.is_custom,
+            source=rel.source,
+        )
+        self._adjacency.setdefault(rel.plant_b, []).append(reversed_rel)
+
+    def _remove_rule_from_lists(self, can_a: str, can_b: str) -> None:
+        """Remove a custom rule from self._custom_rules by canonical plant pair."""
+        self._custom_rules = [
+            r
+            for r in self._custom_rules
+            if not (
+                (r.plant_a == can_a and r.plant_b == can_b)
+                or (r.plant_a == can_b and r.plant_b == can_a)
+            )
+        ]
+
+    def _rebuild_adjacency(self) -> None:
+        """Rebuild the adjacency index from the raw DB, custom rules, and provider rules."""
+        self._adjacency = {}
+        for entry in self._db.get("relationships", []):
+            rel = CompanionRelationship(
+                plant_a=entry["plant_a"].lower(),
+                plant_b=entry["plant_b"].lower(),
+                type=entry["type"],
+                reason=entry.get("reason", ""),
+                reason_de=entry.get("reason_de", ""),
+            )
+            self._add_to_adjacency(rel)
+        for rule in self._custom_rules:
+            self._add_to_adjacency(rule)
+        for rule in self._provider_rules:
+            self._add_to_adjacency(rule)
+
+    def _load_db(self) -> None:
+        """Load the bundled companion planting JSON database."""
+        try:
+            db_path = _DATA_DIR / "companion_planting.json"
+            with open(db_path, encoding="utf-8") as f:
+                self._db = json.load(f)
+        except Exception:
+            return
+
+        for name, meta in self._db.get("plants", {}).items():
+            canonical = name.lower()
+            self._plant_meta[canonical] = meta
+            self._name_index[canonical] = canonical
+            sci = meta.get("scientific_name", "").lower()
+            if sci:
+                self._name_index[sci] = canonical
+            for alias in meta.get("aliases", []):
+                self._name_index[alias.lower()] = canonical
+            # Localised common names — enables free-text lookup in any UI language.
+            for lang_key in ("name_de", "name_fr", "name_es"):
+                localised = meta.get(lang_key, "").lower().strip()
+                if localised:
+                    self._name_index.setdefault(localised, canonical)
+
+        for entry in self._db.get("relationships", []):
+            rel = CompanionRelationship(
+                plant_a=entry["plant_a"].lower(),
+                plant_b=entry["plant_b"].lower(),
+                type=entry["type"],
+                reason=entry.get("reason", ""),
+                reason_de=entry.get("reason_de", ""),
+            )
+            self._add_to_adjacency(rel)
+
+    def _load_custom_rules(self) -> None:
+        """Load user-defined custom rules from the app-data directory."""
+        custom_path = get_app_data_dir() / _CUSTOM_RULES_FILENAME
+        if not custom_path.exists():
+            return
+        try:
+            with open(custom_path, encoding="utf-8") as f:
+                data = json.load(f)
+            for entry in data.get("rules", []):
+                rule = CompanionRelationship(
+                    plant_a=entry["plant_a"].lower(),
+                    plant_b=entry["plant_b"].lower(),
+                    type=entry["type"],
+                    reason=entry.get("reason", ""),
+                    is_custom=True,
+                )
+                self._custom_rules.append(rule)
+                self._add_to_adjacency(rule)
+        except Exception:
+            pass
+
+    def _load_provider_rules(self) -> None:
+        """Load provider-sourced companion rules from the local cache (US-G3)."""
+        from open_garden_planner.services.companion_cache import load_cache
+
+        cache = load_cache()
+        for _key, entry in cache.items():
+            companions = entry.get("companions", [])
+            for comp in companions:
+                plant_a = comp.get("plant_a", "").lower()
+                plant_b = comp.get("plant_b", "").lower()
+                rel_type = comp.get("type", "beneficial")
+                if not plant_a or not plant_b:
+                    continue
+                rule = CompanionRelationship(
+                    plant_a=plant_a,
+                    plant_b=plant_b,
+                    type=rel_type,
+                    reason=comp.get("reason", ""),
+                    reason_de="",
+                    is_custom=False,
+                    source=comp.get("source", "permapeople"),
+                )
+                self._provider_rules.append(rule)
+                self._add_to_adjacency(rule)
+
+    def add_provider_companions(
+        self, scientific_name: str, companions: list[dict[str, Any]]
+    ) -> None:
+        """Add companion relationships from a provider (e.g., Permapeople).
+
+        Args:
+            scientific_name: The plant's scientific name.
+            companions: List of companion dicts from the provider.
+        """
+        from open_garden_planner.services.companion_cache import set_cached_companions
+
+        # Cache the raw data
+        set_cached_companions(scientific_name, companions)
+
+        # Add to provider rules
+        for comp in companions:
+            plant_a = comp.get("plant_a", "").lower()
+            plant_b = comp.get("plant_b", "").lower()
+            rel_type = comp.get("type", "beneficial")
+            if not plant_a or not plant_b:
+                continue
+            rule = CompanionRelationship(
+                plant_a=plant_a,
+                plant_b=plant_b,
+                type=rel_type,
+                reason=comp.get("reason", ""),
+                reason_de="",
+                is_custom=False,
+                source=comp.get("source", "permapeople"),
+            )
+            self._provider_rules.append(rule)
+            self._add_to_adjacency(rule)
+
+    def get_provider_companions_count(self) -> int:
+        """Return the number of provider-sourced companion rules loaded."""
+        return len(self._provider_rules)
+
+    def get_relationship_source(self, rel: CompanionRelationship) -> str:
+        """Return the source label for a relationship.
+
+        Args:
+            rel: The companion relationship.
+
+        Returns:
+            'custom' for user-defined rules, or the relationship's declared
+            ``source`` field ('bundled' / 'permapeople') otherwise. Custom wins
+            because a user rule replaces the bundled pair outright.
+        """
+        if rel.is_custom:
+            return "custom"
+        return rel.source or "bundled"
+
+    def _save_custom_rules(self) -> None:
+        """Persist custom rules to the app-data directory."""
+        custom_path = get_app_data_dir() / _CUSTOM_RULES_FILENAME
+        data = {
+            "rules": [
+                {
+                    "plant_a": r.plant_a,
+                    "plant_b": r.plant_b,
+                    "type": r.type,
+                    "reason": r.reason,
+                }
+                for r in self._custom_rules
+            ]
+        }
+        try:
+            with open(custom_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass

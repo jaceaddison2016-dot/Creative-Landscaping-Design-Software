@@ -1,0 +1,1232 @@
+"""Curated, stable data shapes the Agent API exposes to MCP clients.
+
+These pydantic models are an API contract for agents — intentionally decoupled
+from the on-disk ``.ogp`` format (``FILE_VERSION``) so the file format can
+evolve without breaking agent integrations. Field descriptions are English on
+purpose: they are read by agents, not shown in the UI, and are therefore exempt
+from the project's i18n rules.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class Layer(BaseModel):
+    """One layer of the plan's layer stack (US-D2.4).
+
+    Layers organise objects: each object sits on exactly one layer, the layer's
+    visibility/lock/opacity apply to every object on it, and the layer stack
+    (``z_order``) decides which layer renders on top. The **active** layer is
+    where newly created objects land.
+    """
+
+    layer_id: str = Field(
+        description="Stable UUID — address layers by this id (names are not "
+        "unique and may be ambiguous)."
+    )
+    name: str = Field(description="Display name of the layer.")
+    visible: bool = Field(
+        description="False if the layer (and every object on it) is hidden."
+    )
+    locked: bool = Field(
+        description="True if the layer is locked. While locked, the agent "
+        "write tools refuse to edit any object on it, refuse to move objects "
+        "onto it, and refuse to delete it. The lock itself can be changed by "
+        "the agent with set_layer_property(layer_id, locked=...) — unlock "
+        "first, then edit (issue #365)."
+    )
+    opacity: float = Field(
+        description="Layer opacity, 0.0 (invisible) to 1.0 (fully opaque)."
+    )
+    z_order: int = Field(
+        description="Stacking order of the layer itself; a higher value "
+        "renders on top of a lower one."
+    )
+    is_active: bool = Field(
+        description="True if this is the active layer — the layer new objects "
+        "(create_object, create_layer aside) land on. Session state: not "
+        "persisted with the plan."
+    )
+    object_count: int = Field(
+        description="Number of TOP-LEVEL objects on this layer (objects inside "
+        "a group count once, at the group's layer — same counting rule as the "
+        "plan summary's object counts)."
+    )
+
+
+class PlanSummary(BaseModel):
+    """A high-level overview of the garden plan currently open in the app."""
+
+    file_name: str | None = Field(
+        default=None,
+        description=(
+            "Project file name (e.g. 'my_garden.ogp'), or null if the plan has "
+            "not been saved yet."
+        ),
+    )
+    is_dirty: bool = Field(
+        description="True if the plan has unsaved changes.",
+    )
+    canvas_width_cm: float = Field(
+        description="Width of the plan canvas in centimetres.",
+    )
+    canvas_height_cm: float = Field(
+        description="Height of the plan canvas in centimetres.",
+    )
+    bed_count: int = Field(
+        description=(
+            "Number of soil-bearing beds/containers (garden beds, raised beds, "
+            "containers, wall planters)."
+        ),
+    )
+    plant_count: int = Field(
+        description="Number of plants (trees, shrubs, perennials).",
+    )
+    shape_count: int = Field(
+        description=(
+            "Number of other objects (structures, paths, generic shapes, "
+            "annotations, etc.)."
+        ),
+    )
+    layer_names: list[str] = Field(
+        default_factory=list,
+        description="Names of the layers in the plan, in order. Kept for "
+        "back-compat; 'layers' carries the same information plus ids and state.",
+    )
+    layers: list[Layer] = Field(
+        default_factory=list,
+        description="The plan's layers, top of the stack first (US-D2.4). "
+        "Address a layer by its layer_id in the layer write tools.",
+    )
+
+
+# --- US-D1.2: read / query tools -------------------------------------------
+#
+# Coordinates are in the plan's native scene frame: centimetres, CAD Y-up
+# (ADR-002) — origin at the south-west (bottom-left) corner, +x east/right and
+# +y NORTH/up. A larger y is further north / higher on the rendered canvas.
+# This is the same frame used by every object's stored position AND by
+# move_object, so an agent can move an object relative to a position it just
+# read. Non-rectangular shapes are summarised by their axis-aligned bounding box.
+
+
+class ObjectRef(BaseModel):
+    """Lightweight reference to one object, returned by list/spatial queries."""
+
+    item_id: str = Field(description="Stable UUID — address objects by this id.")
+    type: str = Field(
+        description="Geometry kind: 'rectangle', 'circle', 'ellipse', 'polygon', "
+        "'polyline', 'group', etc.",
+    )
+    object_type: str | None = Field(
+        default=None,
+        description="Semantic type name (e.g. 'RAISED_BED', 'TREE', 'CONTAINER'), "
+        "or null for a plain shape.",
+    )
+    name: str | None = Field(default=None, description="User-given label, if any.")
+    layer_id: str | None = Field(
+        default=None,
+        description="UUID of the layer the object is on, if assigned (US-D2.4). "
+        "This — not the name — is what set_object_layer and the other layer "
+        "tools address.",
+    )
+    layer_name: str | None = Field(
+        default=None, description="Name of the layer the object is on, if assigned."
+    )
+    center_x_cm: float = Field(description="Bounding-box centre X, in scene cm.")
+    center_y_cm: float = Field(description="Bounding-box centre Y, in scene cm.")
+    width_cm: float = Field(description="Bounding-box width in cm (0 for a point).")
+    height_cm: float = Field(description="Bounding-box height in cm (0 for a point).")
+    stack_index: int | None = Field(
+        default=None,
+        description="0-based position within its layer's stacking order, "
+        "bottom→top, as displayed (0 = backmost). Compare only between "
+        "objects on the same layer; null for objects without a layer. A "
+        "journal pin occupies a slot in this ordering like anything else "
+        "on its layer, but is never a valid target for arrange_object — it "
+        "is excluded from arranging entirely and always refuses the tool "
+        "call.",
+    )
+    outside_canvas: bool = Field(
+        default=False,
+        description="True when the object's bounding box does not overlap the "
+        "canvas at all — it is fully off-plan and therefore invisible and "
+        "unselectable in the app. Computed from the bounding box, so a very "
+        "large rotation is not expanded into the check. Use move_object or "
+        "set_object_position to bring such an object back on-plan.",
+    )
+
+
+class ObjectDetail(ObjectRef):
+    """Full single-object view, returned by ``get_object``."""
+
+    rotation_deg: float = Field(
+        default=0.0, description="Rotation in degrees (0 if not rotated)."
+    )
+    area_cm2: float = Field(
+        description="Object area in cm² (exact for circle/ellipse/polygon/rectangle; "
+        "bounding-box area otherwise).",
+    )
+    fill_color: str | None = Field(
+        default=None, description="Fill colour as #AARRGGBB hex, if the shape has a fill."
+    )
+    stroke_color: str | None = Field(
+        default=None, description="Stroke/outline colour as #AARRGGBB hex."
+    )
+    parent_bed_id: str | None = Field(
+        default=None, description="UUID of the bed/container this object sits in, if any."
+    )
+    child_item_ids: list[str] = Field(
+        default_factory=list,
+        description="UUIDs of objects contained in this bed/container (if it is one).",
+    )
+    species_key: str | None = Field(
+        default=None,
+        description="Species/gallery key for a plant (e.g. an SVG key), if assigned.",
+    )
+    species_name: str | None = Field(
+        default=None,
+        description="Human-readable species name for a plant (common or scientific), "
+        "if assigned.",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Raw per-object metadata (species record, container settings, etc.).",
+    )
+
+
+class GeometryPoint(BaseModel):
+    """One point in the native scene frame: centimetres, CAD Y-up."""
+
+    x_cm: float
+    y_cm: float
+
+
+class GeometryAnchor(BaseModel):
+    """One constraint anchor, stable enough for an agent to reason about edits."""
+
+    item_id: str
+    anchor_type: str
+    anchor_index: int = 0
+
+
+class GeometryConstraint(BaseModel):
+    """A constraint referencing the inspected object.
+
+    ``target_distance`` is centimetres for distance-like constraints and degrees
+    for ``ANGLE``; other constraint types may leave it at zero. The machine key
+    is ``constraint_type``; the full anchor records are included so the agent
+    can see which object and vertex would be affected.
+    """
+
+    constraint_id: str
+    constraint_type: str
+    anchor_a: GeometryAnchor
+    anchor_b: GeometryAnchor
+    anchor_c: GeometryAnchor | None = None
+    target_distance: float
+    target_x: float | None = None
+    target_y: float | None = None
+    visible: bool = True
+
+
+class CurveGeometry(BaseModel):
+    """Type-specific live curve geometry for Arc and Bezier items."""
+
+    kind: Literal["arc", "bezier"]
+    center: GeometryPoint | None = None
+    radius_cm: float | None = None
+    start_deg: float | None = None
+    span_deg: float | None = None
+    through: GeometryPoint | None = None
+    anchors: list[GeometryPoint] = Field(default_factory=list)
+    handles_in: list[GeometryPoint] = Field(default_factory=list)
+    handles_out: list[GeometryPoint] = Field(default_factory=list)
+
+
+class LeaderGeometry(BaseModel):
+    """Callout leader geometry in the scene frame."""
+
+    tip: GeometryPoint
+    box_corner: GeometryPoint
+
+
+class GeometryResult(BaseModel):
+    """Curated, stable low-level geometry for one addressable object.
+
+    Polygon and polyline vertices are mapped through the live Qt transform and
+    therefore describe where the vertices are **now**, unlike the pre-rotation
+    points in the raw ``.ogp`` serializer. ``center_x_cm`` / ``center_y_cm``
+    retain exactly the same meaning as ``get_object`` so an agent can feed one
+    into ``set_object_position`` without conversion.
+    """
+
+    item_id: str
+    type: str
+    object_type: str | None = None
+    coordinate_frame: Literal["scene_cm_y_up"] = "scene_cm_y_up"
+    center_x_cm: float
+    center_y_cm: float
+    rotation_deg: float = 0.0
+    width_cm: float | None = None
+    height_cm: float | None = None
+    radius_cm: float | None = None
+    vertices: list[GeometryPoint] = Field(default_factory=list)
+    closed: bool | None = None
+    vertex_editable: bool = False
+    vertex_count: int | None = None
+    minimum_vertex_count: int | None = None
+    endpoints: list[GeometryPoint] = Field(default_factory=list)
+    curve: CurveGeometry | None = None
+    leader: LeaderGeometry | None = None
+    child_count: int | None = None
+    constraints: list[GeometryConstraint] = Field(default_factory=list)
+    is_constrained: bool = False
+
+
+class Diagnostic(BaseModel):
+    """One already-computed plan warning, mirroring an on-canvas badge."""
+
+    kind: str = Field(
+        description="One of: 'companion_conflict', 'spacing_overlap', 'soil_mismatch', "
+        "'capacity_overrun', 'crop_rotation', 'outside_canvas'.",
+    )
+    severity: str = Field(description="'info', 'warning', or 'critical'.")
+    item_ids: list[str] = Field(
+        default_factory=list, description="UUIDs of the objects this warning concerns."
+    )
+    message: str = Field(description="Short English description of the issue.")
+
+
+class Measurement(BaseModel):
+    """Distance between two objects' bounding-box centres."""
+
+    distance_cm: float = Field(description="Straight-line centre-to-centre distance, cm.")
+    dx_cm: float = Field(description="X offset (object B centre − object A centre), cm.")
+    dy_cm: float = Field(description="Y offset (object B centre − object A centre), cm.")
+
+
+# --- US-D1.3: vision tool ---------------------------------------------------
+#
+# render_canvas_image renders with y_flip=True (matching the live CAD view and
+# every existing PNG/PDF export): the output PNG is Y-up like the canvas, so
+# NORTH (a larger scene y) is at the TOP of the image. Because image pixel ROWS
+# count from the top down, a scene point's pixel row is inverted relative to its
+# scene y — see RenderMeta.px_per_cm below for the exact formula. Empirically
+# verified in tests/unit/test_agent_api_render_coordinate_frame.py.
+
+
+class RenderMeta(BaseModel):
+    """Structured metadata alongside a ``render_canvas_image`` PNG."""
+
+    region_x_cm: float = Field(description="Left edge of the rendered region, scene cm.")
+    region_y_cm: float = Field(
+        description="South edge of the rendered region — its minimum scene y; the "
+        "region extends north to region_y_cm + region_height_cm (the scene is Y-up)."
+    )
+    region_width_cm: float = Field(description="Rendered region width, cm.")
+    region_height_cm: float = Field(description="Rendered region height, cm.")
+    image_width_px: int = Field(description="Output image width, pixels.")
+    image_height_px: int = Field(description="Output image height, pixels.")
+    px_per_cm: float = Field(
+        description="Pixels per cm (uniform — aspect ratio preserved, except at "
+        "the extreme end of the output-size clamp — see image_width_px/"
+        "image_height_px). Maps an object position (scene cm, Y-up) to a pixel "
+        "in this image: "
+        "px_x = (x_cm - region_x_cm) * px_per_cm; "
+        "px_y = image_height_px - (y_cm - region_y_cm) * px_per_cm "
+        "(the image is Y-up/CAD-style like the live canvas view — north at the "
+        "top — while pixel rows count top-down, so a larger scene y maps to a "
+        "smaller pixel row)."
+    )
+    layers_rendered: list[str] | None = Field(
+        default=None,
+        description="Layer names or ids included (echoes the request's "
+        "allowlist), or null if all currently-visible layers were rendered.",
+    )
+
+
+# --- US-D1.4: export / save tools -------------------------------------------
+#
+# These are the first Agent API tools with a filesystem side effect beyond
+# returning bytes/dicts. save_plan/export_pdf/export_dxf/export_csv write a
+# file to disk by calling the same services the GUI's File > Export/Save menu
+# already uses — they do not need token auth (deferred to D2's scene-mutating
+# write tools, ADR-033): save_plan persists the plan a human already has on
+# screen, and the export tools produce a new deliverable file, never mutating
+# the live plan. Neither is overwrite-safe the way a QFileDialog save prompt
+# is — an explicit file_path pointing at an unrelated existing file is
+# overwritten without confirmation, acceptable only under the loopback trust
+# model (ADR-033).
+
+
+class ExportResult(BaseModel):
+    """Result of a file-producing Agent API tool (export_pdf/export_dxf/export_csv/save_plan)."""
+
+    file_path: str = Field(description="Absolute path of the file written.")
+    format: Literal["pdf", "dxf", "csv", "ogp"] = Field(description="File format written.")
+    row_count: int | None = Field(
+        default=None, description="Rows written, for export_csv only; null otherwise."
+    )
+    previous_file_path: str | None = Field(
+        default=None,
+        description="The project's prior current_file (save_plan only), if this call "
+        "changed it — e.g. a save-as to a new path. Null if unchanged or not applicable.",
+    )
+
+
+class PlanLifecycleResult(BaseModel):
+    """Result of ``new_plan`` / ``open_plan`` (issue #365).
+
+    Deliberately NOT ``ExportResult``. Those two tools change which document is
+    open; they do not WRITE a file, so there is no format to report — and
+    reusing ``ExportResult`` meant every successful call raised a pydantic
+    ``ValidationError`` (missing ``format``, and ``file_path: None`` against a
+    ``str`` field), i.e. both tools were non-functional over the wire while
+    every test that called the main-thread body directly stayed green.
+
+    ``was_dirty`` is the fact an agent most needs when it passed
+    ``force=true``: it says whether unsaved work was just discarded.
+    """
+
+    file_path: str | None = Field(
+        description="Path of the now-open plan file; null for a new plan, which "
+        "has never been saved."
+    )
+    width_cm: float = Field(description="Canvas width now in effect, in centimetres.")
+    height_cm: float = Field(description="Canvas height now in effect, in centimetres.")
+    was_dirty: bool = Field(
+        description="True if the previous plan had unsaved changes that this call "
+        "discarded. Always false when the call was refused."
+    )
+
+
+# --- US-D2.0–D2.6: scene-mutating write tools -------------------------------
+#
+# The Agent API tools that mutate the live plan. Each requires a bearer token
+# (ADR-033/ADR-036) and runs on the Qt main thread via the same commands the GUI
+# itself uses. WriteResult is
+# the curated confirmation returned to the agent — decoupled from the .ogp
+# serializer. move_object/set_object_position are ONE undo step for a lone item
+# and for a bed whose children travel in the same command, but — mirroring
+# CanvasView's own drag-release behaviour — TWO when placement also crosses a bed
+# boundary and reparents a plant; children_moved/bed_membership_changed/
+# new_parent_bed_id surface that.
+
+
+class WriteResult(BaseModel):
+    """Result of a scene-mutating Agent API write tool.
+
+    Shared by every write tool; fields that don't apply to a given action carry
+    their documented null/zero default.
+    """
+
+    item_id: str | None = Field(
+        default=None,
+        description="Stable UUID of the object that was modified — for 'create', "
+        "the newly assigned id of the object just created. Null for the "
+        "layer-level actions (create_layer/rename_layer/delete_layer/"
+        "set_active_layer/set_layer_property), which address a layer, not an "
+        "object — see layer_id.",
+    )
+    action: Literal[
+        "create",
+        "move",
+        "delete",
+        "resize",
+        "rotate",
+        "set_species",
+        "set_parent_bed",
+        "set_position",
+        "set_vertex",
+        "add_vertex",
+        "delete_vertex",
+        "arrange",
+        # US-D2.4: layer actions.
+        "set_object_layer",
+        "create_layer",
+        "rename_layer",
+        "delete_layer",
+        "set_active_layer",
+        "set_layer_property",
+        # US-D3.2: the first write into ProjectData rather than the scene.
+        "set_succession_plan",
+        # US-D3.4: the second ProjectData write — a soil test on a bed or on
+        # the plan-wide default. The manual-task writes (US-D3.3) return
+        # ManualTaskResult instead, which needs no action discriminator.
+        "record_soil_test",
+    ] = Field(description="The mutation performed.")
+    undo_description: str = Field(
+        description="Human-readable label of the primary undo step this created "
+        "(the user can reverse it with Ctrl+Z; see bed_membership_changed for "
+        "whether a second step was also created). set_active_layer is the one "
+        "action with no undo step — the active layer is session state, not a "
+        "document change — and says so here."
+    )
+    x: float | None = Field(
+        default=None,
+        description="Resulting object centre X in scene cm. Reported by every "
+        "action that leaves the object in place (create, move, set_position, "
+        "resize, rotate, vertex writes, set_species, set_parent_bed); null for "
+        "delete and layer-level actions.",
+    )
+    y: float | None = Field(
+        default=None,
+        description="Resulting object centre Y in scene cm (Y-up: a larger y is "
+        "further north). Same actions as x; null for delete and layer-level "
+        "actions.",
+    )
+    children_moved: int = Field(
+        default=0,
+        description="Contained plants moved along with this object, e.g. moving "
+        "or absolutely positioning a bed carries its plants. Move/set_position "
+        "only — always 0 for every other action. Note resize does NOT move a "
+        "bed's plants: shrinking a bed leaves its linked plants where they are, "
+        "so a plant can end up linked to a bed it no longer sits inside (the "
+        "app's own resize behaves the same way).",
+    )
+    bed_membership_changed: bool = Field(
+        default=False,
+        description="True if this call changed which bed the plant belongs to. "
+        "For move/set_position, that reparenting was a SECOND undo step. For "
+        "set_parent_bed it is always true and is the whole point of the call — "
+        "still ONE undo step, since changing the link is the operation rather "
+        "than a side "
+        "effect of it. Always false for create (a new plant's link is "
+        "established inside the single create step — see new_parent_bed_id) and "
+        "for resize/rotate/set_species, none of which reparent.",
+    )
+    new_parent_bed_id: str | None = Field(
+        default=None,
+        description="The bed the plant now belongs to: for create, the bed it was "
+        "placed inside (null if it landed outside every bed); for move/"
+        "set_position, its new parent when bed_membership_changed is true; for "
+        "set_parent_bed, the bed just linked. Null if it left a bed (including a "
+        "set_parent_bed detach), is unchanged, or is not a plant.",
+    )
+    linked_items_deleted: int = Field(
+        default=0,
+        description="Other items deleted alongside this one because they were "
+        "structurally linked to it — currently a HOUSE's roof ridge (delete only, "
+        "always 0 for move/set_position).",
+    )
+    constraints_removed: int = Field(
+        default=0,
+        description="Geometric constraints removed because they referenced this "
+        "object (delete only). Every geometry write except delete refuses a "
+        "constrained object instead; get_geometry exposes the blocking records.",
+    )
+    # --- US-D2.2: resize / rotate -----------------------------------------
+    width: float | None = Field(
+        default=None,
+        description="Resulting width in cm (resize only; null for a round object, "
+        "which reports 'radius' instead, and for every other action).",
+    )
+    height: float | None = Field(
+        default=None,
+        description="Resulting height in cm (resize only; null for a round object "
+        "and for every other action).",
+    )
+    radius: float | None = Field(
+        default=None,
+        description="Resulting radius in cm (resize of a round object only; null "
+        "for rectangular objects and every other action).",
+    )
+    rotation_deg: float | None = Field(
+        default=None,
+        description="Resulting rotation in degrees, normalised to [0, 360) "
+        "(rotate only; null for every other action). Positive angles turn the "
+        "object COUNTER-CLOCKWISE on screen — e.g. an object pointing east "
+        "points north after +90.",
+    )
+    # --- US-D2.6: low-level geometry escape hatches -----------------------
+    vertex_index: int | None = Field(
+        default=None,
+        description="Affected or inserted vertex index for set_vertex/add_vertex; "
+        "the removed index for delete_vertex. Null for every other action.",
+    )
+    vertex_x_cm: float | None = Field(
+        default=None,
+        description="Actual resulting scene-frame X coordinate of the affected "
+        "vertex. A ROOF_RIDGE request may be projected onto its owning HOUSE "
+        "boundary, so this is the applied result rather than the request echo.",
+    )
+    vertex_y_cm: float | None = Field(
+        default=None,
+        description="Actual resulting scene-frame Y coordinate of the affected vertex.",
+    )
+    vertex_count: int | None = Field(
+        default=None,
+        description="Vertex count after a polygon/polyline vertex write; null "
+        "for every other action.",
+    )
+    # --- US-D2.3: species / parent bed ------------------------------------
+    species_key: str | None = Field(
+        default=None,
+        description="The plant's resulting species (its scientific name, the "
+        "canonical key used throughout the plan) after set_species; null when the "
+        "species was cleared and for every other action.",
+    )
+    link_is_geometric: bool | None = Field(
+        default=None,
+        description="For set_parent_bed: whether the plant is also physically "
+        "inside the bed it was linked to. False means the link is valid but the "
+        "plant sits outside the bed's outline — deliberately allowed (the app's "
+        "own Link action does the same), but worth telling the user about. Null "
+        "for a detach and for every other action.",
+    )
+    # --- issue #338: arrange (stacking order) -------------------------------
+    stack_index: int | None = Field(
+        default=None,
+        description="Resulting position after arrange (0-based, bottom→top, "
+        "within the object's layer — same meaning as ObjectRef.stack_index); "
+        "null for every other action.",
+    )
+    # --- US-D2.4: layers ------------------------------------------------------
+    layer_id: str | None = Field(
+        default=None,
+        description="The layer this action addressed or moved things to: for "
+        "set_object_layer, the object's new layer; for the layer-level actions "
+        "(create_layer/rename_layer/delete_layer/set_active_layer/"
+        "set_layer_property), the layer acted on (for create_layer, its newly "
+        "assigned id). Null for every other action.",
+    )
+    objects_moved: int = Field(
+        default=0,
+        description="Objects that were moved to the replacement layer because "
+        "their layer was deleted (delete_layer only, always 0 for every other "
+        "action). Deleting a layer never deletes its objects — they survive on "
+        "a sibling layer, inside the same single undo step.",
+    )
+    linked_items_created: int = Field(
+        default=0,
+        description="Extra items created alongside the requested object because "
+        "they are structurally linked to it — currently a HOUSE's auto-created "
+        "roof ridge (create only, always 0 for every other action). The whole "
+        "group is still exactly ONE undo step.",
+    )
+
+
+class HistoryResult(BaseModel):
+    """Result of one global Agent API undo or redo operation.
+
+    History is the same LIFO stack used by the GUI. A single call reverses or
+    reapplies one command, so callers that need to reverse a multi-command
+    operation must issue one call per command.
+    """
+
+    action: Literal["undo", "redo"] = Field(
+        description="The history operation performed."
+    )
+    command_description: str = Field(
+        description="Human-readable description of the command reversed by undo "
+        "or reapplied by redo."
+    )
+    can_undo: bool = Field(
+        description="Whether another undo operation is available after this call."
+    )
+    can_redo: bool = Field(
+        description="Whether another redo operation is available after this call."
+    )
+
+
+class HistoryState(BaseModel):
+    """Read-only snapshot of the global undo/redo stack state (US-D2.7).
+
+    Lets an agent assert the D2 undo contract — "one call = one undo step"
+    and "refusals leave the stack untouched" — without reading the GUI's
+    Edit menu. Read-only: never mutates the stack.
+    """
+
+    undo_depth: int = Field(
+        description="Number of commands currently on the undo stack."
+    )
+    redo_depth: int = Field(
+        description="Number of commands currently on the redo stack."
+    )
+    next_undo_text: str | None = Field(
+        default=None,
+        description="Description of the command the next undo would reverse "
+        "(the same string the GUI's Edit menu shows), or null if the undo "
+        "stack is empty.",
+    )
+    next_redo_text: str | None = Field(
+        default=None,
+        description="Description of the command the next redo would reapply "
+        "(the same string the GUI's Edit menu shows), or null if the redo "
+        "stack is empty.",
+    )
+
+
+# --- US-D3.1: domain-intelligence tools ------------------------------------
+
+
+class CompanionSuggestion(BaseModel):
+    """One companion suggestion with ranking metadata (US-D3.1)."""
+
+    species_key: str = Field(
+        description="Canonical species key (lowercase common name). A stable "
+        "machine key: it never changes with the UI language."
+    )
+    name: str = Field(
+        description="DISPLAY STRING in the user's current UI language. Not part "
+        "of the English API contract. Branch on `species_key`, never on `name`."
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Why this plant is suggested (e.g. 'beneficial to apple', "
+        "'beneficial to chives').",
+    )
+    source: str = Field(
+        description="Where the relationship data came from: 'bundled', 'custom', "
+        "or 'permapeople'."
+    )
+    score: float = Field(
+        description="Ranking score — higher is better. Computed from the number "
+        "of beneficial edges to the query and to already-present bed members, "
+        "minus antagonisms."
+    )
+
+
+class CompatibleSet(BaseModel):
+    """A mutually compatible set of plants (US-D3.1).
+
+    Computed via Bron–Kerbosch over the beneficial companion graph, with
+    antagonist edges as hard exclusions. Each set is a maximal clique of
+    mutually beneficial, non-antagonistic species.
+    """
+
+    members: list[str] = Field(
+        description="Species keys in the set, sorted alphabetically."
+    )
+    size: int = Field(description="Number of plants in the set.")
+    score: float = Field(
+        description="Compatibility score — higher is better. Based on the "
+        "number of beneficial edges within the set."
+    )
+    coverage: str = Field(
+        description="Data coverage: 'full' if all members have bundled data, "
+        "'bundled_only' if some members are from the provider, 'partial' if "
+        "some members have no data at all."
+    )
+    covers: list[str] = Field(
+        default_factory=list,
+        description="Which of the bed's CURRENT plants this set already "
+        "satisfies — the ranking key for a bed-scoped search, and the reason "
+        "this set is offered. Empty for a plain candidate search.",
+    )
+    covers_all: bool = Field(
+        default=False,
+        description="True when this set keeps every plant currently in the bed. "
+        "False for a plain candidate search.",
+    )
+
+
+class PlacementCheck(BaseModel):
+    """Result of checking whether a species is well-placed in a bed (US-D3.1).
+
+    Reuses the existing diagnostics logic — never a second implementation.
+    """
+
+    species_key: str = Field(description="The species that was checked.")
+    bed_id: str = Field(description="The bed that was checked.")
+    antagonists_present: list[str] = Field(
+        default_factory=list,
+        description="Species keys of antagonistic plants already in the bed."
+    )
+    companions_present: list[str] = Field(
+        default_factory=list,
+        description="Species keys of beneficial companions already in the bed."
+    )
+    spacing_ok: bool | None = Field(
+        default=None,
+        description="True if the species' spacing requirements can be met, "
+        "False if not, or None if not yet checked (spacing diagnostics "
+        "are available via get_diagnostics)."
+    )
+    soil_ok: bool | None = Field(
+        default=None,
+        description="True if the bed's soil/pH matches the species' "
+        "requirements, False if not, or None if not yet checked (soil "
+        "diagnostics are available via get_diagnostics)."
+    )
+    overall: str = Field(
+        description="'good' if companions present and no antagonists, 'neutral' "
+        "if the bed has plants but none relate to this species, 'critical' if "
+        "an antagonist is present, 'unknown_bed' if bed_id does not resolve to "
+        "a real bed, or 'unknown' if the bed's contents could not be read."
+    )
+
+
+# --- US-D3.2: succession tools ----------------------------------------------
+
+
+class SeasonSegment(BaseModel):
+    """One frost-relative (or month-fallback) growing segment of a year."""
+
+    segment: str = Field(
+        description="Segment key: 'early_spring', 'late_spring', 'summer' or "
+        "'fall'. These four are the codebase's own vocabulary (SEASON_SEGMENTS)."
+    )
+    start_date: str = Field(description="Inclusive start date, ISO 'YYYY-MM-DD'.")
+    end_date: str = Field(description="Inclusive end date, ISO 'YYYY-MM-DD'.")
+
+
+class SuccessionEntryView(BaseModel):
+    """One planned crop slot in a bed's succession plan."""
+
+    id: str = Field(description="Stable entry id (the plan's own UUID).")
+    species_key: str = Field(
+        description="Canonical species key (ADR-016) — the machine contract. "
+        "May be empty when the slot was entered as free text."
+    )
+    common_name: str = Field(description="Display name for the crop.")
+    scientific_name: str = Field(
+        default="", description="Scientific name, when known."
+    )
+    start_date: str = Field(description="Start date, ISO 'YYYY-MM-DD'.")
+    end_date: str = Field(description="End date, ISO 'YYYY-MM-DD'.")
+    notes: str = Field(default="", description="Free-text notes, if any.")
+    season: str | None = Field(
+        default=None,
+        description="The season segment containing start_date, or null when the "
+        "slot falls outside every segment.",
+    )
+
+
+class SuccessionPlanView(BaseModel):
+    """A bed's succession plan for one year, plus what is in it right now."""
+
+    bed_id: str = Field(description="The bed this plan belongs to.")
+    year: int = Field(description="The year this answer describes.")
+    plan_year: int | None = Field(
+        default=None,
+        description="The year the bed actually HAS a plan for, when that differs "
+        "from `year`. Set only on a year mismatch: the bed holds a plan, but not "
+        "for the year you asked about, so `has_plan` is false for that year.",
+    )
+    has_plan: bool = Field(
+        description="False when the bed has NO plan at all. The entries list is "
+        "then empty and this flag is what distinguishes 'no plan' from 'an empty "
+        "plan'."
+    )
+    entries: list[SuccessionEntryView] = Field(
+        default_factory=list,
+        description="Entries sorted ascending by start_date."
+    )
+    current_entry: SuccessionEntryView | None = Field(
+        default=None,
+        description="The entry whose date range contains the reference date, or "
+        "null when the bed is between slots."
+    )
+    next_entry: SuccessionEntryView | None = Field(
+        default=None,
+        description="The first entry starting after the reference date, or null."
+    )
+    segments: list[SeasonSegment] = Field(
+        default_factory=list,
+        description="The season segments for this plan's year, so an agent can "
+        "reason in seasons rather than raw dates."
+    )
+    segments_are_fallback: bool = Field(
+        default=False,
+        description="True when the plan has no geo-location, so `segments` are "
+        "approximate calendar-month boundaries rather than computed from frost "
+        "dates. Always check this before treating a segment date as authoritative."
+    )
+    coverage: str = Field(
+        description="Data coverage: 'full' with frost-derived segments, or "
+        "'no_frost_dates' when the plan has no location and the segments are "
+        "month-based approximations."
+    )
+    reference_date: str = Field(
+        description="The ISO date current_entry/next_entry were evaluated "
+        "against, so a caller can reproduce the answer."
+    )
+
+
+class SuccessionGap(BaseModel):
+    """An uncovered date range inside one season segment."""
+
+    segment: str = Field(description="Season segment key this gap sits in.")
+    start_date: str = Field(description="Inclusive start date, ISO.")
+    end_date: str = Field(description="Inclusive end date, ISO.")
+    days: int = Field(description="Length of the gap in days, inclusive of both ends.")
+
+
+class SuccessionSuggestion(BaseModel):
+    """A ranked candidate crop for a succession gap."""
+
+    species_key: str = Field(
+        description="Canonical species key (ADR-016) — the machine contract."
+    )
+    name: str = Field(description="Display name.")
+    family: str = Field(
+        default="",
+        description="Botanical family, used for the crop-rotation check. Empty "
+        "when the species record carries no family, in which case no rotation "
+        "exclusion can be made for it.",
+    )
+    days_to_maturity: int | None = Field(
+        default=None,
+        description="Days to maturity from the species record, or null when "
+        "unknown. Null means the window fit could not be checked, NOT that it "
+        "fits.",
+    )
+    fits_window: bool = Field(
+        description="True when days_to_maturity is known and fits inside the "
+        "gap. False when it is known not to fit, or when it is unknown — an "
+        "unknown maturity is reported as not-confirmed rather than assumed."
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Short English explanations of the ranking. NOT localised: "
+        "MCP tool output is an English API contract (ADR-033), so this text "
+        "is a convenience for a human reading the result and must not be "
+        "parsed. Branch on the machine fields instead."
+    )
+    source: str = Field(
+        description="Where the species record came from: 'bundled' or 'unknown'."
+    )
+
+
+# --- US-D3.3: calendar & task tools (issue #332) ------------------------------
+
+
+class TaskView(BaseModel):
+    """One task from the generator, plus its render-time urgency and status.
+
+    The two-field split below is the D3 localisation decision (ADR-034
+    addendum), and it is identical for every D3 tool:
+
+    * ``task_id``, ``task_type`` and ``source`` are **stable English machine
+      keys** and part of the API contract. Branch on these.
+    * ``title`` and ``notes`` are **display strings in the user's current UI
+      language** and explicitly NOT part of the English contract.
+    """
+
+    task_id: str = Field(
+        description="Stable task id. Pass it back to edit_manual_task / "
+        "delete_manual_task. Stable across calls for the same generated task."
+    )
+    source: str = Field(
+        description="Where the task came from: 'calendar', 'propagation', "
+        "'succession', 'soil', 'frost' or 'manual'. "
+        "A stable English machine key. The soil source includes both "
+        "amendment and mismatch tasks; task_type distinguishes them."
+    )
+    task_type: str = Field(
+        description="Stable English task-type key (the kind of work, e.g. "
+        "'sow_indoors'). This is the machine contract — branch on it, never "
+        "on `title`."
+    )
+    title: str = Field(
+        description="DISPLAY STRING in the user's current UI language. Not part "
+        "of the English API contract; do not parse it. Use `task_type` instead."
+    )
+    notes: str = Field(default="", description="Display string, same rule as `title`.")
+    start_date: str = Field(description="Inclusive start date, ISO 'YYYY-MM-DD'.")
+    end_date: str = Field(description="Inclusive end date, ISO 'YYYY-MM-DD'.")
+    bed_id: str | None = Field(
+        default=None, description="Linked bed UUID, or null when not bed-specific."
+    )
+    species_key: str = Field(
+        default="", description="Canonical species key (ADR-016), or empty."
+    )
+    item_ids: list[str] = Field(
+        default_factory=list, description="Canvas object ids this task refers to."
+    )
+    urgency: str | None = Field(
+        default=None,
+        description="Render-time bucket from `classify_urgency`: 'today', "
+        "'overdue', 'this_week', 'upcoming', or null when not actionable. "
+        "Computed from the dates and 'today', never stored on the task.",
+    )
+    status: str = Field(
+        description="Effective status from the shared task-status store: 'open', "
+        "'done', 'snoozed', 'dismissed' or 'archived'."
+    )
+    done_date: str | None = Field(
+        default=None, description="ISO date the task was marked done, or null."
+    )
+    snooze_until: str | None = Field(
+        default=None, description="ISO date the snooze ends, or null."
+    )
+    dismissible: bool = Field(
+        default=False, description="Whether the GUI offers a dismiss action."
+    )
+
+
+class TaskCalendarBucket(BaseModel):
+    """One month's task counts, broken down by source and urgency."""
+
+    month: str = Field(description="Month key, ISO 'YYYY-MM'.")
+    total: int = Field(
+        default=0,
+        description="Tasks whose window overlaps this month.",  # i18n-source: API contract
+    )
+    by_source: dict[str, int] = Field(
+        default_factory=dict, description="Count per stable `source` key."
+    )
+    by_urgency: dict[str, int] = Field(
+        default_factory=dict,
+        description="Count per urgency bucket; a task with no urgency is "
+        "counted under 'none'.",
+    )
+    actionable: int = Field(
+        default=0,
+        description="Tasks whose urgency is not null — the ones worth reading.",
+    )
+
+
+class TaskCalendarView(BaseModel):
+    """Month-bucketed overview of the task calendar."""
+
+    year: int = Field(description="The year this overview covers.")
+    today: str = Field(
+        description="The reference date used for urgency, ISO 'YYYY-MM-DD'."
+    )
+    coverage: str = Field(
+        description="What the answer is based on: 'full' when a frost date is "
+        "known, or 'no_frost_dates' when the plan has no geo-location. The "
+        "latter still returns every non-calendar task; it never means 'nothing "
+        "to do'."
+    )
+    total: int = Field(description="Total tasks across all months.")
+    months: list[TaskCalendarBucket] = Field(
+        default_factory=list,
+        description="Only months with at least one task, ascending.",
+    )
+
+
+class ManualTaskResult(BaseModel):
+    """Outcome of a manual-task write."""
+
+    task_id: str = Field(description="Id of the manual task written.")
+    title: str = Field(description="The stored title, echoed back.")
+    date: str = Field(
+        description="Stored due date, ISO 'YYYY-MM-DD'. Empty string = undated."
+    )
+    deleted: bool = Field(
+        default=False, description="True when this call removed the task."
+    )
+
+
+class TaskListView(BaseModel):
+    """A filtered task list plus the coverage marker that explains its edges.
+
+    A wrapper rather than a bare list, for one reason: the coverage marker has
+    to survive. A plan with no geo-location has no frost dates, so the calendar
+    generator returns nothing — and a bare ``[]`` from `get_tasks` would read as
+    "nothing to do" when in fact the engine never got the dates it needs.
+    """
+
+    today: str = Field(
+        description="The reference date urgency was computed against, ISO "
+        "'YYYY-MM-DD'. The same input always yields the same answer."
+    )
+    from_date: str = Field(description="Window start actually applied, ISO.")
+    to_date: str = Field(description="Window end actually applied, ISO.")
+    coverage: str = Field(
+        description="What the answer is based on: 'full' when a frost date is "
+        "known, or 'no_frost_dates' when the plan has no geo-location. The "
+        "latter still returns every non-calendar task (manual, succession, "
+        "soil) — it never means 'nothing to do'."
+    )
+    total: int = Field(description="Number of tasks in `tasks` after filtering.")
+    tasks: list[TaskView] = Field(
+        default_factory=list,
+        description="Tasks whose window overlaps the date filter, ascending by "  # i18n-source: API contract
+        "start_date then task_id for a deterministic order.",
+    )
+
+
+# --- US-D3.4: soil amendment tools (issue #333) -------------------------------
+
+
+class SoilReading(BaseModel):
+    """One nutrient's kit-scale level and its derived health rating."""
+
+    level: int | None = Field(
+        default=None,
+        description="Rapitest kit level as recorded (integer). Null = not tested.",
+    )
+    health_level: str | None = Field(
+        default=None,
+        description="Derived rating for 'n', 'p' and 'k' only: 'unknown', "
+        "'good', 'fair' or 'poor', straight from `SoilService.health_level`. "
+        "NULL for 'ca', 'mg' and 's': the engine reads those secondaries when "
+        "computing amendments but defines no health rating for them, and asking "
+        "it for one returns the OVERALL rating instead. Null here means 'no "
+        "rating exists', which is different from 'unknown', which means the "
+        "nutrient was not tested.",
+    )
+
+
+class SoilStatus(BaseModel):
+    """One bed's effective soil record and everything derived from it."""
+
+    bed_id: str = Field(
+        description="The bed, or the literal 'global' for the plan-wide default."
+    )
+    bed_name: str = Field(default="", description="Display label for the bed.")
+    record_source: str = Field(
+        description="Which record answered: 'bed' (its own latest), 'global' "
+        "(the plan-wide default's latest), or 'none'. The effective-record "
+        "hierarchy is invisible otherwise, so an agent would mis-attribute a "
+        "reading to the bed that never had one."
+    )
+    coverage: str = Field(
+        description="'ok' when a record answered, or 'no_soil_test' when neither "
+        "the bed nor the plan has one. 'no_soil_test' is never an empty object "
+        "that reads as 'soil is fine'."
+    )
+    test_date: str = Field(
+        default="", description="ISO date of the record, or empty when none."
+    )
+    ph: float | None = Field(default=None, description="Recorded pH, or null.")
+    ph_health_level: str = Field(
+        description="Derived pH rating, or 'unknown' when no pH was recorded."
+    )
+    overall_health_level: str = Field(
+        description="Worst non-unknown level across pH and N/P/K — the engine's "
+        "own 'overall', which does NOT consider the Ca/Mg/S secondaries. "
+        "'unknown' when all four are unknown."
+    )
+    is_test_overdue: bool = Field(
+        description="Whether the seasonal check says this test is overdue."
+    )
+    levels: dict[str, SoilReading] = Field(
+        default_factory=dict,
+        description="Per-nutrient reading keyed by the stable nutrient key: "
+        "'n', 'p', 'k', 'ca', 'mg', 's'.",
+    )
+
+
+class SoilStatusListView(BaseModel):
+    """Effective soil readings for the requested bed or every soil-capable bed."""
+
+    beds: list[SoilStatus] = Field(
+        description="Per-bed readings, sorted by bed UUID. Each bed carries its "
+        "own record_source and coverage; an empty list means there are no beds.",
+    )
+
+
+class AmendmentRecommendationView(BaseModel):
+    """One amendment recommendation, as the engine produced it."""
+
+    amendment_id: str = Field(
+        description="Stable English amendment key (`Amendment.id`). Branch on "
+        "this; it never changes with the UI language."
+    )
+    display_name: str = Field(
+        description="DISPLAY STRING in the user's current UI language. Not part "
+        "of the English API contract; do not parse it."
+    )
+    quantity_g: float = Field(description="Amount in grams for this bed.")
+    target_kind: str = Field(
+        description="What the amendment acts on: 'ph', 'n', 'p', 'k', 'ca', "
+        "'mg', 's' or 'structure'. A stable English key."
+    )
+    current_value: float = Field(
+        description="Numeric current value (pH, or the kit level)."
+    )
+    target_value: float = Field(
+        description="Numeric target value (pH, or the kit level)."
+    )
+    fixes: list[str] = Field(
+        default_factory=list,
+        description="Stable English fix codes this amendment addresses "
+        "(`Amendment.fixes`).",
+    )
+    credits: list[str] = Field(
+        default_factory=list,
+        description="Secondary nutrients this amendment also moves, as "
+        "'kind:current->target' strings, exactly as the engine formats them.",
+    )
+    structural_fix: str = Field(
+        default="", description="Structural fix code, or empty when not one."
+    )
+    release_speed: str = Field(
+        default="", description="Release speed: 'fast', 'medium' or 'slow'."
+    )
+    organic: bool = Field(default=True, description="Whether the amendment is organic.")
+
+
+class SoilMismatchView(BaseModel):
+    """One plant that disagrees with its bed's soil."""
+
+    species_key: str = Field(
+        description="Canonical species key (ADR-016) — the machine contract."
+    )
+    common_name: str = Field(default="", description="Display name.")
+    reason_codes: list[str] = Field(
+        default_factory=list,
+        description="Stable English reason keys — 'ph_low', 'ph_high', "
+        "'n_high_demand', 'p_high_demand', 'k_high_demand'. Branch on these."
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="DISPLAY STRINGS in the user's current UI language, paired "
+        "positionally with `reason_codes`. Not part of the English contract."
+    )
+
+
+class AmendmentPlanView(BaseModel):
+    """Amendment recommendations plus the coverage marker that explains them."""
+
+    bed_id: str = Field(
+        description="The bed, or the literal 'global' for the plan-wide default."
+    )
+    coverage: str = Field(
+        description="'ok' when a soil record answered, or 'no_soil_test' when "
+        "neither the bed nor the plan has one. An empty `recommendations` with "
+        "'no_soil_test' means 'untested', never 'nothing to fix'."
+    )
+    today: str = Field(
+        description="Reference date used for the overdue check, ISO 'YYYY-MM-DD'."
+    )
+    total: int = Field(description="Number of recommendations returned.")
+    recommendations: list[AmendmentRecommendationView] = Field(
+        default_factory=list,
+        description="Recommendations in the engine's own order.",
+    )
+
+
+class SoilMismatchListView(BaseModel):
+    """Plant/soil disagreements plus the coverage marker that explains them."""
+
+    bed_id: str | None = Field(
+        default=None,
+        description="The bed, or null when every soil-capable bed was checked.",
+    )
+    coverage: str = Field(
+        description="'ok' when a soil record answered, 'no_soil_test' when "
+        "neither the bed nor the plan has one, or 'no_beds' when the plan has no "
+        "soil-capable bed to check."
+    )
+    today: str = Field(description="Reference date, ISO 'YYYY-MM-DD'.")
+    total: int = Field(description="Number of disagreeing plants returned.")
+    mismatches: list[SoilMismatchView] = Field(
+        default_factory=list,
+        description="Plants that disagree with their bed's soil, sorted by "
+        "species_key for a deterministic order.",
+    )
+
+
+class SoilMismatchBedsView(BaseModel):
+    """Soil disagreements grouped by bed, preserving each bed's coverage."""
+
+    coverage: str = Field(
+        description="'no_beds' when no bed was checked, 'no_soil_test' when all "
+        "are untested, 'partial_soil_tests' when some are untested, or 'ok' "
+        "when every bed has an effective test. Never a soil-health rating.",
+    )
+    today: str = Field(description="Reference date, ISO 'YYYY-MM-DD'.")
+    beds: dict[str, SoilMismatchListView] = Field(
+        description="Per-bed results keyed by bed UUID; each carries its own "
+        "coverage, total and mismatches. Sorted by bed UUID.",
+    )

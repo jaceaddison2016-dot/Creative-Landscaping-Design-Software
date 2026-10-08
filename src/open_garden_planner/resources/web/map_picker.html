@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 connect-src https://maps.googleapis.com https://*.googleapis.com https://*.gstatic.com;
+                 script-src 'self' 'unsafe-inline' qrc: https://maps.googleapis.com https://*.googleapis.com https://*.gstatic.com;
+                 style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                 img-src 'self' data: https://*.googleapis.com https://*.gstatic.com;
+                 font-src 'self' https://fonts.gstatic.com;">
+  <title>Map Picker</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { position: absolute; top: 56px; left: 0; right: 0; bottom: 0; }
+    #toolbar {
+      position: absolute; top: 0; left: 0; right: 0; height: 56px;
+      background: #f5f5f5; border-bottom: 1px solid #ccc;
+      display: flex; align-items: center; padding: 0 12px; gap: 8px; z-index: 10;
+    }
+    #search { flex: 1; padding: 8px 10px; border: 1px solid #bbb; border-radius: 4px; font-size: 14px; }
+    .btn { padding: 8px 14px; border: 1px solid #888; background: #fff; border-radius: 4px;
+           cursor: pointer; font-size: 14px; }
+    .btn-primary { background: #1976d2; color: #fff; border-color: #1976d2; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #hint { position: absolute; bottom: 12px; left: 12px; background: rgba(0,0,0,0.65);
+            color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; z-index: 5; }
+    #hint.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <input id="search" type="text" placeholder="Search address...">
+    <button id="draw-btn" class="btn">Draw rectangle</button>
+    <button id="clear-btn" class="btn" disabled>Clear</button>
+  </div>
+  <div id="map"></div>
+  <div id="hint">Click "Draw rectangle", then drag a rectangle on the map.</div>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script>
+    let map = null;
+    let drawingRectangle = null;
+    let dragStartCorner = null;
+    let mouseDownListener = null;
+    let mouseMoveListener = null;
+    let mouseUpListener = null;
+    let bridge = null;
+    let i18n = {};
+
+    new QWebChannel(qt.webChannelTransport, function(channel) {
+      bridge = channel.objects.bridge;
+      bridge.setupReady.connect(function(apiKey, locale, strings) {
+        i18n = strings || {};
+        applyTranslations();
+        loadMapsApi(apiKey, locale);
+      });
+      bridge.ready();
+    });
+
+    function applyTranslations() {
+      if (i18n.searchPlaceholder) {
+        document.getElementById('search').placeholder = i18n.searchPlaceholder;
+      }
+      if (i18n.drawButton) {
+        document.getElementById('draw-btn').textContent = i18n.drawButton;
+      }
+      if (i18n.clearButton) {
+        document.getElementById('clear-btn').textContent = i18n.clearButton;
+      }
+      if (i18n.hintInitial) {
+        document.getElementById('hint').textContent = i18n.hintInitial;
+      }
+    }
+
+    function loadMapsApi(apiKey, locale) {
+      if (window.google && window.google.maps) return;
+      // The Python side passes a "lang|REGION" payload (e.g. "de|DE") that
+      // is already locale-safe — Qt's QLocale.territory() is authoritative
+      // even for locales whose BCP47 second subtag is a script (zh-Hant-TW).
+      const parts = (locale || 'en|EN').split('|');
+      const langTag = parts[0] || 'en';
+      const regionTag = (parts[1] || langTag).toUpperCase();
+      const script = document.createElement('script');
+      script.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+                   encodeURIComponent(apiKey) +
+                   '&libraries=places&v=quarterly&callback=initMap' +
+                   '&language=' + encodeURIComponent(langTag) +
+                   '&region=' + encodeURIComponent(regionTag);
+      script.async = true;
+      script.defer = true;
+      script.onerror = function() {
+        if (bridge) bridge.reportError('Failed to load Google Maps JS API. Check your network or API key.');
+      };
+      document.head.appendChild(script);
+    }
+
+    window.initMap = function() {
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 52.5200, lng: 13.4050 },
+        zoom: 18,
+        mapTypeId: 'satellite',
+        tilt: 0,
+        disableDefaultUI: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        mapTypeControl: false,  // We always want satellite — no toggle UI.
+      });
+
+      const searchInput = document.getElementById('search');
+      const autocomplete = new google.maps.places.Autocomplete(searchInput, {
+        fields: ['geometry'],
+      });
+      autocomplete.bindTo('bounds', map);
+      autocomplete.addListener('place_changed', function() {
+        const place = autocomplete.getPlace();
+        if (!place.geometry) return;
+        if (place.geometry.viewport) {
+          map.fitBounds(place.geometry.viewport);
+        } else {
+          map.setCenter(place.geometry.location);
+          map.setZoom(19);
+        }
+      });
+
+      document.getElementById('draw-btn').addEventListener('click', startDrawing);
+      document.getElementById('clear-btn').addEventListener('click', clearRectangle);
+    };
+
+    function startDrawing() {
+      clearRectangle();
+      document.getElementById('hint').classList.remove('hidden');
+      document.getElementById('hint').textContent =
+        i18n.hintDrawing || 'Drag on the map to draw the rectangle.';
+      // Disable map panning while drawing — otherwise the mousedown→drag
+      // pans the map instead of starting a rectangle.
+      map.setOptions({draggable: false, gestureHandling: 'none'});
+      document.getElementById('map').style.cursor = 'crosshair';
+      mouseDownListener = map.addListener('mousedown', onDragStart);
+    }
+
+    function onDragStart(e) {
+      dragStartCorner = e.latLng;
+      drawingRectangle = new google.maps.Rectangle({
+        bounds: new google.maps.LatLngBounds(dragStartCorner, dragStartCorner),
+        strokeColor: '#1976d2',
+        strokeWeight: 2,
+        fillColor: '#1976d2',
+        fillOpacity: 0.15,
+        map: map,
+        clickable: false,  // let mouse events pass through to the map.
+      });
+      mouseMoveListener = map.addListener('mousemove', onDragMove);
+      mouseUpListener = map.addListener('mouseup', onDragEnd);
+    }
+
+    function onDragMove(e) {
+      if (!drawingRectangle || !dragStartCorner) return;
+      const bounds = new google.maps.LatLngBounds();
+      bounds.extend(dragStartCorner);
+      bounds.extend(e.latLng);
+      drawingRectangle.setBounds(bounds);
+    }
+
+    function onDragEnd(e) {
+      removeDrawingListeners();
+      map.setOptions({draggable: true, gestureHandling: 'auto'});
+      document.getElementById('map').style.cursor = '';
+      document.getElementById('hint').classList.add('hidden');
+      if (drawingRectangle && dragStartCorner) {
+        // Promote the rectangle to interactive editing: handles + draggable.
+        drawingRectangle.setOptions({
+          editable: true,
+          draggable: true,
+          clickable: true,
+        });
+        drawingRectangle.addListener('bounds_changed', publishBounds);
+        publishBounds();
+        document.getElementById('clear-btn').disabled = false;
+      }
+      dragStartCorner = null;
+    }
+
+    function removeDrawingListeners() {
+      if (mouseDownListener) {
+        google.maps.event.removeListener(mouseDownListener);
+        mouseDownListener = null;
+      }
+      if (mouseMoveListener) {
+        google.maps.event.removeListener(mouseMoveListener);
+        mouseMoveListener = null;
+      }
+      if (mouseUpListener) {
+        google.maps.event.removeListener(mouseUpListener);
+        mouseUpListener = null;
+      }
+    }
+
+    function clearRectangle() {
+      if (drawingRectangle) {
+        drawingRectangle.setMap(null);
+        drawingRectangle = null;
+      }
+      dragStartCorner = null;
+      removeDrawingListeners();
+      if (map) {
+        map.setOptions({draggable: true, gestureHandling: 'auto'});
+        document.getElementById('map').style.cursor = '';
+      }
+      document.getElementById('clear-btn').disabled = true;
+      document.getElementById('hint').classList.remove('hidden');
+      document.getElementById('hint').textContent =
+        i18n.hintInitial || 'Click "Draw rectangle", then drag a rectangle on the map.';
+      if (bridge) bridge.boundsCleared();
+    }
+
+    function publishBounds() {
+      if (!drawingRectangle || !bridge) return;
+      const b = drawingRectangle.getBounds();
+      const ne = b.getNorthEast();
+      const sw = b.getSouthWest();
+      bridge.boundsChanged(ne.lat(), sw.lng(), sw.lat(), ne.lng());
+    }
+
+    // ---- JS-API view capture (issues #346, #347) ----------------------
+    // The Python side grabs the widget pixels; this side only positions the
+    // map so each requested frame sits centred under the visible view, hides
+    // our own chrome AND Google's native attribution element for the
+    // duration of the capture (the Python side bakes the required
+    // "Map data ©{year} Google" strip onto the final image exactly once —
+    // issue #347; the interactive map outside capture keeps the native
+    // attribution), freezes map interaction, and reports what ACTUALLY
+    // rendered (map.getZoom(), the page dpr, the map div size) once the
+    // render has settled. No image data crosses the bridge.
+    //
+    // Choreography (#347): a capture is a sequence of frames. Python first
+    // asks for the capture profile (beginCaptureChrome → captureReady with
+    // frameIndex -1), derives the pan grid from the real viewport size and
+    // dpr, then drives one settle at a time: beginCaptureFrames (frame 0)
+    // → captureReady(frameIndex) → Python grabs → advanceCaptureFrame() →
+    // ... → retryCaptureFrame() re-settles the current frame after a
+    // Python-side quality refusal.
+    // NOTE: this module-level mutable state is deliberately a singleton —
+    // Python drives every transition, so the page must never re-enter
+    // itself; keep it that way on both sides.
+    let captureState = null;
+    let captureFrames = [];
+    let captureZoom = null;
+    let captureFrameIndex = 0;
+
+    function beginCaptureChrome(token) {
+      if (!map) return 'map-not-ready';
+      if (captureState) return 'capture-in-progress';
+      try {
+        const toolbar = document.getElementById('toolbar');
+        const hint = document.getElementById('hint');
+        const mapDiv = document.getElementById('map');
+        const attrEl = document.querySelector('.gm-style-cc');
+        captureState = {
+          // Stringified at STORAGE: the guards compare `captureState.token
+          // !== String(token)`, and a numeric token (Python passes
+          // beginCaptureChrome(1)) would never equal its string form — the
+          // guard would silently eat every report.
+          token: String(token),
+          toolbarDisplay: toolbar.style.display,
+          hintWasHidden: hint.classList.contains('hidden'),
+          mapTop: mapDiv.style.top,
+          rectWasVisible: drawingRectangle ? drawingRectangle.getVisible() : false,
+          wasDraggable: map.get('draggable'),
+          wasGestureHandling: map.get('gestureHandling'),
+          attrDisplay: attrEl ? attrEl.style.display : undefined,
+        };
+        toolbar.style.display = 'none';
+        hint.classList.add('hidden');
+        mapDiv.style.top = '0';
+        if (drawingRectangle) drawingRectangle.setVisible(false);
+        // Freeze interaction: a pan during the settle would silently break
+        // the georeference (the Python crop assumes the map pans exactly).
+        map.setOptions({ disableDefaultUI: true, draggable: false, gestureHandling: 'none' });
+        // Hiding Google's attribution element is capture-only: the edited
+        // frame sequence is a transient composition step, and the finished
+        // artifact gets the required attribution baked in once by Python.
+        if (attrEl) attrEl.style.display = 'none';
+        setTimeout(function() {
+          if (!captureState || captureState.token !== String(token)) return;
+          bridge.captureReady(
+            String(token),
+            -1,                             // -1 = capture profile report (no grab)
+            map.getZoom(),
+            window.devicePixelRatio || 1,
+            mapDiv.clientWidth,
+            mapDiv.clientHeight
+          );
+        }, 50);                             // one raf-frame for the new map div size
+        return 'ok';
+      } catch (e) {
+        restoredChromeSafe();
+        return 'error: ' + String(e && e.message ? e.message : e);
+      }
+    }
+
+    function beginCaptureFrames(centers, zoom, token) {
+      if (!map) return 'map-not-ready';
+      if (!captureState || captureState.token !== String(token)) return 'capture-in-progress';
+      if (!Array.isArray(centers) || centers.length < 1) return 'error: no capture centers';
+      try {
+        captureFrames = centers;
+        captureZoom = zoom;
+        captureFrameIndex = 0;
+        map.setZoom(zoom);
+        settleFrame(false);
+        return 'ok';
+      } catch (e) {
+        restoredChromeSafe();
+        return 'error: ' + String(e && e.message ? e.message : e);
+      }
+    }
+
+    function advanceCaptureFrame() {
+      if (!captureState) return 'capture-in-progress';
+      captureFrameIndex += 1;
+      settleFrame(false);
+      return 'ok';
+    }
+
+    function retryCaptureFrame() {
+      if (!captureState) return 'capture-in-progress';
+      // The map is already positioned at the current frame's center; idle
+      // may never re-fire, so the settle uses a short grace instead.
+      settleFrame(true);
+      return 'ok';
+    }
+
+    // Settle the map on frame `captureFrameIndex` and report readiness once
+    // the render has finished. Never resolves itself: Python drives the
+    // sequence (its quality gate decides between grab→advance and retry).
+    function settleFrame(retryMode) {
+      // Drop listeners/timers from any previous settle (advance/retry).
+      cleanupCaptureListeners();
+      const frame = captureFrames[captureFrameIndex];
+      if (!frame) {
+        bridge.captureError(String(captureState.token), 'capture-timeout');
+        return;
+      }
+      map.setCenter({ lat: frame[0], lng: frame[1] });
+      let idleFired = false;
+      let tilesFired = false;
+      let reported = false;
+      const reportReady = function() {
+        if (reported || !captureState) return;
+        if (!(idleFired && tilesFired)) return;
+        // Report what actually rendered, not what was requested — a clamp
+        // or a failed zoom would otherwise mis-scale the capture.
+        if (map.getZoom() !== captureZoom) {
+          reported = true;
+          cleanupCaptureListeners();
+          bridge.captureError(String(captureState.token), 'zoom-mismatch');
+          return;
+        }
+        reported = true;
+        cleanupCaptureListeners();
+        const mapDiv = document.getElementById('map');
+        bridge.captureReady(
+          String(captureState.token),
+          captureFrameIndex,
+          map.getZoom(),
+          window.devicePixelRatio || 1,
+          mapDiv.clientWidth,
+          mapDiv.clientHeight
+        );
+      };
+      const onIdle = function() { idleFired = true; reportReady(); };
+      const onTiles = function() { tilesFired = true; reportReady(); };
+      captureState.idleListener = map.addListener('idle', onIdle);
+      captureState.tilesListener = map.addListener('tilesloaded', onTiles);
+      captureState.timeout = setTimeout(function() {
+        if (reported || !captureState) return;
+        reported = true;
+        cleanupCaptureListeners();
+        bridge.captureError(String(captureState.token), 'capture-timeout');
+      }, 15000);
+      // In case tiles finishes before idle (or vice versa) rarely fires —
+      // or a retry re-settles an already-centered map where neither event
+      // will fire — force the missing flags after a short grace. Retries
+      // use a much shorter grace: the map did not move, so "settled" is
+      // mostly a caching question.
+      captureState.settledCheck = setTimeout(function() {
+        if (reported || !captureState) return;
+        if (!idleFired) onIdle();
+        if (!tilesFired) onTiles();
+      }, retryMode ? 600 : 3000);
+    }
+
+    function cleanupCaptureListeners(state) {
+      const s = state || captureState;
+      if (!s) return;
+      if (s.idleListener) {
+        google.maps.event.removeListener(s.idleListener);
+        s.idleListener = null;
+      }
+      if (s.tilesListener) {
+        google.maps.event.removeListener(s.tilesListener);
+        s.tilesListener = null;
+      }
+      if (s.timeout) clearTimeout(s.timeout);
+      if (s.settledCheck) clearTimeout(s.settledCheck);
+    }
+
+    function restoredChromeSafe() {
+      // Restore stored chrome state without throwing on partial states —
+      // the error path must dispose listeners/timers exactly like the
+      // normal restore path does.
+      const state = captureState;
+      captureState = null;
+      if (!state) return;
+      cleanupCaptureListeners(state);
+      try {
+        cleanupChromeState(state);
+      } catch (e) { /* window restore must be safe in every path */ }
+    }
+
+    function restoreCaptureChrome() {
+      if (!captureState) return;
+      cleanupCaptureListeners();
+      const state = captureState;
+      captureState = null;
+      cleanupChromeState(state);
+    }
+
+    function cleanupChromeState(state) {
+      const toolbar = document.getElementById('toolbar');
+      const hint = document.getElementById('hint');
+      const mapDiv = document.getElementById('map');
+      if (toolbar) toolbar.style.display = state.toolbarDisplay || '';
+      if (hint) {
+        if (state.hintWasHidden) hint.classList.add('hidden');
+        else hint.classList.remove('hidden');
+      }
+      if (mapDiv) mapDiv.style.top = state.mapTop || '56px';
+      if (drawingRectangle && state.rectWasVisible) drawingRectangle.setVisible(true);
+      const attrEl = document.querySelector('.gm-style-cc');
+      if (attrEl) attrEl.style.display = state.attrDisplay || '';
+      map.setOptions({
+        disableDefaultUI: false,
+        draggable: state.wasDraggable !== false,
+        gestureHandling: state.wasGestureHandling || 'auto',
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+"""Snap provider abstraction.
+
+A ``SnapProvider`` enumerates ``SnapCandidate`` points around a query
+position.  The ``PointSnapper`` runs every enabled provider and picks
+the closest candidate within the configured threshold.
+
+Each provider owns one snap *mode* (endpoint, center, midpoint,
+intersection, etc.).  Modes can be enabled/disabled individually by the
+user via the View menu.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Iterable
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+from PyQt6.QtCore import QPointF
+
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QGraphicsItem
+
+
+class SnapCandidateKind(Enum):
+    """Type of a snap candidate, used to pick a visual glyph."""
+
+    ENDPOINT = auto()
+    CENTER = auto()
+    EDGE = auto()
+    MIDPOINT = auto()
+    INTERSECTION = auto()
+    # Phase 13 Package B (US-B4/B5/B6)
+    NEAREST = auto()
+    PERPENDICULAR = auto()
+    TANGENT = auto()
+
+
+@dataclass(frozen=True)
+class SnapCandidate:
+    """A point produced by a :class:`SnapProvider`.
+
+    Lower ``priority`` wins on ties (endpoint beats midpoint beats edge).
+
+    ``source_edge_index`` records which straight edge of ``item`` produced
+    this candidate (rectangle 0=top/1=right/2=bottom/3=left; polygon /
+    polyline edge ``i`` = vertex ``i``→``i+1``). It is ``None`` for
+    candidates that don't project onto a specific straight edge (circle /
+    arc projections, arc midpoints). The auto-constraint emitter uses it to
+    build a well-formed POINT_ON_EDGE / COINCIDENT constraint that names the
+    two edge endpoints — see :mod:`open_garden_planner.core.auto_constraint`.
+    """
+
+    point: QPointF
+    kind: SnapCandidateKind
+    priority: int = 100
+    item: QGraphicsItem | None = None
+    source_edge_index: int | None = None
+
+
+class SnapProvider(ABC):
+    """Abstract source of snap candidates."""
+
+    kind: SnapCandidateKind
+    priority: int = 100
+
+    @abstractmethod
+    def candidates(
+        self,
+        scene_pos: QPointF,
+        items: Iterable[QGraphicsItem],
+        threshold: float,
+        reference_point: QPointF | None = None,
+    ) -> Iterable[SnapCandidate]:
+        """Yield candidates within ``threshold`` of ``scene_pos``.
+
+        ``reference_point`` is the anchor that the active drawing tool is
+        drawing from (e.g. the previous polyline vertex). Required by
+        perpendicular/tangent providers; all others ignore it. ``None``
+        means no drawing tool is active or it has no anchor yet.
+        """
+        raise NotImplementedError

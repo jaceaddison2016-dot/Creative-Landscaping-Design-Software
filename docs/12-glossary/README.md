@@ -1,0 +1,188 @@
+# 12. Glossary
+
+## 12.1 Terms
+
+| Term | Definition |
+|------|-----------|
+| **arc42** | Template for software architecture documentation (12 sections) |
+| **Accent sentinel** | The reserved hex `#3D8B37` inside UI icon SVGs — replaced with the active theme's `accent` at render time by the icon provider (equals the light-theme accent so raw files preview correctly). ADR-039 |
+| **Icon provider** | `ui/icons.py` — the single render path for chrome icons. Substitutes theme colors into the SVG text before rasterizing (QSvgRenderer paints raw `currentColor` black), renders at devicePixelRatio, caches per (name, size, tint, accent) |
+| **Semantic color token** | A named entry in `ThemeColors.LIGHT/DARK` expressing intent (`error`, `warning_bg`, `caution`, …). Widget code reads it live via `theme_color()`/`rgba()` instead of hardcoding hex — enforced by the QSS-color lint gate |
+| **Text role** | The `textRole`/`colorRole` dynamic label properties (h1/h2/hint/small/placeholder; success/…/secondary) styled centrally by the generated stylesheet; assigned via `theme.set_text_role()` |
+| **Canvas** | The main drawing area where garden objects are placed and manipulated |
+| **Beauty Board** | The fixed set of 3D shots of `tests/fixtures/plans/bench_small.ogp` (golden hour, sunset, noon, morning, December noon, night, walk) per render preset, rendered before and after every 3D-visible change together with its `metrics.json`; judged by the `ogp-3d-reviewer` and the owner. Procedure in the `ogp-lush-cinematic` skill (Phase 17) |
+| **Truth gate (3D)** | A measured check that a 3D frame still states the plan's data: mesh height and spread vs the resolved values, shadow-map footprint vs the analytic 2D shadow (IoU), north-up ground, the sky's sun at the solar azimuth, the plan date. A failed truth gate is a P0 however good the frame looks (ADR-048) |
+| **Light probe (IBL)** | An environment image (here the procedural sky) that lights a Qt Quick 3D scene from all directions — image-based lighting. Pre-filtered once per texture object, so a sun change builds a new one; costly on software rasterisers (ADR-048 evidence) |
+| **Render tier** | The opt-in test tier that renders real Qt Quick 3D frames (`OGP_RENDER3D=1`, xvfb + xcb + OpenGL), because the default `offscreen` platform renders no 3D (§8.10) |
+| **Canopy Diameter** | The spread/width of a tree or shrub's foliage when viewed from above |
+| **Amendment** | Soil-improving substance (lime, blood meal, compost, etc.) loaded from `resources/data/amendments.json`. Carries application rate (g/m²) and per-fix effect coefficients used by the calculator |
+| **Bundled Species DB** | Curated `resources/data/plant_species.json` shipped with the app (~120 records covering every gallery thumbnail, full pH/NPK/sun/water/calendar fields per species). Looked up on canvas drop and tool draw by scientific name → common name → alias to auto-populate `metadata["plant_species"]`; the long tail still falls through to the on-demand API search (issue #170) |
+| **AmendmentRecommendation** | Calculator output for one substance applied to one bed: amendment + grams + rationale (e.g. "Raises pH 5.8 → 6.5") |
+| **Calibration** | The process of marking a known distance on an image to establish metric scale |
+| **Command Pattern** | Design pattern where every modification is wrapped in an object with execute/undo methods |
+| **Garden Bed** | A defined planting area (polygon) that can contain plant objects |
+| **GardenObject** | Base class for all drawable entities on the canvas |
+| **Layer** | A logical grouping of objects for organization and visibility control |
+| **LOD** | Level of Detail — rendering different detail levels at different zoom levels |
+| **NPK** | Macronutrients tracked in soil tests: Nitrogen (N), Phosphorus (P), Potassium (K) |
+| **OGP** | Open Garden Planner (the application) |
+| **.ogp** | Project file format (JSON-based) |
+| **Object Snap** | Automatic snapping of new/moved objects to edges/vertices of existing objects |
+| **Plant Type** | Category of plant: tree, shrub, perennial, annual, ground cover |
+| **Polyline** | A connected series of line segments (open path) used for fences, paths, walls |
+| **QGraphicsScene** | Qt class that manages all 2D items on the canvas |
+| **QGraphicsView** | Qt class that provides the viewport/widget for displaying the scene |
+| **Rapitest scale** | Categorical NPK / Ca-Mg-S labels (Depleted/Deficient/Adequate/Sufficient/Surplus and Low/Medium/High) used by consumer soil test kits and stored on `SoilTestRecord` |
+| **Scene Coordinates** | Real-world metric coordinates used internally (centimeters) |
+| **Seed Gap** | A species placed on the canvas that has no matching packet in `ProjectData.seed_inventory` — surfaces as a row in the Shopping List Seeds category |
+| **Shopping List** | Aggregated buying list (Plants / Seeds / Materials) produced from the current plan; only user-entered prices persist with the project, the rows themselves are recomputed on each open |
+| **ShoppingListItem** | One purchasable row: stable ID (e.g. `plant:<species_id>`), category, name, quantity, unit, optional price |
+| **ShoppingListCategory** | Top-level group in the shopping list: `PLANTS`, `SEEDS`, or `MATERIALS` |
+| **SoilTestRecord** | Single soil test entry: date, pH, NPK levels, secondary nutrients, optional ppm values, notes, optional soil texture |
+| **SoilTestHistory** | Time-ordered list of `SoilTestRecord`s for one target (a bed UUID or `"global"` default) |
+| **Smart composition** | US-12.11 calculator policy: each pick fully closes its primary nutrient deficit and credits all co-fixed nutrients at the same dose factor; greedy by breadth (count of outstanding deficits the substance touches), with organic-preferred and JSON-order tie-breakers |
+| **Structural amendment** | Substance added to fix soil texture rather than nutrient levels — sand (drainage), perlite (aeration + drainage), vermiculite (water retention + aeration + CEC), diatomaceous earth (water retention + silica). Driven by `SoilTestRecord.soil_texture` |
+| **Soil texture** | Optional `SoilTestRecord` field — `"sandy"`, `"loamy"`, `"clayey"`, or `"compacted"` (or `None`). Drives the structural-pick phase of the calculator |
+| **Enabled set / Amendment library** | Per-project allowlist (`ProjectData.enabled_amendments`) of substance IDs the calculator may pick from. `None` (the default) means every bundled amendment is enabled; the user manages the allowlist via the checkbox panel inside the Amendment Plan dialog |
+| **Garden Journal** | Free-standing, map-linked notes pinned to canvas locations. Each entry carries a date, plain text, optional photo, and scene coordinates (`JournalNote` in `models/journal_note.py`); the dedicated sidebar panel supports text search and date-range filtering |
+| **Journal Pin** | The constant-screen-size `JournalPinItem` marker dropped on the canvas. Carries only the `note_id` reference; the note body lives in `ProjectData.garden_journal_notes` keyed by that id |
+| **Screen Coordinates** | Pixel coordinates on the display; converted via QGraphicsView transform |
+| **SVG** | Scalable Vector Graphics — vector image format used for icons and plant illustrations |
+| **Tileable Texture** | A small image that can be seamlessly repeated to fill any area |
+| **tr()** | Qt translation function used to mark strings for internationalization |
+| **Relative coordinate input** | Typed point of the form `@dx,dy` interpreted relative to the active tool's `last_point`. Y is math-positive (up); the parser flips to scene-down. Empty anchor → input rejected. See ADR-021 |
+| **Polar coordinate input** | Typed point of the form `@dist<angle` with angle in degrees, `0° = east`, CCW positive. `dist` and `angle` accept either decimal mark. Without an `@`, polar input is still interpreted as relative to `last_point`. An anchor is mandatory: without `last_point` the parser raises `ParseError` instead of silently falling back to the origin. See ADR-021 |
+| **Dynamic Input** | The frameless distance/angle overlay that floats next to the cursor in the canvas viewport during multi-click drawing. Mirrors the same `CoordinateInputBuffer` as the status-bar field. Hidden when the active tool has no anchor point. See ADR-021 |
+| **CoordinateInputBuffer** | `QObject` singleton (per CanvasView) that holds the typed coordinate text and the current anchor. Both the status-bar field and the Dynamic Input overlay subscribe to its signals; this single state prevents the two UI surfaces from drifting out of sync |
+| **SnapProvider** | One snap mode (endpoint, center, edge, midpoint, intersection). Subclass of `core/snap/provider.SnapProvider`; yields `SnapCandidate`s for items near a query position. Activation toggled via the View menu and persisted in `AppSettings`. See ADR-020 |
+| **SnapCandidate** | One potential snap point produced by a provider. Carries the point, the kind, a priority (lower wins on ties) and the source item |
+| **SnapRegistry** | Collection of active `SnapProvider`s with priority-based tie-breaking. Owned by `CanvasView`; its content is driven by the View menu toggles |
+| **PointSnapper** | Click-time entry point that combines the `SnapRegistry` with the quadtree spatial index. `CanvasView._maybe_apply_anchor_snap` calls it before every non-select tool mouse event |
+| **Midpoint snap** | Snap to the midpoint of any straight edge from a rectangle, polygon, polyline or construction line. Glyph: filled green triangle |
+| **Intersection snap** | Snap to the intersection of two straight edges from different items. Glyph: green X. Capped at 60 segments per query for predictable latency |
+| **QuadTree (snap)** | Bounded-depth (max 6) spatial index built lazily on `QGraphicsScene.changed`; pre-filters items to a 4×threshold window around the cursor before providers run. Build < 60 ms / 1000 items, query < 1 ms |
+| **Arc (3-point)** | Circular arc constructed from start + through-point + end via the circumcenter formula in `core/cad_geometry.arc_from_three_points`. Stored as `ArcItem` with `center`, `radius`, `start_deg`, `span_deg` (math convention — CCW from +X). Collinear inputs fall back to a 2-vertex polyline. See ADR-022 |
+| **Cubic Bezier** | Smooth curve item with two handles per anchor (`handles_in[i]`, `handles_out[i]`). Authored via a pen tool (`B`), edited by dragging anchor or handle widgets. Single curve model in the app — quadratic / NURBS variants are out of scope. See ADR-022 |
+| **Fillet** | Round a corner with a tangent arc. Tangent points sit at distance `r/tan(α)` along each adjacent edge; the arc center is on the bisector at `r/sin(α)`. Applied to a polyline / polygon vertex in place; rectangle fillet is a destructive rect → polygon conversion (undo restores the rect). See ADR-022 |
+| **Chamfer** | Bevel a corner with a straight cut at distance `d` along each adjacent edge. Same picking + persistence model as Fillet, but no arc is created. See ADR-022 |
+| **Mirror (tool)** | Modify tool (`Shift+M`) that reflects the selected shapes across a two-click **reflection axis**, in **Copy** (keep originals) or **Move** (replace, preserving `item_id` so constraints stay bound) mode. Reflects by rebuilding each item (`core/mirror_geometry.build_mirrored_item`), so SVG glyphs render un-flipped. Distinct from the **Symmetry constraint** (a persistent relationship). See ADR-026 |
+| **Reflection axis** | The user-defined line (two clicks) the Mirror tool reflects across. Hold **Shift** while picking the end to constrain it to 0/45/90°. |
+| **Nearest snap** | Fallback snap mode (priority 45, lowest) that yields the closest point on any visible edge or curve to the cursor. Default off. Glyph: hourglass. See ADR-023 |
+| **Perpendicular snap** | Foot of perpendicular from the active tool's `last_point` to the nearest straight edge. Requires a reference anchor; pure-cursor perpendicular has no meaning. Priority 25. Glyph: ⊥. See ADR-023 |
+| **Tangent snap** | Contact point of a line from `last_point` to a circle/arc's tangent (`α = acos(r/|RC|)`). Two solutions exist for an external point; cursor disambiguates. Priority 26. Glyph: small circle + tangent line. See ADR-023 |
+| **Reference point (snap)** | Optional `QPointF` passed to `SnapProvider.candidates()` that names the active tool's anchor (`last_point`). Required by perpendicular and tangent snaps; ignored by the older providers. See ADR-023 |
+| **Auto-constraint emit** | Turning a snapped drawing-tool vertex into a durable `ConstraintGraph` entry (`core/auto_constraint.emit_for_polyline`). The snap kind picks the constraint: NEAREST/PERPENDICULAR → POINT_ON_EDGE, MIDPOINT → COINCIDENT, NEAREST-on-circle → POINT_ON_CIRCLE, TANGENT → POINT_ON_CIRCLE + TANGENT. The edge is named via `SnapCandidate.source_edge_index`, resolved to anchors by matching `get_anchor_points`. See ADR-024 |
+| **Tangent constraint** | `ConstraintType.TANGENT`: the edge `anchor_a`→`anchor_c` is perpendicular to the radius `anchor_b − anchor_a` (residual = radius projected onto the edge, `(C−v1)·(v0−v1)/\|edge\|`, → 0). Always emitted *with* a `POINT_ON_CIRCLE` companion (which pins the radial distance); the pair is non-degenerate (edge-aligned gradient ⟂ radial gradient) so the contact stays welded to the rim AND tangent under drag. `target_distance` holds the radius for display only. Enforced actively in Gauss-Seidel (translate along the edge) + Newton backup. See ADR-024 |
+| **Curve control handle** | A draggable widget (`CurveControlHandle`) shown on a selected `BezierItem`/`ArcItem` for in-place reshaping (`CurveEditMixin`). Bezier: on-curve anchor handles (carry their tangents) + tangent handles (smooth-mirror by default, Alt = corner). Arc: start / through / end handles + a read-only centre marker. Each drag = one `SetCurveGeometryCommand` undo step. Distinct from the polygon/polyline `VertexHandle` (which also inserts/deletes vertices). See ADR-025 |
+| **Through-point (arc)** | A point the arc passes through between its endpoints — the 3rd click ("bulge") of the start→end→bulge arc tool. Stored on `ArcItem` (`_through`, persisted as `through_x`/`through_y`; legacy files derive the angular midpoint) as the third degree of freedom held fixed while dragging an endpoint, and itself draggable to change curvature. See ADR-025 |
+| **arc_to_painter_path** | Builds an arc's `QPainterPath` from exact cubic-Bézier segments (≤45° each, anchors placed analytically on the circle, control factor `k=4/3·tan(Δ/4)`). Replaces Qt's `arcMoveTo`/`arcTo`, whose rendered endpoints drift on shallow large-radius arcs (issue #195). Used by `ArcItem` and the arc-tool preview. See ADR-025 |
+| **render_scene_region** | Shared scene-region renderer in `services/scene_rendering.py`. Hides selection / construction / soil-badge overlays, optionally rescales text, paints `source_rect` of a scene into `target_rect` on any painter, applies the standard Y-flip, and restores everything afterwards. Currently used by PNG export; SVG export + print dialog migration is tracked as follow-up |
+| **Manual task** | A user-created reminder (`ManualTask` in `models/task.py`): date, title, notes, optional linked bed. Created/edited via `TaskDialog`, persisted under the additive `.ogp` key `manual_tasks`, and undoable. Shown on the Tasks tab alongside the auto-generated tasks. See ADR-029 |
+| **Task state** | The stored raw status of one task keyed by `task_id` (`task_states` in the `.ogp` file): open / snoozed (until a date) / done (on a date) / dismissed. Written at both write chokepoints (`set_task_status`, `set_task_completion`), which also keep the legacy `task_completions` done-set in sync. See ADR-029 |
+| **Task generator** | One of six pure, Qt-free `(PlanState) -> list[Task]` functions in `services/task_generator.py` — planting-calendar windows, propagation, succession sow/clear, soil amendments, frost protection, manual tasks. `generate_all` flat-maps and dedups by `task_id`. Pure so they unit-test without a running app. See ADR-029 |
+| **Effective status** | The render-time status of a task computed by `services/task_status.effective_status` from its stored `Task state` and "today": open / snoozed / done / dismissed / archived. No background scheduler — an expired snooze reads as open and a task done > 7 days ago reads as archived (done-then-archive window) on the next render. See ADR-029 |
+| **Harvest log** | Per-target (plant/bed) yield records (`HarvestRecord`/`HarvestHistory` in `models/harvest_log.py`): date, quantity, unit, quality, notes, optional photo. Persisted under the additive `.ogp` key `harvest_logs` keyed by item UUID; each history caches `species_key` + `species_name` so totals resolve even after the plant is deleted. Add/Edit/Delete are undoable and auto-maintain a pin-less `harvest`-tagged journal note. See FR-23 (US-C1) |
+| **Harvest aggregation** | The pure, Qt-free `services/harvest_aggregation.aggregate_by_species_year` that rolls `harvest_logs` into per-species, per-year, per-unit totals for the garden-wide **Harvest** dashboard tab, CSV export, and PDF summary page. Groups by `(species, year, unit)` — quantities in different units are never summed |
+| **MCP (Model Context Protocol)** | Open protocol for exposing tools, resources, and prompts to AI agents/LLM clients. Open Garden Planner embeds an **MCP server over streamable-HTTP** (mcp Python SDK) so agents can read the open plan. See ADR-033, §8.19 |
+| **Agent API** | The `agent_api/` subsystem: a default-on, loopback-only embedded MCP server (epic #237, US-D1.1) that a Preferences toggle can disable. Reads are open (loopback trust); scene-mutating **write tools**, including global history, are opt-in + token-gated (US-D2.0). See FR-26 |
+| **Agent write token** | The bearer token (`agent_api_token`, auto-generated `secrets.token_urlsafe(32)`) an MCP client must present to call the Agent API's write tools. The reliable transport is `?token=<token>` in the connect URL; `Authorization: Bearer <token>` is also accepted. Required only for writes (reads stay open); paired with the off-by-default "Allow AI assistants to edit the plan" toggle. Surfaced (Copy/Regenerate) in Preferences → Agent API and injected into client configs by the Connect dialog. See ADR-036, §8.19 |
+| **Agent write tool** | An MCP tool that mutates the live plan: `create_object`, `move_object`, `delete_object` (D2.0/D2.1), `resize_object`, `rotate_object` (D2.2), `set_species`, `set_parent_bed` (D2.3), `arrange_object` (#338, ADR-043), the six layer writes (D2.4), `set_object_position`, `set_vertex`, `add_vertex`, `delete_vertex` (D2.6), and `undo`/`redo` (#353). Registered only when editing is enabled AND a token is set. Every document mutation applies exactly one undoable command via `command_manager.execute`; `set_active_layer` changes session state only and has no undo entry, while `move_object`/`set_object_position` reparenting is the only documented two-step move case. `undo`/`redo` operate the same global stack one command at a time and explicitly refuse empty stacks. See FR-AGENT-13–21, ADR-036 |
+| **Active layer** | The session-only layer selected as the destination for newly created objects. It is surfaced as `Layer.is_active` and can be switched by `set_active_layer`; changing it does not dirty the `.ogp` file or create an undo step. |
+| **Layer id** | The stable UUID address of a layer in the Agent API. Layer names are display labels and may be duplicated, so layer writes use `layer_id`. See FR-AGENT-17 and ADR-034. |
+| **Creatable type** | An `ObjectType` member with an explicit Agent API creation contract: geometry family, required parameters, optional parameters, and loader-backed serialization behavior. `list_creatable_types` also reports deliberately excluded members so the roster is closed under drift checks. See FR-AGENT-18. |
+| **Callout offset bound** | The signed `box_dx`/`box_dy` displacement from a callout's leader tip to its text box. Agent input and resolved defaults must be finite and satisfy `abs(offset) <= 2 * max(canvas_width_cm, canvas_height_cm)`; valid negative/default offsets remain legal on normal-sized plans. See FR-AGENT-18/20, issue #355. |
+| **Global agent history** | The GUI/agent LIFO `CommandManager` stack addressed by authenticated MCP `undo`/`redo`; one call reverses or reapplies one command and reports the resulting stack availability. It is not persisted in `.ogp` and is not a second server-local history. See FR-AGENT-19. |
+| **Roof ridge** | The linked `ROOF_RIDGE` polyline generated for a `HOUSE` footprint. It is derived from the house polygon, shares its layer, stores owner/ridge metadata, and is created/undone with the house rather than addressed as an independent creation request. See ADR-036. |
+| **Canonical geometry-apply path** | `ui/canvas/geometry_apply.py` — the one command-apply seam for rect-backed resize/rotation and polygon/polyline vertex move/add/delete. Interactive commits and Agent API writes both call its builders; the item-local mutation methods remain the one low-level vertex implementation. It exists because caller-supplied callbacks had produced one private copy per call site and the copies drifted, leaving rotated-geometry bugs in shipped GUI paths (US-D2.2, §11.4). The authoritative caller list and deliberate rect-resize exceptions live only in the module docstring. |
+| **Geometry escape hatch** | The Agent API's low-level layer beneath domain tools: stable live `get_geometry` plus absolute positioning and polygon/polyline vertex writes. Unlike `get_object(raw=True)`, the read reports current scene-frame vertices after Qt transforms, so it can be fed back to a write. An unchanged write is refused as a no-op rather than creating an empty undo entry. Constrained objects remain readable but all geometry writes refuse; `delete_object` is the separate constraint-removal policy. See FR-AGENT-21, ADR-036 D2.6 addendum. |
+| **Anchor policy** | Which point of an object stays fixed while it is resized. *Centre-preserving* (`keep_center=True`) holds the scene centre and is what the Agent API uses for every type, since the read tools and `create_object` all speak in centres; *anchor-preserving* holds the local rect origin so the object grows right/down, which is the properties panel's long-standing behaviour for rectangles and ellipses. Both are one parameter on one builder |
+| **MainThreadBridge** | The thread-marshaling boundary (`agent_api/bridge.py`): runs a callable on the Qt main thread from the server's worker thread via a queued signal + `Future`, returning the result/exception. `abort_pending()` releases in-flight calls on shutdown. The reusable write-ready core. See ADR-033 |
+| **Curated agent schema** | The stable pydantic contract (`agent_api/schema.py`, e.g. `PlanSummary`) the Agent API returns to clients — decoupled from the `.ogp` save format / `FILE_VERSION` so agent integrations don't break on format changes. Built from `ProjectManager.snapshot_dict` by the Qt-free `agent_api/mapping.py`. See ADR-034 |
+| **snapshot_dict** | `ProjectManager.snapshot_dict(scene)` — an in-memory, read-only `.ogp`-shaped dict (plus an `agent_meta` block) used by the Agent API. Unlike `save()`, it does NOT reconcile journal-pin positions, so reading the plan never mutates state |
+| **Azimuth** | Compass bearing of the sun, degrees clockwise from true north (N=0, E=90, S=180, W=270). Computed by `core/solar.py` (US-E1) |
+| **Elevation angle (solar)** | The sun's angle above the horizon (α). Geometric (airless) by default; shadow features use the geometric value. `elevation_refracted_deg` carries the NOAA refraction correction |
+| **Declination (δ)** | Angle of the sun above/below Earth's equatorial plane; ranges ±23.44° over the year (the axial tilt) |
+| **Equation of time (EoT)** | True solar time minus mean clock time, in minutes; ranges about −14.2 … +16.4 min over the year |
+| **Hour angle (H)** | How far the sun is past local solar noon, 15°/hour, negative in the morning, 0 at solar noon |
+| **Solar noon** | The instant the sun crosses the local meridian (hour angle 0) — its highest point of the day; due south in northern mid-latitudes |
+| **Effective height** | An object's resolved above-ground height in cm (`core/object_height.py`, US-E2): explicit `object_height_cm` metadata → container fill height → the plant's measured `current_height_cm` (US-E8) → species `max_height_cm` → per-type default → none. With a sim date, a measured + dated plant resolves to its date-projected height instead (US-E8). Drives shadow casting (US-E3) and 3D extrusion (US-E6). Distinct from a container's *fill* height, which keeps driving soil volume |
+| **Shadow length** | `L = h / tan α` — the ground shadow length of an object of effective height *h* under geometric sun elevation α, on the Phase 14 flat-ground assumption (`core/shadow_geometry.py`, US-E3). Below α = 0.5° no shadow is drawn (lengths explode near the horizon) |
+| **Sun & shade simulation** | The runtime-only canvas overlay (US-E3) painting the union of all object shadows for a simulated date/time at the project's location. Distinct from the cosmetic per-item drop shadows ("Show Shadows", `appearance/show_shadows`) |
+| **Hours-of-sun bands** | Horticultural classification of a spot's daily direct sun (US-E4, `core/shade_aggregation.py`): **deep shade** < 2 h, **light shade** 2–4 h, **partial sun** 4–6 h, **full sun** ≥ 6 h. Computed by 15-min sampling of the daylight period on the flat-ground assumption; "full sun = 6+ h direct sun" is the standard nursery-label criterion for sun-loving vegetables. These thresholds also anchor the heatmap's labeled contour lines |
+| **Hours-of-sun heatmap** | The on-demand, runtime-only canvas overlay (US-E4) rendering a spot's daily direct sun as a **smooth cool→warm surface** (darker = fewer hours, near-transparent in full sun) overlaid with **hourly topographic contour lines labeled on even hours** (`core/heatmap_render.py`); the labeled contours replace a separate legend. Computed in a worker thread; never serialized |
+| **Years to maturity** | How long a plant takes to reach full size in the growth model (US-E8, `core/growth_model.py`): from the species' `days_to_maturity` when present, else by kind — tree 10 y, perennial/shrub 3 y, annual ≈ a season (150 days). Drives the linear interpolation from the plant's **measured current size** at its planting date up to the species maximum |
+| **Stacking order** | An object's front-to-back position **within its own layer** (issue #338, ADR-043). Backed by a sparse integer rank, `stack_order`, that is a sort key only — the on-screen z-value is always derived fresh from the current ranks, never stored as intent. See §8.25 |
+| **Arrange** | The four gestures that change stacking order — Bring to Front, Bring Forward, Send Backward, Send to Back (issue #338) — reachable from the Edit ▸ Arrange menu, an item's context-menu `Arrange ▸` submenu, or the Properties panel's Arrange row. Every surface funnels through the one seam, `ui/canvas/arrange.py::build_arrange_command`. A bed's contained plants move with it as one block; a plant can never be arranged behind its own bed. See §8.25 |
+| **Stack index** | The Agent API's read-only, display-facing view of stacking order: `ObjectRef.stack_index`, a 0-based position within an object's layer, bottom→top, as displayed. Comparable only between objects on the same layer — distinct from the raw sparse `stack_order` rank, which is never exposed to agents. See §8.19, §8.25 |
+| **JS view capture** | The satellite-import fallback path (issues #346/#347): the picker positions the live Maps-JavaScript-API map over the drawn rectangle — across a `cols × rows` pan grid of viewport positions for larger rectangles (#347) — and the Python side grabs the `QWebEngineView` widget's pixels (`QWidget.grab()` — never DOM access) frame by frame, stitches them at analytic whole-pixel offsets, and crops/scales them with the same analytic Web-Mercator math as the Static path, stamping exactly one attribution strip on the result. Used when Google's EEA terms make the Static API reject satellite requests. Source marker: `geo_metadata.source = "google_js_view_capture"`. See ADR-019 addenda #346/#347, §6.3.1 |
+| **EEA satellite restriction** | Effective 8 July 2025, Google Maps Platform rejects Static Maps API `satellite`/`hybrid` requests (HTTP 403, "not available for your account and region") and Map Tiles API photo tiles for projects linked to EEA billing accounts. The documented alternatives are the Maps JavaScript API, Android SDK, and iOS SDK. OGP's answer for the JS API is the JS view capture; the restriction is respected, never bypassed. See ADR-019 addendum |
+| **Succession slot** | One planned crop window in a bed's succession plan (`models/succession.py`): a `SuccessionEntry` with `species_key`, ISO `start_date`/`end_date`, and optional notes. A bed holds several slots in sequence within one season. |
+| **Succession gap** | A date range inside a growing-season segment that no slot covers - what `find_succession_gaps` returns. Computed by subtracting slot ranges from the four season segments, whose windows are made **disjoint** first (each clipped to the day before the next begins) so consecutive gaps never share a day - otherwise filling every reported gap would be refused as an overlap. A slot with unparseable dates covers nothing, so malformed data shows up as a gap. |
+| **Season segment** | One of four frost-relative parts of a growing year: `early_spring` (last frost -8w to -2w), `late_spring` (-2w to +4w), `summer` (+4w to fall frost -4w), `fall` (fall frost -4w to +2w). Boundaries are inclusive, so a date on a shared boundary belongs to the earlier segment. With no geo-location the segments fall back to calendar-month approximations and callers must say so. |
+| **Outside canvas** | An object whose bounding box does not overlap the plan canvas at all, so it is invisible and unselectable in the app (issue #380). Reported to agents as `ObjectRef.outside_canvas` and as a `get_diagnostics` kind of the same name. Agent writes are clamped so they cannot *create* one; the flag exists for objects already saved off-plan by an older build. See ADR-036 addendum, §8.19 |
+| **Tool preview z band** | The reserved z-values (`999`–`1002`, `core/tools/preview_z.py`) that keep an in-progress tool preview **above** every real document item (whose derived z lives strictly inside `(0, 100)`) and **below** the minimap's overlay cutoff (`10_000`). Without it a preview draws behind a bed it overlaps and the gesture is invisible (issue #377). See §8.25.6 |
+| **Agent canvas clamp** | The single shared rule (`core/canvas_bounds.py`) that keeps an object inside the plan canvas, called by both the GUI's drag/nudge clamp and the agent create/move/clamp paths so they cannot drift (issue #380). A gross-input guard still refuses absurd coordinates; positions within one canvas of an edge are accepted and then clamped on-plan. See ADR-036 addendum |
+| **Planned this season** | The display-only section of the Crop Rotation panel that lists a bed's succession-plan crops with their botanical families (issue #378). It is explicitly **not** planting history and is deliberately not fed into `CropRotationService`, whose 3-year cooldown semantics are unchanged. See ADR-036 addendum |
+
+| **Task source** | Where a generated task came from (`services/task_generator.py`). **Six** values for seven generators: `calendar`, `propagation`, `succession`, `soil`, `frost`, `manual`. Both soil generators emit `soil`, so the amendment and mismatch tasks are told apart by **task type** (`soil_amendment` vs `soil_mismatch`) — filtering by source alone cannot select one. An unknown source is refused, not ignored. See §8.19 |
+| **Task type** | The stable English key for the *kind of work* a task is (`direct_sow`, `harvest`, `soil_amendment`, `soil_mismatch`, …). This is the field an agent branches on — not `source`, and never `title`, which is display text in the user's UI language. See §8.19 |
+| **Urgency** | A render-time bucket for a task window, computed from its dates and "today" rather than stored: `today`, `overdue` (1–14 days past), `this_week` (starts in 1–7 days), `upcoming`, or null when not actionable. Computed by `task_generator.classify_urgency`, which the Tasks tab and the agent both call — never re-implemented. |
+| **Coverage marker** | The field that says what an answer is *based on*, so a thin result is never mistaken for a clean one: `no_frost_dates` (no geo-location, so calendar and propagation tasks could not be generated), `no_soil_test` (**untested**, never "healthy"), `no_beds`, `full`. Present even when the task or recommendation list is empty — an empty list alone would read as "nothing to do". See §8.19 |
+| **Rapitest scale** | The categorical soil-test scale: nitrogen and phosphorus `0–4`, potassium **`1–4`** (the kit has no zero for K), and the Ca/Mg/S secondaries `0–2`. Distinct from the optional lab `*_ppm` floats, which nothing in `services/` reads and for which no conversion exists (US-12.10c) — which is why the agent's `record_soil_test` takes the kit scale only. See ADR-036 addendum |
+| **Effective soil record** | The test that applies to a bed, resolved by a documented hierarchy: the bed's own latest, else the plan-wide default's latest, else none. `SoilService.get_effective_record` returns the record alone, so the Agent API also reports **`record_source`** (`bed` / `global` / `none`) — without it a plan-wide assumption reads as a measurement of that bed. See §8.19 |
+
+## 12.2 Keyboard Shortcuts
+
+| Action | Shortcut |
+|--------|----------|
+| New Project | Ctrl+N |
+| Open Project | Ctrl+O |
+| Save | Ctrl+S |
+| Save As | Ctrl+Shift+S |
+| Undo | Ctrl+Z |
+| Redo | Ctrl+Y |
+| Select All | Ctrl+A |
+| Delete | Delete |
+| Duplicate | Ctrl+D |
+| Copy | Ctrl+C |
+| Paste | Ctrl+V |
+| Zoom In | Ctrl++ or Scroll Up |
+| Zoom Out | Ctrl+- or Scroll Down |
+| Fit to View | Ctrl+0 |
+| Toggle Grid | G |
+| Toggle Snap | S |
+| Select Tool | V |
+| Rectangle Tool | R |
+| Polygon Tool | P |
+| Line Tool | L |
+| Measure Tool | M |
+| Plant Tool | T |
+| Fullscreen Preview | F11 |
+| Print | Ctrl+P |
+| Garden Plan tab | Ctrl+1 |
+| Planting Calendar tab | Ctrl+2 |
+| Seed Inventory tab | Ctrl+3 |
+| Tasks tab | Ctrl+4 (was Ctrl+5 before #310) |
+| Harvest tab | Ctrl+5 (was Ctrl+6 before #310) |
+| Bezier Tool | B |
+| Arc Tool (3-point) | A |
+| Fillet Tool | Shift+F |
+| Chamfer Tool | Shift+C |
+| Fillet — change radius (while active) | R |
+| Chamfer — change distance (while active) | D |
+| Mirror Tool | Shift+M |
+| Bring to Front | Ctrl+Shift+] (also Ctrl+Shift+Up) |
+| Bring Forward | Ctrl+] (also Ctrl+Up) |
+| Send Backward | Ctrl+[ (also Ctrl+Down) |
+| Send to Back | Ctrl+Shift+[ (also Ctrl+Shift+Down) |
+
+## 12.3 References
+
+- [arc42 Documentation Template](https://arc42.org/)
+- [Trefle.io API Documentation](https://trefle.io/)
+- [Permapeople API Documentation](https://permapeople.org/knowledgebase/api-docs.html)
+- [PyQt6 Documentation](https://www.riverbankcomputing.com/static/Docs/PyQt6/)
+- [QGraphicsView Framework](https://doc.qt.io/qt-6/qgraphicsview.html)
+- [Qt Linguist Manual](https://doc.qt.io/qt-6/qtlinguist-index.html)
+- [NSIS Documentation](https://nsis.sourceforge.io/Docs/)
+- [PyInstaller Documentation](https://pyinstaller.org/en/stable/)

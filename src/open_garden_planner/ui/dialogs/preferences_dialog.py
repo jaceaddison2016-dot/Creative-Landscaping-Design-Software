@@ -1,0 +1,542 @@
+"""Preferences dialog for application settings."""
+
+import logging
+import os
+
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class _PasswordLineEdit(QWidget):
+    """A line edit with a show/hide toggle button for password-style input."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._line_edit = QLineEdit()
+        self._line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self._line_edit)
+
+        self._toggle_btn = QPushButton(self.tr("Show"))
+        self._toggle_btn.setFixedWidth(60)
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.toggled.connect(self._on_toggle)
+        layout.addWidget(self._toggle_btn)
+
+    def _on_toggle(self, checked: bool) -> None:
+        if checked:
+            self._line_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self._toggle_btn.setText(self.tr("Hide"))
+        else:
+            self._line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self._toggle_btn.setText(self.tr("Show"))
+
+    def text(self) -> str:
+        return self._line_edit.text()
+
+    def setText(self, text: str) -> None:
+        self._line_edit.setText(text)
+
+    def setPlaceholderText(self, text: str) -> None:
+        self._line_edit.setPlaceholderText(text)
+
+
+class PreferencesDialog(QDialog):
+    """Preferences dialog with API Keys configuration.
+
+    Allows users to enter and persist their online-service API credentials
+    via QSettings so they don't need environment variables.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(self.tr("Preferences"))
+        self.setMinimumSize(550, 400)
+        self._setup_ui()
+        self._load_settings()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+
+        # Info label
+        info_label = QLabel(
+            self.tr(
+                "Configure API keys for online services below. "
+                "Keys are stored locally in your user settings and are never "
+                "included in garden plans or the installer. "
+                "Environment variables (.env) are used as fallback."
+            )
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # --- Trefle ---
+        trefle_group = QGroupBox(self.tr("Trefle (trefle.io)"))
+        trefle_layout = QFormLayout(trefle_group)
+
+        self._trefle_token = _PasswordLineEdit()
+        self._trefle_token.setPlaceholderText(self.tr("Enter Trefle API token..."))
+        trefle_layout.addRow(self.tr("API Token:"), self._trefle_token)
+
+        trefle_links = QHBoxLayout()
+        trefle_signup = QPushButton(self.tr("Get API Key"))
+        trefle_signup.setToolTip("https://trefle.io/users/sign_up")
+        trefle_signup.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://trefle.io/users/sign_up"))
+        )
+        trefle_test = QPushButton(self.tr("Test"))
+        trefle_test.clicked.connect(lambda: self._test_api("trefle"))
+        trefle_links.addWidget(trefle_signup)
+        trefle_links.addWidget(trefle_test)
+        trefle_links.addStretch()
+        trefle_layout.addRow("", trefle_links)
+
+        layout.addWidget(trefle_group)
+
+        # --- Perenual ---
+        perenual_group = QGroupBox(self.tr("Perenual (perenual.com)"))
+        perenual_layout = QFormLayout(perenual_group)
+
+        self._perenual_key = _PasswordLineEdit()
+        self._perenual_key.setPlaceholderText(self.tr("Enter Perenual API key..."))
+        perenual_layout.addRow(self.tr("API Key:"), self._perenual_key)
+
+        perenual_links = QHBoxLayout()
+        perenual_signup = QPushButton(self.tr("Get API Key"))
+        perenual_signup.setToolTip("https://perenual.com/docs/api")
+        perenual_signup.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://perenual.com/docs/api"))
+        )
+        perenual_test = QPushButton(self.tr("Test"))
+        perenual_test.clicked.connect(lambda: self._test_api("perenual"))
+        perenual_links.addWidget(perenual_signup)
+        perenual_links.addWidget(perenual_test)
+        perenual_links.addStretch()
+        perenual_layout.addRow("", perenual_links)
+
+        layout.addWidget(perenual_group)
+
+        # --- Permapeople ---
+        permapeople_group = QGroupBox(self.tr("Permapeople (permapeople.org)"))
+        permapeople_layout = QFormLayout(permapeople_group)
+
+        self._permapeople_key_id = _PasswordLineEdit()
+        self._permapeople_key_id.setPlaceholderText(self.tr("Enter Key ID..."))
+        permapeople_layout.addRow(self.tr("Key ID:"), self._permapeople_key_id)
+
+        self._permapeople_key_secret = _PasswordLineEdit()
+        self._permapeople_key_secret.setPlaceholderText(self.tr("Enter Key Secret..."))
+        permapeople_layout.addRow(self.tr("Key Secret:"), self._permapeople_key_secret)
+
+        permapeople_links = QHBoxLayout()
+        permapeople_signup = QPushButton(self.tr("Get API Key"))
+        permapeople_signup.setToolTip("https://permapeople.org/knowledgebase/api-docs.html")
+        permapeople_signup.clicked.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl("https://permapeople.org/knowledgebase/api-docs.html")
+            )
+        )
+        permapeople_test = QPushButton(self.tr("Test"))
+        permapeople_test.clicked.connect(lambda: self._test_api("permapeople"))
+        permapeople_links.addWidget(permapeople_signup)
+        permapeople_links.addWidget(permapeople_test)
+        permapeople_links.addStretch()
+        permapeople_layout.addRow("", permapeople_links)
+
+        layout.addWidget(permapeople_group)
+
+        # --- Google Maps satellite background ---
+        google_maps_group = QGroupBox(self.tr("Google Maps"))
+        google_maps_layout = QFormLayout(google_maps_group)
+
+        self._google_maps_key = _PasswordLineEdit()
+        self._google_maps_key.setPlaceholderText(
+            self.tr("Enter Google Maps API key...")
+        )
+        google_maps_layout.addRow(self.tr("API Key:"), self._google_maps_key)
+
+        google_maps_note = QLabel(
+            self.tr(
+                "Used for Load Satellite Background. The key is stored only in "
+                "your local user settings and is never included in plans or "
+                "the installer."
+            )
+        )
+        google_maps_note.setWordWrap(True)
+        google_maps_layout.addRow("", google_maps_note)
+
+        layout.addWidget(google_maps_group)
+
+        # --- Weather (US-12.2) ---
+        weather_group = QGroupBox(self.tr("Weather"))
+        weather_layout = QFormLayout(weather_group)
+
+        self._frost_orange_spin = QDoubleSpinBox()
+        self._frost_orange_spin.setRange(-30.0, 10.0)
+        self._frost_orange_spin.setSingleStep(0.5)
+        self._frost_orange_spin.setDecimals(1)
+        self._frost_orange_spin.setSuffix(" °C")
+        self._frost_orange_spin.setToolTip(
+            self.tr("Temperature at or below which half-hardy plants are at risk")
+        )
+        weather_layout.addRow(self.tr("Orange warning threshold (°C):"), self._frost_orange_spin)
+
+        self._frost_red_spin = QDoubleSpinBox()
+        self._frost_red_spin.setRange(-30.0, 10.0)
+        self._frost_red_spin.setSingleStep(0.5)
+        self._frost_red_spin.setDecimals(1)
+        self._frost_red_spin.setSuffix(" °C")
+        self._frost_red_spin.setToolTip(
+            self.tr("Temperature at or below which tender plants are at risk")
+        )
+        weather_layout.addRow(self.tr("Red alert threshold (°C):"), self._frost_red_spin)
+
+        layout.addWidget(weather_group)
+
+        # --- Tasks (US-C2) ---
+        tasks_group = QGroupBox(self.tr("Tasks"))
+        tasks_layout = QFormLayout(tasks_group)
+
+        self._notify_overdue_check = QCheckBox(
+            self.tr("Notify about overdue tasks on startup")
+        )
+        self._notify_overdue_check.setToolTip(
+            self.tr(
+                "Show a reminder on startup when the open project has overdue tasks"
+            )
+        )
+        tasks_layout.addRow(self._notify_overdue_check)
+
+        layout.addWidget(tasks_group)
+
+        # --- Agent API (US-D1.1) ---
+        from open_garden_planner.app.settings import AppSettings
+
+        agent_group = QGroupBox(self.tr("Agent API"))
+        agent_layout = QFormLayout(agent_group)
+
+        self._agent_api_check = QCheckBox(
+            self.tr("Enable Agent API (local MCP server)")
+        )
+        self._agent_api_check.setToolTip(
+            self.tr(
+                "Run a local MCP server so AI assistants can read this garden "
+                "plan. Binds to 127.0.0.1 (this computer) only. Editing stays "
+                "off unless you enable it below."
+            )
+        )
+        self._agent_api_check.toggled.connect(self._on_agent_api_toggled)
+        agent_layout.addRow(self._agent_api_check)
+
+        self._agent_api_port_spin = QSpinBox()
+        self._agent_api_port_spin.setRange(
+            AppSettings.MIN_AGENT_API_PORT, AppSettings.MAX_AGENT_API_PORT
+        )
+        self._agent_api_port_spin.valueChanged.connect(self._update_agent_api_url)
+        agent_layout.addRow(self.tr("Port:"), self._agent_api_port_spin)
+
+        self._agent_api_url_label = QLabel()
+        self._agent_api_url_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        agent_layout.addRow(self.tr("Server URL:"), self._agent_api_url_label)
+
+        self._agent_api_connect_btn = QPushButton(self.tr("Connect AI Assistant…"))
+        self._agent_api_connect_btn.setToolTip(
+            self.tr("Show this URL and help register it with an AI assistant")
+        )
+        self._agent_api_connect_btn.clicked.connect(self._on_connect_ai_assistant)
+        agent_layout.addRow("", self._agent_api_connect_btn)
+
+        # --- Agent API writes (US-D2.0) ---
+        self._agent_api_writes_check = QCheckBox(
+            self.tr("Allow AI assistants to edit the plan")
+        )
+        self._agent_api_writes_check.setToolTip(
+            self.tr(
+                "Let connected assistants move and delete objects. Each edit is a "
+                "single undo step. Requires the token below; off by default."
+            )
+        )
+        self._agent_api_writes_check.toggled.connect(self._on_agent_api_writes_toggled)
+        agent_layout.addRow(self._agent_api_writes_check)
+
+        self._agent_api_token_edit = QLineEdit()
+        self._agent_api_token_edit.setReadOnly(True)
+        self._agent_api_token_edit.setToolTip(
+            self.tr(
+                "The access token an assistant must present to edit the plan. "
+                '"Connect AI Assistant…" hands it to the client for you.'
+            )
+        )
+        token_row = QHBoxLayout()
+        token_row.addWidget(self._agent_api_token_edit, 1)
+        self._agent_api_token_copy_btn = QPushButton(self.tr("Copy"))
+        self._agent_api_token_copy_btn.clicked.connect(self._on_copy_agent_api_token)
+        token_row.addWidget(self._agent_api_token_copy_btn)
+        self._agent_api_token_regen_btn = QPushButton(self.tr("Regenerate"))
+        self._agent_api_token_regen_btn.setToolTip(
+            self.tr("Replace the token; assistants using the old one must reconnect.")
+        )
+        self._agent_api_token_regen_btn.clicked.connect(self._on_regenerate_agent_api_token)
+        token_row.addWidget(self._agent_api_token_regen_btn)
+        token_widget = QWidget()
+        token_widget.setLayout(token_row)
+        agent_layout.addRow(self.tr("Access token:"), token_widget)
+
+        self._agent_api_token_pending_note = QLabel(
+            self.tr(
+                "The running server still uses the previous token until you "
+                "click Save — copying now won't work for a client yet."
+            )
+        )
+        self._agent_api_token_pending_note.setWordWrap(True)
+        self._agent_api_token_pending_note.setVisible(False)
+        agent_layout.addRow("", self._agent_api_token_pending_note)
+
+        layout.addWidget(agent_group)
+
+        layout.addStretch()
+
+        # --- Buttons ---
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton(self.tr("Cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        save_btn = QPushButton(self.tr("Save"))
+        save_btn.setDefault(True)
+        save_btn.clicked.connect(self._save_and_accept)
+        btn_layout.addWidget(save_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _load_settings(self) -> None:
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        self._trefle_token.setText(settings.trefle_api_token)
+        self._perenual_key.setText(settings.perenual_api_key)
+        self._permapeople_key_id.setText(settings.permapeople_key_id)
+        self._permapeople_key_secret.setText(settings.permapeople_key_secret)
+        google_maps_key = settings.google_maps_api_key
+        self._google_maps_key.setText(google_maps_key)
+        if not google_maps_key and os.environ.get("OGP_GOOGLE_MAPS_KEY", "").strip():
+            self._google_maps_key.setPlaceholderText(
+                self.tr("Using OGP_GOOGLE_MAPS_KEY from environment")
+            )
+        self._frost_orange_spin.setValue(settings.frost_warning_orange_c)
+        self._frost_red_spin.setValue(settings.frost_warning_red_c)
+        self._notify_overdue_check.setChecked(settings.notify_overdue_tasks_on_startup)
+        self._agent_api_check.setChecked(settings.agent_api_enabled)
+        self._agent_api_port_spin.setValue(settings.agent_api_port)
+        self._agent_api_writes_check.setChecked(settings.agent_api_writes_enabled)
+        self._update_agent_api_url()
+        self._refresh_agent_api_token_field()
+        self._on_agent_api_toggled(settings.agent_api_enabled)
+
+    def _on_agent_api_toggled(self, enabled: bool) -> None:
+        """Enable/disable the port + URL rows alongside the Agent API checkbox."""
+        self._agent_api_port_spin.setEnabled(enabled)
+        self._agent_api_url_label.setEnabled(enabled)
+        self._agent_api_connect_btn.setEnabled(enabled)
+        self._agent_api_writes_check.setEnabled(enabled)
+        # Token controls follow both toggles: API on AND writes on.
+        self._on_agent_api_writes_toggled(
+            enabled and self._agent_api_writes_check.isChecked()
+        )
+
+    def _on_agent_api_writes_toggled(self, enabled: bool) -> None:
+        """Enable the token row only when both API and writes are on; refresh it."""
+        active = enabled and self._agent_api_check.isChecked()
+        self._agent_api_token_edit.setEnabled(active)
+        self._agent_api_token_copy_btn.setEnabled(active)
+        self._agent_api_token_regen_btn.setEnabled(active)
+        self._refresh_agent_api_token_field()
+
+    def _refresh_agent_api_token_field(self) -> None:
+        """Show the token when writes are enabled, else a placeholder.
+
+        Reading ``settings.agent_api_token`` auto-generates and persists a token
+        on first access, so only touch it when writes are actually on — a user
+        who never enables editing never gets a token written to settings.
+
+        The field always shows the *settings* value (so clicking Regenerate is
+        visibly effective) — but Regenerate persists immediately while the
+        running server keeps validating whatever it was started with until a
+        restart (which Save triggers). Rather than have Copy silently hand out
+        a different value than what's displayed, the mismatch is surfaced as an
+        explicit note instead.
+        """
+        from open_garden_planner.app.settings import get_settings
+
+        if self._agent_api_check.isChecked() and self._agent_api_writes_check.isChecked():
+            settings_token = get_settings().agent_api_token
+            self._agent_api_token_edit.setText(settings_token)
+            running_token = getattr(self.parent(), "agent_api_write_token", lambda: None)()
+            self._agent_api_token_pending_note.setVisible(
+                running_token is not None and running_token != settings_token
+            )
+        else:
+            self._agent_api_token_edit.clear()
+            self._agent_api_token_edit.setPlaceholderText(
+                self.tr("Enable AI editing to generate a token")
+            )
+            self._agent_api_token_pending_note.setVisible(False)
+
+    def _on_copy_agent_api_token(self) -> None:
+        from PyQt6.QtWidgets import QApplication
+
+        token = self._agent_api_token_edit.text()
+        clipboard = QApplication.clipboard()
+        if token and clipboard is not None:
+            clipboard.setText(token)
+
+    def _on_regenerate_agent_api_token(self) -> None:
+        """Replace the token immediately (a deliberate revoke). Takes effect on
+        the next server restart, which Save triggers via the change check."""
+        from open_garden_planner.app.settings import get_settings
+
+        get_settings().regenerate_agent_api_token()
+        self._refresh_agent_api_token_field()
+
+    def _update_agent_api_url(self) -> None:
+        """Refresh the displayed connect URL when the port changes."""
+        port = self._agent_api_port_spin.value()
+        self._agent_api_url_label.setText(f"http://127.0.0.1:{port}/mcp")
+
+    def _on_connect_ai_assistant(self) -> None:
+        """Open the Connect AI Assistant dialog (US-D1.6) for the running server.
+
+        Registering a client writes a persistent entry into that client's own
+        config — unlike the "Server URL:" label, which merely displays a
+        preview, this has a real external effect. So the URL must come from
+        asking whether the server is actually running (the app's parent
+        window owns that), never reconstructed from settings/widget state —
+        a saved-and-applied port can still not be live (e.g. `PortInUseError`
+        at startup), and that must never be silently registered as if it
+        worked. ``ConnectAiAssistantDialog`` already shows a clear "disabled"
+        view for ``None``.
+        """
+        from open_garden_planner.ui.dialogs.connect_ai_assistant_dialog import (
+            ConnectAiAssistantDialog,
+        )
+
+        parent = self.parent()
+        running_url = getattr(parent, "agent_api_running_url", lambda: None)()
+        token = getattr(parent, "agent_api_write_token", lambda: None)()
+        dialog = ConnectAiAssistantDialog(
+            running_url,
+            self,
+            token=token,
+            enabled_in_settings=self._agent_api_check.isChecked(),
+        )
+        dialog.exec()
+
+    def _save_and_accept(self) -> None:
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        settings.trefle_api_token = self._trefle_token.text().strip()
+        settings.perenual_api_key = self._perenual_key.text().strip()
+        settings.permapeople_key_id = self._permapeople_key_id.text().strip()
+        settings.permapeople_key_secret = self._permapeople_key_secret.text().strip()
+        settings.google_maps_api_key = self._google_maps_key.text().strip()
+        settings.frost_warning_orange_c = self._frost_orange_spin.value()
+        settings.frost_warning_red_c = self._frost_red_spin.value()
+        settings.notify_overdue_tasks_on_startup = self._notify_overdue_check.isChecked()
+        settings.agent_api_enabled = self._agent_api_check.isChecked()
+        settings.agent_api_port = self._agent_api_port_spin.value()
+        settings.agent_api_writes_enabled = self._agent_api_writes_check.isChecked()
+        settings.sync()
+        self.accept()
+
+    def _test_api(self, api_name: str) -> None:
+        """Test connectivity for the given API using current field values."""
+        from open_garden_planner.services.plant_api.perenual_client import PerenualClient
+        from open_garden_planner.services.plant_api.permapeople_client import PermapeopleClient
+        from open_garden_planner.services.plant_api.trefle_client import TrefleClient
+
+        try:
+            if api_name == "trefle":
+                token = self._trefle_token.text().strip()
+                if not token:
+                    QMessageBox.warning(
+                        self, self.tr("Test"), self.tr("Please enter a Trefle API token first.")
+                    )
+                    return
+                client = TrefleClient(api_token=token)
+            elif api_name == "perenual":
+                key = self._perenual_key.text().strip()
+                if not key:
+                    QMessageBox.warning(
+                        self, self.tr("Test"), self.tr("Please enter a Perenual API key first.")
+                    )
+                    return
+                client = PerenualClient(api_key=key)
+            elif api_name == "permapeople":
+                key_id = self._permapeople_key_id.text().strip()
+                key_secret = self._permapeople_key_secret.text().strip()
+                if not key_id or not key_secret:
+                    QMessageBox.warning(
+                        self,
+                        self.tr("Test"),
+                        self.tr("Please enter both Permapeople Key ID and Key Secret."),
+                    )
+                    return
+                client = PermapeopleClient(key_id=key_id, key_secret=key_secret)
+            else:
+                return
+
+            self.setCursor(Qt.CursorShape.WaitCursor)
+            available = client.is_available()
+            self.unsetCursor()
+
+            if available:
+                QMessageBox.information(
+                    self,
+                    self.tr("Test Successful"),
+                    self.tr("Connection to {api} is working.").format(api=client.name),
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    self.tr("Test Failed"),
+                    self.tr(
+                        "Could not connect to {api}. "
+                        "Please check your credentials."
+                    ).format(api=client.name),
+                )
+        except Exception as e:
+            self.unsetCursor()
+            logger.warning(f"API test failed for {api_name}: {e}")
+            QMessageBox.critical(
+                self,
+                self.tr("Test Error"),
+                self.tr("Error testing {api}: {error}").format(
+                    api=api_name.capitalize(), error=str(e)
+                ),
+            )
