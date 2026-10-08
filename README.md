@@ -72,3 +72,11 @@ Open Garden Planner is copyright its upstream contributors. This derived
 application remains **GPL-3.0-or-later**; see [LICENSE](LICENSE).
 Data and dependencies keep their respective licenses and notices.
 This project has no Land F/X affiliation and claims no professional feature parity.
+
+## Creative visual direction — awaiting approval
+
+The [desktop editor and welcome previews](docs/design/README.md) are an opt-in
+experiment in the actual Qt application. See [the proposed design system](BRAND_DESIGN_SYSTEM.md)
+and [the saved owner brief](CREATIVE_REDESIGN_BRIEF.md). The normal app and
+existing Windows desktop-foundation download keep the upstream interface until
+the owner approves this direction and the remaining rollout/QA is complete.

@@ -11325,4 +11325,228 @@ Details: {error}</translation>
             <translation>Kalibrierung abgeschlossen</translation>
         </message>
     </context>
+    <context>
+        <name>CreativePreview</name>
+        <message>
+            <source>Creative Landscape Studio</source>
+            <translation>Creative Landscape Studio</translation>
+        </message>
+        <message>
+            <source>Text placeholder · identity approval pending</source>
+            <translation>Textplatzhalter · Freigabe der Markenidentität ausstehend</translation>
+        </message>
+        <message>
+            <source>Identity placeholder</source>
+            <translation>Markenplatzhalter</translation>
+        </message>
+        <message>
+            <source>A workspace for landscape planning</source>
+            <translation>Ein Arbeitsbereich für die Landschaftsplanung</translation>
+        </message>
+        <message>
+            <source>Search objects and plants</source>
+            <translation>Objekte und Pflanzen suchen</translation>
+        </message>
+        <message>
+            <source>Filter the built-in object library</source>
+            <translation>Die integrierte Objektbibliothek filtern</translation>
+        </message>
+        <message>
+            <source>Object category</source>
+            <translation>Objektkategorie</translation>
+        </message>
+        <message>
+            <source>All objects</source>
+            <translation>Alle Objekte</translation>
+        </message>
+        <message>
+            <source>Placeable objects</source>
+            <translation>Platzierbare Objekte</translation>
+        </message>
+        <message>
+            <source>Choose an object, then place it on the canvas</source>
+            <translation>Ein Objekt auswählen und auf der Zeichenfläche platzieren</translation>
+        </message>
+        <message>
+            <source>Creative design preview</source>
+            <translation>Creative-Designvorschau</translation>
+        </message>
+        <message>
+            <source>Start a project</source>
+            <translation>Ein Projekt starten</translation>
+        </message>
+        <message>
+            <source>Create a landscape plan or return to your work.</source>
+            <translation>Einen Landschaftsplan erstellen oder die Arbeit fortsetzen.</translation>
+        </message>
+        <message>
+            <source>New project</source>
+            <translation>Neues Projekt</translation>
+        </message>
+        <message>
+            <source>Create a new landscape plan</source>
+            <translation>Einen neuen Landschaftsplan erstellen</translation>
+        </message>
+        <message>
+            <source>Open project…</source>
+            <translation>Projekt öffnen…</translation>
+        </message>
+        <message>
+            <source>Open an existing .ogp project</source>
+            <translation>Ein vorhandenes .ogp-Projekt öffnen</translation>
+        </message>
+        <message>
+            <source>Recent projects</source>
+            <translation>Aktuelle Projekte</translation>
+        </message>
+        <message>
+            <source>Open selected</source>
+            <translation>Ausgewähltes öffnen</translation>
+        </message>
+        <message>
+            <source>Clear recent list</source>
+            <translation>Verlauf löschen</translation>
+        </message>
+        <message>
+            <source>Built on Open Garden Planner · GPL-3.0-or-later</source>
+            <translation>Auf Basis von Open Garden Planner · GPL-3.0-or-later</translation>
+        </message>
+        <message>
+            <source>{name}
+Modified {date}</source>
+            <translation>{name}
+Geändert am {date}</translation>
+        </message>
+        <message>
+            <source>Selection &amp; properties</source>
+            <translation>Auswahl &amp; Eigenschaften</translation>
+        </message>
+        <message>
+            <source>Library</source>
+            <translation>Bibliothek</translation>
+        </message>
+        <message>
+            <source>Layers</source>
+            <translation>Ebenen</translation>
+        </message>
+        <message>
+            <source>Objects &amp; plants</source>
+            <translation>Objekte &amp; Pflanzen</translation>
+        </message>
+        <message>
+            <source>Project</source>
+            <translation>Projekt</translation>
+        </message>
+        <message>
+            <source>Beds &amp; surfaces</source>
+            <translation>Beete &amp; Flächen</translation>
+        </message>
+        <message>
+            <source>Shapes</source>
+            <translation>Formen</translation>
+        </message>
+        <message>
+            <source>Trees</source>
+            <translation>Bäume</translation>
+        </message>
+        <message>
+            <source>Shrubs</source>
+            <translation>Sträucher</translation>
+        </message>
+        <message>
+            <source>Perennials</source>
+            <translation>Stauden</translation>
+        </message>
+        <message>
+            <source>Vegetables</source>
+            <translation>Gemüse</translation>
+        </message>
+        <message>
+            <source>Structures</source>
+            <translation>Bauwerke</translation>
+        </message>
+        <message>
+            <source>Furniture</source>
+            <translation>Möbel</translation>
+        </message>
+        <message>
+            <source>Fences</source>
+            <translation>Zäune</translation>
+        </message>
+        <message>
+            <source>Utilities</source>
+            <translation>Infrastruktur</translation>
+        </message>
+        <message>
+            <source>Containers</source>
+            <translation>Pflanzgefäße</translation>
+        </message>
+        <message>
+            <source>Select</source>
+            <translation>Auswählen</translation>
+        </message>
+        <message>
+            <source>Measure</source>
+            <translation>Messen</translation>
+        </message>
+        <message>
+            <source>Text</source>
+            <translation>Text</translation>
+        </message>
+        <message>
+            <source>Callout</source>
+            <translation>Beschriftung</translation>
+        </message>
+        <message>
+            <source>Journal</source>
+            <translation>Tagebuch</translation>
+        </message>
+        <message>
+            <source>Focus canvas</source>
+            <translation>Zeichenfläche fokussieren</translation>
+        </message>
+        <message>
+            <source>Reset workspace</source>
+            <translation>Arbeitsbereich zurücksetzen</translation>
+        </message>
+        <message>
+            <source>Geometric shade · computer time ({zone})</source>
+            <translation>Geometrischer Schatten · Computerzeit ({zone})</translation>
+        </message>
+        <message>
+            <source>Unsaved changes</source>
+            <translation>Ungespeicherte Änderungen</translation>
+        </message>
+        <message>
+            <source>No unsaved changes</source>
+            <translation>Keine ungespeicherten Änderungen</translation>
+        </message>
+        <message>
+            <source>{name}  ·  {state}</source>
+            <translation>{name}  ·  {state}</translation>
+        </message>
+    </context>
+    <context>
+        <name>CreativeWelcomeDialog</name>
+        <message>
+            <source>Close</source>
+            <translation>Schließen</translation>
+        </message>
+        <message>
+            <source>Show this screen on startup</source>
+            <translation>Diesen Bildschirm beim Start anzeigen</translation>
+        </message>
+        <message>
+            <source>No recent projects</source>
+            <translation>Keine aktuellen Projekte</translation>
+        </message>
+        <message>
+            <source>{name} (not found)</source>
+            <translation>{name} (nicht gefunden)</translation>
+        </message>
+        <message>
+            <source>File not found: {path}</source>
+            <translation>Datei nicht gefunden: {path}</translation>
+        </message>
+    </context>
 </TS>

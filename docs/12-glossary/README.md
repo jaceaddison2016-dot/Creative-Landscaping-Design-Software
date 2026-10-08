@@ -186,3 +186,8 @@
 - [Qt Linguist Manual](https://doc.qt.io/qt-6/qtlinguist-index.html)
 - [NSIS Documentation](https://nsis.sourceforge.io/Docs/)
 - [PyInstaller Documentation](https://pyinstaller.org/en/stable/)
+
+**Creative design preview** — An opt-in source experiment in the actual desktop
+application, used to review proposed visual tokens and editor/welcome layouts
+before owner approval. It is not a separate website or a published installer.
+See [design review](../design/README.md).

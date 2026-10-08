@@ -2400,3 +2400,26 @@ A per-layer band can, in principle, grow past `z_order * 100 + 100` only if
 concern at the layer counts this app supports, and unchanged by #338 (the
 formula was already `layer.z_order * 100` before per-object stacking; #338
 only subdivides the same band, it does not widen it).
+
+## Creative visual-preview pattern (approval pending)
+
+The Creative experiment reuses semantic theme roles with optional color
+overrides and the existing listener/icon/redraw hooks. Additional QSS targets
+named preview components. Font selection uses installed-family lookup, without
+startup downloads or new bundled binaries. The proposed dark palette is
+contrast-tested independently of the neutral, always-light drawing surface.
+
+The main window adds docks around whole containers, never reparents ordered
+SidebarController panels. A secondary LayersPanel routes requests through
+existing commands and stays synchronized with the scene. The inherited property
+form wraps labels above controls in the experiment; long content scrolls.
+
+New UI strings use the CreativePreview translation context. Inherited welcome
+methods use the subclass Qt context, so CreativeWelcomeDialog registers their
+footer/empty/missing-file strings too. This is verified by loading the compiled
+German translator in `tests/integration/test_creative_design_preview.py`.
+
+See [BRAND_DESIGN_SYSTEM.md](../../BRAND_DESIGN_SYSTEM.md),
+[ADR-050](../09-architecture-decisions/README.md#adr-050-opt-in-creative-desktop-design-preview)
+and [validation](../design/VALIDATION.md). The source experiment is opt-in; broad
+application styling, native packaged QA and company assets await owner approval.

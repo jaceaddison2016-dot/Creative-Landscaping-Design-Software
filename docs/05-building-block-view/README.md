@@ -401,3 +401,19 @@ Black-box view of the GO/NO-GO spike for the renderer switch. It is **not part o
 | `scripts/make_bench_plans.py` | Deterministic `tests/fixtures/plans/bench_small.ogp` / `bench_large.ogp` through the real serializer (`--check` pins them); writes to a throwaway settings store. | → `.ogp` fixtures |
 
 Engine facts measured here live in the `ogp-3d-renderer` skill; the art-direction contract in `ogp-lush-cinematic`; the evidence in ADR-048 and `docs/09-architecture-decisions/adr-048-evidence/`.
+
+## 5.9 Creative desktop design experiment (approval pending)
+
+`app/creative_preview.py::CreativePreviewWindow` composes the existing main
+window, real canvas/controllers, a docked sidebar container and a second pure
+layer view. Individual SidebarController panels retain their canonical parents
+and order. `ui/creative_preview.py` provides the searchable existing gallery
+view and an inherited-contract welcome dialog; `ui/creative_theme.py` owns the
+proposed palette and installed-font fallbacks. `ui/theme.py` accepts optional
+color overrides through its existing stylesheet/listener pipeline.
+
+Only `scripts/creative_design_preview.py` imports the opt-in window. It redirects
+settings/data to a preview account before construction, creates a synthetic
+`.ogp` through ProjectManager and can grab actual Qt widgets. Normal startup
+remains unchanged. See [ADR-050](../09-architecture-decisions/README.md#adr-050-opt-in-creative-desktop-design-preview)
+and [design review](../design/README.md); no approved production redesign is claimed.

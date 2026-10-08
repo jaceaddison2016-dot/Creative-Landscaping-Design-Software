@@ -1990,3 +1990,37 @@ reader counts it from the frost. Measured over all 118 bundled species, **both**
 `tests/unit/test_harvest_offset_semantics.py` is the pinned baseline, and that
 test also asserts that `days_to_maturity` is reference data no computation reads —
 which is what keeps the correction out of the generator.
+
+## ADR-050: Opt-in Creative desktop design preview
+
+**Status:** Accepted for the experimental mechanism; visual direction awaiting owner approval.
+
+**Context:** The Creative redesign brief requires genuine editor/welcome previews
+and owner approval before broad application changes or installer publication.
+Existing semantic theme/listener infrastructure, GPL notices, command routing
+and ADR-030's ordered sidebar must be preserved.
+
+**Decision:** Use an explicitly invoked GardenPlannerApp subclass in the app
+wiring layer, with shared theme color overrides and small named-component
+styles. Wrap the sidebar container in a dock; retain all individual panel
+parents/order. Add a pure second layer view wired to the same commands. Reuse
+the welcome opening/recents contract and gallery registry. The preview runner
+isolates settings/data through the ADR-041 name redirection seam before stores
+exist. Capture mode resets only preview UiState for reproducible screenshots.
+
+**Alternatives rejected:** A separate website/static mockup would not validate
+the real editor. Replacing the app's global stylesheet or reparenting accordion
+panels would duplicate existing mechanisms or repeat ADR-030's ordering failure.
+Changing the default entry point would pass the owner's approval gate prematurely.
+
+**Consequences:** Normal startup, centimeters, schema, exports and package IDs
+remain unchanged. No fonts/company photos are downloaded or bundled. Existing
+apply_theme without overrides retains the upstream palette; normal startup or
+`--original` supplies the existing interface. The experiment has real editing
+controls but is not a production redesign or a new packaged release. Automated
+contrast/workflow tests and genuine captures support a visual review; native
+platform QA and broad component rollout follow approval.
+
+Evidence: `tests/integration/test_creative_design_preview.py`,
+`tests/unit/test_creative_contrast.py`, [design review](../design/README.md),
+[asset inventory](../../assets/creative/README.md).

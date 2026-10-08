@@ -979,3 +979,21 @@ before saying a fix changed it.*
 - Pull requests welcome with review process
 - CONTRIBUTING.md with code style and testing requirements (planned; today the rules live in CLAUDE.md/AGENTS.md — audit-2026-10 §5.10)
 - PRs are expected to pass CI (tests, ruff, Bandit, secrets scan, agent-context parity), but none of these is a required status check on `master` today (#399); type checking is configured but not enforced (#401)
+
+### Creative preview gallery signal ordering and inherited translations
+
+The new compact library initially emitted only `item_selected`; a genuine Qt
+click selected a row but left SelectTool active. Debug output showed
+`[PREVIEW_ACTIVATE] emitted Round Deciduous ToolType.TREE` followed by
+`[PREVIEW_GESTURE] tool SelectTool after press 0`. The existing category
+dropdown emits `tool_selected` BEFORE `item_selected`; the latter only assigns
+plant metadata to an already-active CircleTool. The preview now follows that
+contract. A real two-click center/rim gesture yields one undoable tree. Pinned by
+`test_library_click_places_undoable_tree_and_round_trips` in
+`tests/integration/test_creative_design_preview.py`.
+
+A compiled-translator probe also showed the welcome subclass changed the Qt
+context used by inherited footer methods: New/Open translated, while Close and
+the startup checkbox stayed English. Register the inherited strings under
+CreativeWelcomeDialog too. Pinned by `test_german_preview_and_inherited_footer`.
+These lessons change no upstream placement or translation algorithm.

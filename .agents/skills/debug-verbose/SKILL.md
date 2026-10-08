@@ -1655,3 +1655,28 @@ site by AST — because a bare literal is invisible to any scan for translations
 that is how this survived one round of scanning.
 
 Related: §11.4.6, `tests/unit/test_status_literals_are_translated.py`.
+
+## Case study: Creative library activation omitted tool selection (2026-10-07)
+
+**Symptom:** A genuine click in the new compact object library selected a tree
+row, but a following canvas gesture created nothing.
+
+**Wrong theories:** The Qt row click was not delivered; perhaps a single click
+or drag should have committed a tree.
+
+**Key logs:** `[PREVIEW_ACTIVATE] emitted Round Deciduous ToolType.TREE`;
+`[PREVIEW_GESTURE] tool SelectTool after press 0`. After restoring the existing
+signal ordering: `tool CircleTool after press 0`, then `after second click 1`.
+
+**Root cause:** `_on_gallery_item_selected` only sets species/category metadata
+on an already-active CircleTool. CategoryDropdown emits tool_selected first,
+then item_selected. The new view had omitted the first signal.
+
+**Fix:** Follow the existing two-signal contract; drive the actual center/rim
+gesture in the integration test. Remove instrumentation before commit.
+
+**Lesson:** A metadata-selection signal is not necessarily a tool-activation
+signal. Observe the active tool and completed gesture before assuming placement
+semantics. Pinned by `test_library_click_places_undoable_tree_and_round_trips`
+in `tests/integration/test_creative_design_preview.py`; risk-log cross-reference
+in `docs/11-risks-and-technical-debt/README.md`.
