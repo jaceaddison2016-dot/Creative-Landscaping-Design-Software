@@ -10,7 +10,12 @@ Creative window, then schedules drawing, key/mouse input, undo/redo, save/reopen
 and exports on the Qt event loop. A fresh run ID, process exit and JSON verdict
 must agree. Screenshots come from actual widgets. After silent NSIS installation,
 the workflow repeats these checks against the installed executable, preserves
-source/licenses/evidence and uploads a test artifact. It does not create a release.
+source/licenses/evidence and assembles the download. Before artifact upload, the
+evidence recorder verifies the installed result, source SHA and four synthetic
+PNGs, then records numbered image frames and SHA-256 in GitHub logs. The cloud
+review can reconstruct those exact files through the GitHub API, requiring
+complete frames and hashes before viewing. The workflow uploads the artifact
+after the recorder succeeds. It does not create a release.
 
 ## 6.1 Drawing Workflow
 

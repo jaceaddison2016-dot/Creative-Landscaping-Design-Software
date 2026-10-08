@@ -12,6 +12,15 @@ and rejects stale results or non-native/non-frozen Windows evidence. Normal
 startup does not import QtTest. PyInstaller includes QtTest for this diagnostic;
 the normal editor, project format and settings identity retain their contracts.
 
+`scripts/record_creative_evidence.py` reads the installed synthetic diagnostic's
+four fixed PNGs, native JSON and BUILD-INFO. It requires successful frozen Windows
+evidence, no inherited handles and a source SHA matching the job. It verifies
+PNG integrity with the existing Pillow dependency, then emits numbered base64
+frames, image SHA-256 and metadata into API-readable GitHub logs. This supplements
+the same files in the artifact when the cloud cannot reach Actions' storage host.
+The consumer requires the expected build SHA, complete frames and matching hashes;
+no arbitrary projects or personal files are recorded.
+
 ## 5.1 High-Level Architecture
 
 ```mermaid

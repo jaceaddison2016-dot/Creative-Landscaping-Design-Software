@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("fault", [None, "commit", "source", "handles", "platform", "image"])
+@pytest.mark.parametrize("fault", [None, "commit", "source", "handles", "platform", "image", "truncated"])
 def test_native_evidence_log_integrity_and_build_identity(tmp_path, monkeypatch, capsys, fault):
     root = Path(__file__).resolve().parents[2]
     record = runpy.run_path(str(root / "scripts/record_creative_evidence.py"))["record"]
@@ -29,7 +29,8 @@ def test_native_evidence_log_integrity_and_build_identity(tmp_path, monkeypatch,
     image = (root / "docs/design/creative-preview/revised-small/editor.png").read_bytes()
     names = ("editor.png", "imperial-properties.png", "sun-study.png", "welcome.png")
     for name in names:
-        (tmp_path / name).write_bytes(b"corrupt" if fault == "image" else image)
+        data = b"corrupt" if fault == "image" else image[:8] if fault == "truncated" else image
+        (tmp_path / name).write_bytes(data)
     if fault:
         with pytest.raises(RuntimeError):
             record(tmp_path, info)

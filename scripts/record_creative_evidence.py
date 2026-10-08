@@ -9,7 +9,10 @@ import base64
 import hashlib
 import json
 import os
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 IMAGES = ("editor.png", "imperial-properties.png", "sun-study.png", "welcome.png")
 
@@ -30,6 +33,11 @@ def record(directory: Path, build_info: Path) -> None:
         data = (directory / name).read_bytes()
         if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) > 5_000_000:
             raise RuntimeError(f"Invalid native screenshot: {name}")
+        try:
+            with Image.open(BytesIO(data)) as screenshot:
+                screenshot.verify()
+        except (OSError, SyntaxError) as error:
+            raise RuntimeError(f"Corrupt native screenshot: {name}") from error
         value = base64.b64encode(data).decode("ascii")
         parts = [value[index:index + 8192] for index in range(0, len(value), 8192)]
         inventory[name] = {"sha256": hashlib.sha256(data).hexdigest(), "parts": len(parts)}
