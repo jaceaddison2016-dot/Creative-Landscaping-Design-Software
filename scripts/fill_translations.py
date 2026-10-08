@@ -3113,6 +3113,88 @@ for _ctx, _strings in _I366_TRANSLATIONS.items():
     TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
 
 
+# Creative continuation: all new UI text, including grouped-menu labels.
+TRANSLATIONS.setdefault('CreativePreview', {}).update(
+{'Select/Edit': 'Auswahl/Bearbeiten',
+ 'Site & Structures': 'Grundstück & Bauwerke',
+ 'Hardscape': 'Beläge',
+ 'Planting': 'Bepflanzung',
+ 'Dimensions': 'Maße',
+ 'Sun Study': 'Sonnenstudie',
+ 'Export': 'Export',
+ 'Landscape': 'Landschaft',
+ 'Gardening': 'Gartenpflege',
+ 'Workspace': 'Arbeitsbereich',
+ 'Landscape tools': 'Landschaftswerkzeuge',
+ 'Advanced tools': 'Weitere Werkzeuge',
+ 'Project units': 'Projekteinheiten',
+ 'Feet & inches': 'Fuß & Zoll',
+ 'Decimal feet': 'Dezimalfuß',
+ 'Metric': 'Metrisch',
+ 'Grid spacing…': 'Rasterabstand…',
+ 'Grid spacing': 'Rasterabstand',
+ 'Grid spacing (cm):': 'Rasterabstand (cm):',
+ 'Open sun workspace': 'Sonnenarbeitsbereich öffnen',
+ 'Drawing presentation': 'Plandarstellung',
+ 'Architectural plant symbols': 'Architektonische Pflanzensymbole',
+ 'Detailed plant symbols': 'Detaillierte Pflanzensymbole',
+ 'Material texture strength…': 'Stärke der Materialtexturen…',
+ 'Material texture strength': 'Stärke der Materialtexturen',
+ 'Texture detail (%):': 'Texturdetails (%):',
+ 'Gardening workspace': 'Gartenpflege-Arbeitsbereich',
+ 'Essentials': 'Grunddaten',
+ 'Appearance': 'Darstellung',
+ 'Advanced': 'Erweitert',
+ 'Change project units': 'Projekteinheiten ändern',
+ 'Change drawing presentation': 'Plandarstellung ändern',
+ 'Change grid spacing': 'Rasterabstand ändern',
+ 'Target distance (ft/in):': 'Zielabstand (ft/in):',
+ 'Distance (ft/in)': 'Abstand (ft/in)',
+ 'Enter a length within the allowed range, such as 10\' 6 1/2" or 10.5 ft.': 'Eine Länge im zulässigen '
+                                                                             'Bereich eingeben, z. B. '
+                                                                             '10\' 6 1/2" oder 10.5 ft.',
+ 'Bare numbers mean feet. Use commas between coordinates; fractions such as 10\' 6 1/2" are accepted. @ means relative; < introduces a polar angle.': 'Zahlen '
+                                                                                                                                                      'ohne '
+                                                                                                                                                      'Einheit '
+                                                                                                                                                      'sind '
+                                                                                                                                                      'Fuß. '
+                                                                                                                                                      'Koordinaten '
+                                                                                                                                                      'mit '
+                                                                                                                                                      'Kommas '
+                                                                                                                                                      'trennen; '
+                                                                                                                                                      'Brüche '
+                                                                                                                                                      'wie '
+                                                                                                                                                      "10' "
+                                                                                                                                                      '6 '
+                                                                                                                                                      '1/2" '
+                                                                                                                                                      'sind '
+                                                                                                                                                      'erlaubt. '
+                                                                                                                                                      '@ '
+                                                                                                                                                      'bedeutet '
+                                                                                                                                                      'relativ; '
+                                                                                                                                                      '< '
+                                                                                                                                                      'leitet '
+                                                                                                                                                      'einen '
+                                                                                                                                                      'Polarwinkel '
+                                                                                                                                                      'ein.',
+ 'Canvas: {width} × {height}': 'Zeichenfläche: {width} × {height}',
+ 'A4 Landscape (11.69 in wide)': 'A4 quer (11.69 in breit)',
+ 'A3 Landscape (16.54 in wide)': 'A3 quer (16.54 in breit)',
+ 'Letter Landscape (11 in wide)': 'Letter quer (11 in breit)'}
+)
+TRANSLATIONS.setdefault('GardenPlannerApp', {}).update(
+{'X: {x}  Y: {y}': 'X: {x}  Y: {y}'}
+)
+TRANSLATIONS.setdefault('CanvasView', {}).update(
+{'Invalid distance. Enter a physical length.': 'Ungültiger Abstand. Eine Länge mit Einheit eingeben.'}
+)
+TRANSLATIONS.setdefault('ConstraintListItem', {}).update(
+{'{a} to {b}: {distance}': '{a} zu {b}: {distance}'}
+)
+TRANSLATIONS.setdefault('PdfReportService', {}).update(
+{'Position (ft/in)': 'Position (ft/in)'}
+)
+
 def fill_translations() -> None:
     """Fill in German translations in the .ts file."""
     tree = ET.parse(TS_FILE)

@@ -123,3 +123,8 @@ experiment and a shared theme override seam, without changing the source import,
 license notices, dependencies, package identifiers, schema or internal units.
 Company assets remain placeholders. See BRAND_DESIGN_SYSTEM.md and
 docs/design/VALIDATION.md for scope/evidence; this branch is not a new installer.
+
+
+### Creative continuation, 2026-10-08 (draft)
+
+Further fork-only changes add project-scoped imperial UI adapters, compatible presentation keys, compact landscape workspaces, local recent-project thumbnails, original procedural architectural plant linework, and a Qt popup ownership/headless-test cleanup fix. Existing data/art attribution and GPL notices remain. No upstream version bump or production release accompanies these changes; no company logo or restricted imagery was added. The original import and source licenses remain unchanged.

@@ -1011,3 +1011,10 @@ Capture now uses a separate account and fixture path; interactive startup loads
 the saved language and honors existing sample, theme, geometry, docks and welcome
 preference. `test_interactive_runner_keeps_saved_language_geometry_and_docks`
 launches real subprocesses before and after a real capture to pin these seams.
+
+
+### 11.4. Creative continuation: popup ownership and test-loop deletion
+
+CategoryDropdown was created without a Qt parent. Its Qt.Popup flags kept it floating but did not tie its C++ lifetime to the toolbar. Deleting a full window left 11 popup windows / 493 widgets. Headless pytest-qt cleanup also queued ordinary deleteLater work without an exec loop; the integration prefix reached 79,779 retained widgets, and apply_theme restyled that growing population. Parent the popups to CategoryToolbar, drain DeferredDelete between tests, and consolidate Creative theme application. A full-window lifetime probe then returned 1,252 widgets to zero; the clean 133-test focus run completed in 56.02 s. The ownership regression clicks a real popup and verifies destruction, preserving functionality. See the matching debug-verbose case study and current [Creative continuation validation](../design/CONTINUATION_VALIDATION.md).
+
+Presentation refresh revealed a separate rectangle load inconsistency: the loader restored a custom brush color without storing the same base fill_color. A later styling refresh reinstated the type's default color. The real load probe showed saved lawn #E7EDD9 becoming #64B43C. Store the restored base color; retain the actual pen when refreshing material texture strength. Presentation changes must not reset stored colors or strokes.

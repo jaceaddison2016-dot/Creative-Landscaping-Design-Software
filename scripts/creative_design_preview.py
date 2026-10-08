@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -21,10 +22,13 @@ from PyQt6.QtWidgets import QApplication
 from open_garden_planner.app import settings as app_settings
 from open_garden_planner.app.application import GardenPlannerApp
 from open_garden_planner.app.creative_preview import CreativePreviewWindow
+from open_garden_planner.core.constraints import AnchorRef
 from open_garden_planner.core.fill_patterns import FillPattern
 from open_garden_planner.core.i18n import load_translator
+from open_garden_planner.core.measure_snapper import AnchorType
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.project import ProjectManager
+from open_garden_planner.core.units import FOOT_CM, IMPERIAL
 from open_garden_planner.models.layer import Layer
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.items import CircleItem, PolygonItem, RectangleItem, TextItem
@@ -38,7 +42,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def make_landscape_fixture(path: Path) -> None:
     """An editable plan, saved through the inherited serializer, not painted UI art."""
-    scene = CanvasScene(2400, 1800)
+    scene = CanvasScene(80 * FOOT_CM, 60 * FOOT_CM)
+    scene.set_display_units(IMPERIAL)
+    scene.grid_spacing_cm = FOOT_CM
+    scene.set_presentation("architectural", .3)
     ground = scene.active_layer.id
     structures = Layer(name="Structures & hardscape", z_order=1)
     planting = Layer(name="Planting", z_order=2)
@@ -50,15 +57,15 @@ def make_landscape_fixture(path: Path) -> None:
                       name="Lawn", layer_id=ground),
         RectangleItem(850, 1150, 800, 500, object_type=ObjectType.HOUSE,
                       name="Residence", layer_id=structures.id),
-        RectangleItem(900, 740, 700, 400, object_type=ObjectType.TERRACE_PATIO,
+        RectangleItem(900, 740, 20 * FOOT_CM, 12 * FOOT_CM, object_type=ObjectType.TERRACE_PATIO,
                       name="Patio", layer_id=structures.id),
         RectangleItem(1580, 100, 300, 640, object_type=ObjectType.DRIVEWAY,
                       name="Driveway", layer_id=structures.id),
         RectangleItem(1240, 100, 100, 640, object_type=ObjectType.TERRACE_PATIO,
                       name="Walk", layer_id=structures.id),
-        PolygonItem([QPointF(210, 250), QPointF(850, 250), QPointF(850, 650),
-                     QPointF(650, 810), QPointF(210, 690)],
-                    object_type=ObjectType.GARDEN_BED, name="Planting bed", layer_id=ground),
+        PolygonItem([QPointF(510 + 340 * math.cos(t), 520 + 230 * math.sin(t) + 40 * math.sin(2*t))
+                     for t in (i * 2 * math.pi / 48 for i in range(48))],
+                    object_type=ObjectType.GARDEN_BED, name="Curved planting bed", layer_id=ground),
         RectangleItem(1680, 1210, 440, 300, object_type=ObjectType.GARDEN_BED,
                       name="Foundation planting", layer_id=ground),
         CircleItem(1260, 940, 80, object_type=ObjectType.TABLE_ROUND,
@@ -72,10 +79,13 @@ def make_landscape_fixture(path: Path) -> None:
                  (1780, 1350), (1950, 1350), (2080, 1350)):
         items.append(CircleItem(x, y, 70, object_type=ObjectType.SHRUB,
                                 name="Shrub", layer_id=planting.id))
+    for x, y in ((260, 490), (300, 580), (720, 590), (760, 520), (1930, 1260)):
+        items.append(CircleItem(x, y, 36, object_type=ObjectType.PERENNIAL,
+                                name="Perennial", layer_id=planting.id))
     for x, y in ((980, 920), (1480, 920), (1260, 1070)):
         items.append(RectangleItem(x, y, 55, 55, object_type=ObjectType.CHAIR,
                                    name="Chair", layer_id=structures.id))
-    for x, y, text in ((980, 1530, "RESIDENCE"), (995, 790, "PATIO  7.0 x 4.0 m"),
+    for x, y, text in ((980, 1530, "RESIDENCE"), (995, 790, "PATIO  20 ft x 12 ft"),
                        (1010, 460, "OPEN LAWN"), (170, 1550, "N  ↑")):
         items.append(TextItem(x, y, text, font_size=0.9, layer_id=annotations.id))
     for item in items:
@@ -83,8 +93,13 @@ def make_landscape_fixture(path: Path) -> None:
         # renderer or changes to other users' object styles/artwork.
         if getattr(item, "object_type", None) == ObjectType.LAWN:
             item.fill_pattern = FillPattern.SOLID
-            item.fill_color = QColor("#E7EDD9")
+            item.fill_color = QColor("#60E7EDD9")
         scene.addItem(item)
+    patio = next(item for item in items if item.name == "Patio")
+    scene.constraint_graph.add_constraint(
+        AnchorRef(patio.item_id, AnchorType.CORNER, 0),
+        AnchorRef(patio.item_id, AnchorType.CORNER, 1), 20 * FOOT_CM)
+    scene.update_dimension_lines()
     manager = ProjectManager()
     manager.set_location({"latitude": 42.1, "longitude": -86.48, "name": "Southwest Michigan (synthetic)"})
     manager.save(scene, path)
@@ -115,6 +130,7 @@ def main() -> int:
         # removes only UI state in the already-isolated preview account.
         app_settings.create_qsettings().remove("UiState")
         settings.show_welcome_on_startup = False
+        settings.clear_recent_files()
     settings.agent_api_enabled = False
     settings.download_plant_images = False
     mode = ThemeMode.DARK if args.dark else (ThemeMode.LIGHT if args.capture else settings.theme_mode)
@@ -156,7 +172,22 @@ def main() -> int:
     def take_shots() -> None:
         if args.capture:
             args.capture.mkdir(parents=True, exist_ok=True)
+            if isinstance(window, CreativePreviewWindow):
+                window._workspace_combo.setCurrentIndex(0)
+                if args.width < 1100:
+                    window.library_dock.hide()
+                app.processEvents()
+                window.canvas_view.fit_in_view()
+                app.processEvents()
             window.grab().save(str(args.capture / "editor.png"))
+            window.grab().save(str(args.capture / "imperial.png"))
+            if isinstance(window, CreativePreviewWindow):
+                window._workspace_combo.setCurrentIndex(1)
+                app.processEvents()
+                window.canvas_view.fit_in_view()
+                app.processEvents()
+                window.grab().save(str(args.capture / "sun-study.png"))
+                window._workspace_combo.setCurrentIndex(0)
         welcome = WelcomeDialog(window) if args.original else CreativeWelcomeDialog(window)
         welcome.show()
         if isinstance(welcome, CreativeWelcomeDialog):

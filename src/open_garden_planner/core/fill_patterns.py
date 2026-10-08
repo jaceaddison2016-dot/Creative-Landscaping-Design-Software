@@ -17,7 +17,7 @@ _TEXTURES_DIR = Path(__file__).parent.parent / "resources" / "textures"
 _texture_cache: dict["FillPattern", QPixmap] = {}
 
 # Cache for tinted texture pixmaps (pattern, color_key -> QPixmap)
-_tinted_cache: dict[tuple["FillPattern", int], QPixmap] = {}
+_tinted_cache: dict[tuple["FillPattern", int, float], QPixmap] = {}
 
 # Maximum number of tinted texture cache entries before clearing
 _TINTED_CACHE_MAX = 200
@@ -150,7 +150,7 @@ def _tint_texture(texture: QPixmap, color: QColor) -> QPixmap:
     return result
 
 
-def create_pattern_brush(pattern: FillPattern, color: QColor) -> QBrush:
+def create_pattern_brush(pattern: FillPattern, color: QColor, strength: float = 1.0) -> QBrush:
     """Create a QBrush with the specified pattern and base color.
 
     For non-SOLID patterns, loads a tileable PNG texture from
@@ -174,7 +174,7 @@ def create_pattern_brush(pattern: FillPattern, color: QColor) -> QBrush:
         return QBrush(color)
 
     # Check tinted cache
-    key = (pattern, _color_key(color))
+    key = (pattern, _color_key(color), round(strength, 2))
     if key in _tinted_cache:
         return QBrush(_tinted_cache[key])
 
@@ -184,6 +184,14 @@ def create_pattern_brush(pattern: FillPattern, color: QColor) -> QBrush:
 
     # Create tinted texture
     tinted = _tint_texture(texture, color)
+    if strength < 1:
+        softened = QPixmap(tinted.size())
+        softened.fill(color)
+        painter = QPainter(softened)
+        painter.setOpacity(max(0, strength))
+        painter.drawPixmap(0, 0, tinted)
+        painter.end()
+        tinted = softened
     _tinted_cache[key] = tinted
     return QBrush(tinted)
 

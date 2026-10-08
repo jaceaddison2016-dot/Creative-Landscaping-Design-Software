@@ -136,6 +136,14 @@ class DxfExportService:
 
             DxfExportService._export_item(msp, item, layer, aci)
 
+        from open_garden_planner.core.units import FOOT_CM, units_for
+        if units_for(scene).imperial:
+            from ezdxf.math import Matrix44
+            for entity in msp:
+                entity.transform(Matrix44.scale(1 / FOOT_CM))
+            doc.header["$INSUNITS"] = 2  # feet
+        else:
+            doc.header["$INSUNITS"] = 5  # centimeters, the scene's native unit
         doc.saveas(str(file_path))
 
     @staticmethod

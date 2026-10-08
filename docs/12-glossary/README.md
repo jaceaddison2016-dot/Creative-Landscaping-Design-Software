@@ -191,3 +191,6 @@
 application, used to review proposed visual tokens and editor/welcome layouts
 before owner approval. It is not a separate website or a published installer.
 See [design review](../design/README.md).
+
+
+**Creative display units:** a saved project presentation preference (feet/inches, decimal feet or metric). It never changes canonical centimeter geometry. **Architectural plant symbols:** original simplified vector linework offered alongside inherited detailed SVG artwork.

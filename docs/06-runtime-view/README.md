@@ -303,3 +303,8 @@ the existing sun study and records real widget grabs after layout/accordion
 settling. Interactive mode retains saved sample edits, language, theme, window/dock
 preferences and the inherited welcome-on-startup choice. Normal app
 startup does not import the experiment. Details: [design validation](../design/VALIDATION.md).
+
+
+### Creative unit-edit sequence
+
+Imperial text → LengthSpinBox/core.units.parse_length → canonical cm → existing property/drawing command → existing scene/solver → project serializer. A unit switch executes SetDisplayUnitsCommand, refreshes views and dimensions, and leaves canonical geometry untouched. Loading defaults missing preferences to metric before installing the validated document. Sun workspace changes toolbar visibility; the existing sun QAction owns simulation state. See ADR-051.

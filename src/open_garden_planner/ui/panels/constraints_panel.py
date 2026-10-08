@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.units import format_length
 from open_garden_planner.ui.icons import get_icon, get_pixmap
+from open_garden_planner.ui.widgets.length_spin_box import widget_units
 
 if TYPE_CHECKING:
     from open_garden_planner.core.constraints import Constraint, ConstraintGraph
@@ -224,6 +226,14 @@ class ConstraintListItem(QWidget):
             tooltip = self.tr("{a} to {b}: {d:.2f} m").format(
                 a=label_a, b=label_b, d=dist_m
             )
+
+        if widget_units(self).imperial and constraint_type_name in (
+            "DISTANCE", "EDGE_LENGTH", "HORIZONTAL_DISTANCE", "VERTICAL_DISTANCE", "TANGENT"
+        ):
+            physical = format_length(abs(target_distance), widget_units(self))
+            if constraint_type_name != "TANGENT":
+                detail = physical
+            tooltip = self.tr("{a} to {b}: {distance}").format(a=label_a, b=label_b, distance=physical)
 
         # Row text: the type icon (left) carries the semantics; the text is
         # "A – B   detail" (single-object constraints: "A   detail").

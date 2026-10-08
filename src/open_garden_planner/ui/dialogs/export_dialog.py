@@ -10,7 +10,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.core.units import format_length
 from open_garden_planner.services.export_service import ExportService
+from open_garden_planner.ui.widgets.length_spin_box import widget_units
 
 
 class ExportPngDialog(QDialog):
@@ -128,6 +130,15 @@ class ExportPngDialog(QDialog):
                 height=f"{self._canvas_height_cm / 100:.1f}",
             )
         )
+        if widget_units(self).imperial:
+            from PyQt6.QtCore import QCoreApplication
+            canvas_info.setText(QCoreApplication.translate("CreativePreview", "Canvas: {width} × {height}").format(
+                width=format_length(self._canvas_width_cm, widget_units(self)),
+                height=format_length(self._canvas_height_cm, widget_units(self))))
+            for radio, text in ((self._a4_radio, "A4 Landscape (11.69 in wide)"),
+                                (self._a3_radio, "A3 Landscape (16.54 in wide)"),
+                                (self._letter_radio, "Letter Landscape (11 in wide)")):
+                radio.setText(QCoreApplication.translate("CreativePreview", text))
         canvas_info.setProperty("secondary", True)
         preview_layout.addWidget(canvas_info)
 

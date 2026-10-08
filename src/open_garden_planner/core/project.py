@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene
 from open_garden_planner.app.settings import get_settings
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
 from open_garden_planner.core.object_types import PathFenceStyle, StrokeStyle
+from open_garden_planner.core.units import DisplayUnits, units_for
 from open_garden_planner.models.layer import Layer, create_default_layers
 
 # File format version for backward compatibility.
@@ -65,6 +66,8 @@ class ProjectData:
 
     canvas_width: float = 5000.0
     canvas_height: float = 3000.0
+    display_units: DisplayUnits = field(default_factory=DisplayUnits, kw_only=True)
+    presentation: dict[str, Any] = field(default_factory=dict, kw_only=True)
     objects: list[dict[str, Any]] = field(default_factory=list)
     layers: list[dict[str, Any]] = field(default_factory=list)
     constraints: list[dict[str, Any]] = field(default_factory=list)
@@ -179,6 +182,8 @@ class ProjectData:
             data["task_states"] = self.task_states
         if self.harvest_logs:
             data["harvest_logs"] = self.harvest_logs
+        data["display_units"] = self.display_units.to_dict()
+        data["presentation"] = self.presentation
         return data
 
     @classmethod
@@ -188,6 +193,8 @@ class ProjectData:
         return cls(
             canvas_width=canvas.get("width", 5000.0),
             canvas_height=canvas.get("height", 3000.0),
+            display_units=DisplayUnits.from_dict(data.get("display_units")),
+            presentation=data.get("presentation", {}) if isinstance(data.get("presentation", {}), dict) else {},
             layers=data.get("layers", []),
             objects=data.get("objects", []),
             constraints=data.get("constraints", []),
@@ -1374,6 +1381,10 @@ class ProjectManager(QObject):
         return ProjectData(
             canvas_width=scene.width_cm if hasattr(scene, "width_cm") else 5000.0,
             canvas_height=scene.height_cm if hasattr(scene, "height_cm") else 3000.0,
+            display_units=units_for(scene),
+            presentation={"plant_symbols": getattr(scene, "plant_symbol_style", "detailed"),
+                          "texture_strength": getattr(scene, "texture_strength", 1.0),
+                          "grid_spacing_cm": getattr(scene, "grid_spacing_cm", 50.0)},
             layers=layers,
             objects=objects,
             constraints=constraints,
@@ -1881,6 +1892,15 @@ class ProjectManager(QObject):
     ) -> None:
         """Phase 2: Apply in-memory validated items and layers to the scene."""
         deserialized_items, parsed_layers, parsed_constraints, parsed_guides = prep
+        if hasattr(scene, "set_display_units"):
+            scene.set_display_units(data.display_units)
+        if hasattr(scene, "set_presentation"):
+            strength = data.presentation.get("texture_strength", 1.0)
+            if not isinstance(strength, (int, float)):
+                strength = 1.0
+            scene.set_presentation(data.presentation.get("plant_symbols", "detailed"), strength)
+            spacing = data.presentation.get("grid_spacing_cm", 50.0)
+            scene.grid_spacing_cm = spacing if isinstance(spacing, (int, float)) and .1 <= spacing <= 100000 else 50.0
 
         # Clear dimension lines before removing garden items so the manager can
         # cleanly remove its graphics items while C++ objects are still alive
@@ -2133,6 +2153,7 @@ class ProjectManager(QObject):
                 item._item_id = UUID(obj["item_id"])
             # Restore custom colors if saved
             if "fill_color" in obj:
+                item.fill_color = QColor(obj["fill_color"])
                 # If we have a pattern, recreate the brush with both color and pattern
                 if fill_pattern:
                     brush = create_pattern_brush(fill_pattern, QColor(obj["fill_color"]))

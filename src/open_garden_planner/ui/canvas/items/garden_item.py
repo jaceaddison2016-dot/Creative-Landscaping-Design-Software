@@ -1022,7 +1022,8 @@ class GardenItemMixin:
         area = self._compute_area_cm2()
         if area is None:
             return
-        text = self._format_area(area)
+        from open_garden_planner.core.units import format_area, units_for
+        text = format_area(area, units_for(self.scene()))
         if self._area_label_item is None:
             self._area_label_item = QGraphicsSimpleTextItem(text, self)  # type: ignore[arg-type]
             font = QFont("Arial", 8)

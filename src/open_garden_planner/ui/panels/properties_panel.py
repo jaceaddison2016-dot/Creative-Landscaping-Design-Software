@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QFontComboBox,
     QFormLayout,
     QGraphicsItem,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -42,6 +43,7 @@ from open_garden_planner.core.object_types import (
     get_translated_path_fence_style_name,
     is_bed_type,
 )
+from open_garden_planner.core.units import format_volume
 from open_garden_planner.ui.canvas.items import (
     CircleItem,
     EllipseItem,
@@ -51,6 +53,8 @@ from open_garden_planner.ui.canvas.items import (
     TextItem,
 )
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox, widget_units
+from open_garden_planner.ui.widgets.volume_spin_box import VolumeSpinBox
 
 # Clean, translatable description fragments for TextItem font properties.
 # The raw attribute names (font_family, font_size) make ugly undo labels
@@ -183,6 +187,9 @@ class PropertiesPanel(QWidget):
         # (Name, Text Content). Flushed before any form rebuild so a pending
         # edit is not destroyed with its widget and lost from undo (#210).
         self._pending_text_commits: list[Callable[[], None]] = []
+        self._creative_groups_enabled = False
+        self._creative_sections = []
+        self._section_expanded = {}
         self._setup_ui()
 
     def set_command_manager(self, command_manager: CommandManager) -> None:
@@ -255,8 +262,69 @@ class PropertiesPanel(QWidget):
         destroyed here, and the rebuild re-registers fresh ones (#206).
         """
         self._field_refreshers = []
+        for section in self._creative_sections:
+            self._content_layout.removeWidget(section)
+            section.hide()
+            section.deleteLater()
+        self._creative_sections = []
         while self._form_layout.rowCount() > 0:
             self._form_layout.removeRow(0)
+
+    def enable_creative_groups(self) -> None:
+        """Group the existing live editors, keeping their signals and undo path."""
+        self._creative_groups_enabled = True
+        self._current_identity = None
+        self.set_selected_items(list(self._current_items))
+
+    def _organize_creative_sections(self) -> None:
+        if not self._current_items:
+            return
+        essentials = {self.tr(label) for label in (
+            "Type:", "Name:", "Layer:", "Position:", "Size:", "Diameter:",
+            "Semi-axes:", "Object height:", "Text:", "Content:",
+        )}
+        appearance = {self.tr(label) for label in (
+            "Styling", "Fill:", "Fill Color:", "Fill color:", "Pattern:", "Fill Pattern:",
+            "Stroke:", "Stroke Color:", "Stroke color:", "Stroke Width:", "Stroke width:",
+            "Stroke Style:", "Stroke style:", "Label:", "Font:", "Font size:", "Color:",
+        )}
+        forms = {}
+        for title in ("Essentials", "Appearance", "Advanced"):
+            section = QGroupBox(QCoreApplication.translate("CreativePreview", title))
+            outer = QVBoxLayout(section)
+            body = QWidget()
+            form = QFormLayout(body)
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            outer.addWidget(body)
+            if title != "Essentials":
+                section.setCheckable(True)
+                expanded = self._section_expanded.get(title, False)
+                section.setChecked(expanded)
+                body.setVisible(expanded)
+                section.toggled.connect(body.setVisible)
+                section.toggled.connect(lambda checked, key=title: self._section_expanded.__setitem__(key, checked))
+            forms[title] = form
+            self._content_layout.insertWidget(len(self._creative_sections) + 1, section)
+            self._creative_sections.append(section)
+        styling = False
+        while self._form_layout.rowCount():
+            row = self._form_layout.takeRow(0)
+            label = row.labelItem.widget() if row.labelItem else None
+            field = row.fieldItem.widget() if row.fieldItem else None
+            field_layout = row.fieldItem.layout() if row.fieldItem else None
+            text = label.text() if isinstance(label, QLabel) else (field.text() if isinstance(field, QLabel) else "")
+            if text == self.tr("Styling"):
+                styling = True
+            elif text in (self.tr("Arrange"), self.tr("Plants in this bed"), self.tr("Parent bed")):
+                styling = False
+            group = "Essentials" if text in essentials else ("Appearance" if styling or text in appearance else "Advanced")
+            target = forms[group]
+            value = field if field is not None else field_layout
+            if label is not None and value is not None:
+                target.addRow(label, value)
+            elif value is not None:
+                target.addRow(value)
 
     def _show_no_selection(self) -> None:
         """Show message when nothing is selected."""
@@ -345,6 +413,8 @@ class PropertiesPanel(QWidget):
             self._show_multi_selection(len(items))
         else:
             self._show_single_item(items[0])
+        if self._creative_groups_enabled:
+            self._organize_creative_sections()
 
     def _compute_identity(self, items: list[QGraphicsItem]) -> tuple:
         """A stable key for the structure of the form needed by ``items``.
@@ -646,6 +716,12 @@ class PropertiesPanel(QWidget):
         else:
             valid_types = list(ObjectType)
 
+        # Imported projects may contain a valid type on another shape class.
+        # Show that actual type rather than silently displaying the first choice.
+        current_type = getattr(item, "object_type", None)
+        if current_type is not None and current_type not in valid_types:
+            valid_types = [*valid_types, current_type]
+
         # Populate combo with translated names and SVG icons
         combo.setIconSize(combo.iconSize())  # default icon size
         current_idx = 0
@@ -939,38 +1015,46 @@ class PropertiesPanel(QWidget):
         Args:
             item: Item to show geometry for
         """
+        def add_component(layout, label, editor):
+            if widget_units(self).imperial:
+                row = QHBoxLayout()
+                row.addWidget(label)
+                row.addWidget(editor, 1)
+                layout.addLayout(row)
+            else:
+                layout.addWidget(label)
+                layout.addWidget(editor, 1)
+
         # Position (editable X, Y) - use top-left corner of bounding box in scene coords
         # This corresponds to visual bottom-left after Y-flip (CAD origin)
         bottom_left_x, bottom_left_y = self._position_xy(item)
 
         # Create horizontal layout for X and Y spin boxes
-        pos_layout = QHBoxLayout()
+        pos_layout = QVBoxLayout() if widget_units(self).imperial else QHBoxLayout()
         pos_layout.setSpacing(4)
         pos_layout.setContentsMargins(0, 0, 0, 0)
 
         # X coordinate
         x_label = QLabel("X:")
-        x_spin = QDoubleSpinBox()
+        x_spin = LengthSpinBox(unit_source=self)
         x_spin.setRange(-100000.0, 100000.0)
         x_spin.setDecimals(1)
         x_spin.setSingleStep(10.0)
         x_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
         x_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         x_spin.setValue(bottom_left_x)
-        pos_layout.addWidget(x_label)
-        pos_layout.addWidget(x_spin, 1)
+        add_component(pos_layout, x_label, x_spin)
 
         # Y coordinate
         y_label = QLabel("Y:")
-        y_spin = QDoubleSpinBox()
+        y_spin = LengthSpinBox(unit_source=self)
         y_spin.setRange(-100000.0, 100000.0)
         y_spin.setDecimals(1)
         y_spin.setSingleStep(10.0)
         y_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
         y_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         y_spin.setValue(bottom_left_y)
-        pos_layout.addWidget(y_label)
-        pos_layout.addWidget(y_spin, 1)
+        add_component(pos_layout, y_label, y_spin)
 
         # Connect after both spin boxes are created
         x_spin.valueChanged.connect(
@@ -996,7 +1080,7 @@ class PropertiesPanel(QWidget):
 
         # Type-specific geometry (editable)
         if isinstance(item, CircleItem):
-            diameter_spin = QDoubleSpinBox()
+            diameter_spin = LengthSpinBox(unit_source=self)
             diameter_spin.setRange(1.0, 100000.0)
             diameter_spin.setDecimals(1)
             diameter_spin.setSingleStep(10.0)
@@ -1014,31 +1098,29 @@ class PropertiesPanel(QWidget):
             )
         elif isinstance(item, RectangleItem):
             rect = item.rect()
-            size_layout = QHBoxLayout()
+            size_layout = QVBoxLayout() if widget_units(self).imperial else QHBoxLayout()
             size_layout.setSpacing(4)
             size_layout.setContentsMargins(0, 0, 0, 0)
 
             w_label = QLabel("W:")
-            w_spin = QDoubleSpinBox()
+            w_spin = LengthSpinBox(unit_source=self)
             w_spin.setRange(1.0, 100000.0)
             w_spin.setDecimals(1)
             w_spin.setSingleStep(10.0)
             w_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             w_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
             w_spin.setValue(rect.width())
-            size_layout.addWidget(w_label)
-            size_layout.addWidget(w_spin, 1)
+            add_component(size_layout, w_label, w_spin)
 
             h_label = QLabel("H:")
-            h_spin = QDoubleSpinBox()
+            h_spin = LengthSpinBox(unit_source=self)
             h_spin.setRange(1.0, 100000.0)
             h_spin.setDecimals(1)
             h_spin.setSingleStep(10.0)
             h_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             h_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
             h_spin.setValue(rect.height())
-            size_layout.addWidget(h_label)
-            size_layout.addWidget(h_spin, 1)
+            add_component(size_layout, h_label, h_spin)
 
             w_spin.valueChanged.connect(
                 lambda _: self._on_dimension_changed(item, 'rect_size', None, w_spin, h_spin)
@@ -1059,12 +1141,12 @@ class PropertiesPanel(QWidget):
             )
         elif isinstance(item, EllipseItem):
             rect = item.rect()
-            axes_layout = QHBoxLayout()
+            axes_layout = QVBoxLayout() if widget_units(self).imperial else QHBoxLayout()
             axes_layout.setSpacing(4)
             axes_layout.setContentsMargins(0, 0, 0, 0)
 
             rx_label = QLabel("X:")
-            rx_spin = QDoubleSpinBox()
+            rx_spin = LengthSpinBox(unit_source=self)
             rx_spin.setRange(0.5, 100000.0)
             rx_spin.setDecimals(1)
             rx_spin.setSingleStep(5.0)
@@ -1072,11 +1154,10 @@ class PropertiesPanel(QWidget):
             rx_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             rx_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
             rx_spin.setValue(rect.width() / 2)
-            axes_layout.addWidget(rx_label)
-            axes_layout.addWidget(rx_spin, 1)
+            add_component(axes_layout, rx_label, rx_spin)
 
             ry_label = QLabel("Y:")
-            ry_spin = QDoubleSpinBox()
+            ry_spin = LengthSpinBox(unit_source=self)
             ry_spin.setRange(0.5, 100000.0)
             ry_spin.setDecimals(1)
             ry_spin.setSingleStep(5.0)
@@ -1084,8 +1165,7 @@ class PropertiesPanel(QWidget):
             ry_spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.UpDownArrows)
             ry_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
             ry_spin.setValue(rect.height() / 2)
-            axes_layout.addWidget(ry_label)
-            axes_layout.addWidget(ry_spin, 1)
+            add_component(axes_layout, ry_label, ry_spin)
 
             rx_spin.valueChanged.connect(
                 lambda _: self._on_dimension_changed(item, 'ellipse_axes', None, rx_spin, ry_spin)
@@ -1125,7 +1205,7 @@ class PropertiesPanel(QWidget):
             cell_count_label = QLabel(str(item.grid_cell_count()))
 
         # Spacing spinbox
-        spacing_spin = QDoubleSpinBox()
+        spacing_spin = LengthSpinBox(unit_source=self)
         spacing_spin.setRange(1.0, 200.0)
         spacing_spin.setSuffix(" cm")
         spacing_spin.setDecimals(1)
@@ -1185,10 +1265,10 @@ class PropertiesPanel(QWidget):
         separator.setStyleSheet("margin-top: 8px;")
         self._form_layout.addRow(separator)
 
-        depth_spin = QSpinBox()
+        depth_spin = LengthSpinBox(unit_source=self) if widget_units(self).imperial else QSpinBox()
         depth_spin.setRange(1, 200)
         depth_spin.setSuffix(" cm")
-        depth_spin.setValue(int(item.metadata.get("soil_depth_cm", 30)))
+        depth_spin.setValue(float(item.metadata.get("soil_depth_cm", 30)) if widget_units(self).imperial else int(item.metadata.get("soil_depth_cm", 30)))
         depth_spin.setToolTip(self.tr("Fill depth used to calculate soil volume in the Shopping List"))
 
         def on_depth_changed(val: int) -> None:
@@ -1200,7 +1280,7 @@ class PropertiesPanel(QWidget):
         self._form_layout.addRow(self.tr("Soil depth:"), depth_spin)
         self._register_refresh(
             depth_spin,
-            lambda s=depth_spin, it=item: s.setValue(int(it.metadata.get("soil_depth_cm", 30))),
+            lambda s=depth_spin, it=item: s.setValue(float(it.metadata.get("soil_depth_cm", 30)) if widget_units(self).imperial else int(it.metadata.get("soil_depth_cm", 30))),
         )
 
     def _add_container_properties(self, item: QGraphicsItem) -> None:
@@ -1245,14 +1325,14 @@ class PropertiesPanel(QWidget):
         self._form_layout.addRow(self.tr("Drainage:"), drainage_check)
 
         # Height spin (drives auto soil volume)
-        height_spin = QSpinBox()
+        height_spin = LengthSpinBox(unit_source=self) if widget_units(self).imperial else QSpinBox()
         height_spin.setRange(1, 300)
         height_spin.setSuffix(" cm")
-        height_spin.setValue(int(cm.container_height_cm(meta)))
+        height_spin.setValue(float(cm.container_height_cm(meta)) if widget_units(self).imperial else int(cm.container_height_cm(meta)))
         self._form_layout.addRow(self.tr("Height:"), height_spin)
 
         # Soil volume override — 0 means "auto-compute from footprint × height".
-        volume_spin = QDoubleSpinBox()
+        volume_spin = VolumeSpinBox(unit_source=self)
         volume_spin.setRange(0.0, 100000.0)
         volume_spin.setDecimals(1)
         volume_spin.setSuffix(" L")
@@ -1281,7 +1361,7 @@ class PropertiesPanel(QWidget):
 
         def update_feedback() -> None:
             litres = cm.effective_soil_volume_litres(meta, footprint_cm2())
-            effective_label.setText(self.tr("{litres:.1f} L").format(litres=litres))
+            effective_label.setText(format_volume(litres * 1000, widget_units(self)))
             # Translate the two atoms separately and join — never translate a
             # runtime-concatenated combined string (keeps the registered source
             # set small + non-combinatorial; see container_model.material_hint).
@@ -1340,7 +1420,7 @@ class PropertiesPanel(QWidget):
         )
         self._register_refresh(
             height_spin,
-            lambda s=height_spin, it=item: s.setValue(int(cm.container_height_cm(it.metadata))),
+            lambda s=height_spin, it=item: s.setValue(float(cm.container_height_cm(it.metadata)) if widget_units(self).imperial else int(cm.container_height_cm(it.metadata))),
         )
         self._register_refresh(
             volume_spin,
@@ -1372,7 +1452,7 @@ class PropertiesPanel(QWidget):
         if not oh.has_height_semantics(item.object_type, item.metadata):
             return
 
-        height_spin = QDoubleSpinBox()
+        height_spin = LengthSpinBox(unit_source=self)
         height_spin.setRange(0.0, 5000.0)
         height_spin.setDecimals(0)
         height_spin.setSingleStep(10.0)
@@ -1484,7 +1564,7 @@ class PropertiesPanel(QWidget):
                                   int(param.max if param.max is not None else 9999))
                     spin.setValue(int(current))
                 else:  # length
-                    spin = QDoubleSpinBox()
+                    spin = LengthSpinBox(unit_source=self) if param.unit == "cm" else QDoubleSpinBox()
                     spin.setDecimals(1)
                     spin.setRange(float(param.min if param.min is not None else 0.0),
                                   float(param.max if param.max is not None else 100000.0))
@@ -1532,7 +1612,7 @@ class PropertiesPanel(QWidget):
         if not is_plant_type(getattr(item, 'object_type', None)):
             return
 
-        spacing_spin = QDoubleSpinBox()
+        spacing_spin = LengthSpinBox(unit_source=self)
         spacing_spin.setRange(0.0, 10000.0)
         spacing_spin.setDecimals(1)
         spacing_spin.setSingleStep(5.0)
@@ -1678,7 +1758,7 @@ class PropertiesPanel(QWidget):
         )
 
         # Font size (in cm, matching scene units)
-        size_spin = QDoubleSpinBox()
+        size_spin = LengthSpinBox(unit_source=self)
         size_spin.setRange(0.1, 100.0)
         size_spin.setSingleStep(0.5)
         size_spin.setDecimals(1)

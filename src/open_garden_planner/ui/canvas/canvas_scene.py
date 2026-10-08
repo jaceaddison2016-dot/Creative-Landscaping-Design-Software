@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core import stacking
+from open_garden_planner.core.units import METRIC, DisplayUnits
 from open_garden_planner.models.layer import Layer, create_default_layers
 
 
@@ -63,6 +64,7 @@ class CanvasScene(QGraphicsScene):
 
     # Signals
     layers_changed = pyqtSignal()
+    display_units_changed = pyqtSignal()
     active_layer_changed = pyqtSignal(object)  # Layer or None
     layer_auto_unhidden = pyqtSignal(UUID)  # emitted when a draw auto-reveals a hidden layer
 
@@ -99,6 +101,10 @@ class CanvasScene(QGraphicsScene):
 
         # Labels state
         self._labels_enabled = True
+        self.display_units = METRIC
+        self.plant_symbol_style = "detailed"
+        self.texture_strength = 1.0
+        self.grid_spacing_cm = 50.0
 
         # Construction geometry visibility state
         self._construction_visible = True
@@ -188,6 +194,31 @@ class CanvasScene(QGraphicsScene):
         """Whether labels are shown on objects."""
         return self._labels_enabled
 
+    def set_display_units(self, units: DisplayUnits) -> None:
+        """Change presentation only; do not transform geometry or snap distances."""
+        if units == self.display_units:
+            return
+        self.display_units = units
+        self.update_dimension_lines()
+        self.display_units_changed.emit()
+        from open_garden_planner.ui.canvas.items.garden_item import GardenItemMixin
+        for item in self.items():
+            if isinstance(item, GardenItemMixin):
+                item._update_area_label()
+        self.update()
+
+    def set_presentation(self, style: str, strength: float) -> None:
+        """Refresh brushes/symbols without editing object geometry or metadata."""
+        from open_garden_planner.ui.canvas.items.garden_item import GardenItemMixin
+        self.plant_symbol_style = "architectural" if style == "architectural" else "detailed"
+        self.texture_strength = max(0.0, min(float(strength), 1.0))
+        for item in self.items():
+            if isinstance(item, GardenItemMixin) and hasattr(item, "_setup_styling"):
+                pen = item.pen()
+                item._setup_styling()
+                item.setPen(pen)
+        self.update()
+
     def set_labels_visible(self, visible: bool) -> None:
         """Enable or disable labels on all garden objects.
 
@@ -262,6 +293,10 @@ class CanvasScene(QGraphicsScene):
             item.shadows_enabled = self._shadows_enabled
             item.set_global_labels_visible(self._labels_enabled)
             item.spacing_circles_visible = self._spacing_circles_visible
+            if self.texture_strength != 1 and hasattr(item, "_setup_styling"):
+                pen = item.pen()
+                item._setup_styling()
+                item.setPen(pen)
 
             # Auto-unhide the target layer so drawing on a hidden layer reveals it
             if item.layer_id:

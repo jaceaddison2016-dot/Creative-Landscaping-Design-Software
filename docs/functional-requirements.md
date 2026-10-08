@@ -592,3 +592,12 @@ Acceptance evidence: `tests/integration/test_creative_design_preview.py`,
 `tests/unit/test_creative_contrast.py`, [real captures and review](design/README.md).
 This requirement does not assert automatic recent thumbnails, approved company
 assets, project timezone, templates or production-wide dialog styling.
+
+
+### FR-CREATIVE-01 — Landscape desktop workspace (draft implementation)
+
+The Creative entry point prioritizes landscape drawing, provides compact grouped tools and persistent resizable side docks, and preserves the optional Gardening workspace and existing commands/shortcuts. Selection properties group into Essentials, Appearance and Advanced. No official logo is invented.
+
+### FR-CREATIVE-02 — Imperial display without project rescaling (draft implementation)
+
+New Creative projects default to feet/inches. Fractional inches, decimal feet, negative coordinates, dimensions, rulers, grid/snapping, sizes, calibration, areas, material volumes and relevant exports use project-scoped units. Legacy projects retain metric display and centimeter geometry. Unit preferences persist and undo. Remaining metric/scientific surfaces are documented in Creative continuation validation.

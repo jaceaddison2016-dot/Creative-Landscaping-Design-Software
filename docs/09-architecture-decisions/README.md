@@ -2024,3 +2024,16 @@ platform QA and broad component rollout follow approval.
 Evidence: `tests/integration/test_creative_design_preview.py`,
 `tests/unit/test_creative_contrast.py`, [design review](../design/README.md),
 [asset inventory](../../assets/creative/README.md).
+
+
+## ADR-051: Project-scoped display units and the Creative desktop workspace
+
+**Status:** implemented on the Creative draft branch; owner visual review and native packaging pending.
+
+Keep canonical centimeter geometry, command arguments, solar math and provider/Agent API data unchanged. Add `display_units` and `presentation` keys to `.ogp` 1.4; absent keys mean metric, detailed symbols and existing full-strength textures. New Creative projects default to imperial. Unit switches are undoable preferences, never geometry transforms. Frozen units in each numeric editor prevent a switch from reinterpreting a focused control's old text; untouched rounded inch displays do not write rounding into canonical values. LengthSpinBox emits cm; VolumeSpinBox emits litres. Fractions, explicit units and negative lengths live in Qt-free core/units.py. Imperial bare numbers mean feet and coordinate pairs require comma/semicolon separators.
+
+Imperial DXF modelspace is physically scaled to feet with INSUNITS=2; metric DXF declares centimeter units (5). CSV imperial columns explicitly use `_ft`. Soil/mulch quantities display yd³/ft², with prices converted in the opposite direction; persisted prices retain their canonical per-m³/per-m² meaning. No geometry conversion is saved back into a project.
+
+Reuse GardenPlannerApp through CreativePreviewWindow (retained internal name). The normal entry point now selects Creative, with --classic preserving the inherited shell. Existing menus, controllers, command manager and serializer remain authoritative. Two compact toolbar rows and optional Gardening/Sun workspaces replace permanently visible rows; simulation enablement follows its QAction independently of toolbar visibility. Side docks persist via existing QMainWindow state. Properties groups move the real editors without replacing their signal/undo paths. Original procedural architectural plant linework is a presentation option alongside the existing detailed SVG symbols.
+
+No new dependency, official logo, portfolio photograph or proprietary asset was introduced. Packaging follows revised visual approval and successful checks; this decision does not establish a Windows or Mac installer. See [coverage and evidence](../design/CONTINUATION_VALIDATION.md).

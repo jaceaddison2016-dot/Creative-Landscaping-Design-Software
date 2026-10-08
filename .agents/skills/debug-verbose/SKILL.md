@@ -463,9 +463,9 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Key signal**: in the live session, both bed and plant had `zValue() == 0`. The plant was on top. After load, both still had `zValue() == 0` — but the bed was on top. So the *tie-break* between same-z items had flipped between sessions.
 
-**Root cause**: `ui/canvas/canvas_scene.py:321` `_refresh_layer_z` set every item's z to `layer.z_order * 100` (since revised by #338/ADR-043 into a per-item ranked z within that band — §8.25). Items in the same layer get *the same z*. Qt's `QGraphicsScene` then tie-breaks by item insertion order. The live session inserts bed first, then plant — plant on top. The post-load reconstruction inserts items in scene-traversal order from the saved JSON, which is reversed by serialization, putting the plant first and the bed on top.
+**Root cause**: `ui/canvas/canvas_scene.py:1008` `_refresh_layer_z` set every item's z to `layer.z_order * 100` (since revised by #338/ADR-043 into a per-item ranked z within that band — §8.25). Items in the same layer get *the same z*. Qt's `QGraphicsScene` then tie-breaks by item insertion order. The live session inserts bed first, then plant — plant on top. The post-load reconstruction inserts items in scene-traversal order from the saved JSON, which is reversed by serialization, putting the plant first and the bed on top.
 
-**Fix**: Add a third pass in `_update_items_z_order` (mirroring the existing ROOF_RIDGE special case, now `ui/canvas/canvas_scene.py:854` `ROOF_RIDGE` inside `_stack_entries` since #338/ADR-043's rewrite — §8.25) that walks every item with `_parent_bed_id` set and bumps its z to `parent.zValue() + 1`. Now plants always have a strictly higher z than their bed, regardless of insertion order.
+**Fix**: Add a third pass in `_update_items_z_order` (mirroring the existing ROOF_RIDGE special case, now `ui/canvas/canvas_scene.py:889` `ROOF_RIDGE` inside `_stack_entries` since #338/ADR-043's rewrite — §8.25) that walks every item with `_parent_bed_id` set and bumps its z to `parent.zValue() + 1`. Now plants always have a strictly higher z than their bed, regardless of insertion order.
 
 **Lesson**: Identical zValues are a footgun across save/load boundaries because `QGraphicsScene` tie-breaks by *insertion order*, which is **not stable** between live mutation order and JSON-load order. Whenever a parent-child draw relationship matters, encode it explicitly via `parent.zValue() + 1` — never rely on "I inserted them in the right order, it'll just work". Pattern: anywhere `_update_items_z_order` touches multiple item categories, add an explicit ordering pass per parent-child relationship.
 
@@ -1707,3 +1707,13 @@ subprocess test verifies the saved language on restart. Remove probe logging.
 changing any inherited text. Check the actual launcher and main window as well
 as new component strings. See the risk-log entry and
 `docs/reviews/CREATIVE_DESIGN_PREVIEW.md`.
+
+
+## Case study: accumulated Qt windows and orphaned category popups (Creative continuation, 2026-10-08)
+
+**Symptom:** full-suite theme changes took minutes, with roughly 79,779 live widgets.
+**Wrong theories:** the welcome dialog was blocking; only repeated stylesheet passes caused the stall.
+**Key logs:** `[OWNERSHIP_PROBE] unparented 11 widgets 517`; after DeferredDelete, `surviving popups 11 widgets 493`. A real main-window destruction probe left exactly the 11 unowned CategoryDropdown top-level windows (493 widgets). After parenting the popups and draining DeferredDelete, a 1,252-widget window returned to zero. Prefix timing: 652 passed / 13 skipped in 351.92 s with instrumentation; clean focused lifetime/theme run: 133 passed in 56.02 s.
+**Root cause:** Qt popup window flags provided no QObject ownership; pytest-qt's close/deleteLater calls also remained queued when tests never entered QApplication.exec(). Global theme work then restyled all accumulated windows. Stack dumps and traceback logging located app.setStyleSheet, not modal welcome execution.
+**Fix:** CategoryDropdown(category, toolbar); a real destroy-and-click popup regression; flush QEvent.DeferredDelete at test teardown. Creative applies the combined theme once rather than a base pass plus an appended pass; its inherited theme handler uses one overridable hook. No tests or assertions were removed and no timeout was raised. The diagnostic lifetime run was intentionally interrupted after identifying ownership; it is not a passing check.
+**Lesson:** distinguish C++ ownership from window flags, and process deferred deletion explicitly in a headless Qt test harness. All temporary instrumentation was removed.

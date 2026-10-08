@@ -1,5 +1,8 @@
 # Platform status — Milestone A
 
+> This matrix records the desktop foundation build, before the Creative continuation. The current source redesign and imperial controls have no matching installer yet; see [current validation](docs/design/CONTINUATION_VALIDATION.md).
+
+
 Evidence as of 2026-10-08 UTC. Windows x64 is the immediate download target by owner
 direction. No Mac was selected. Automated results are scoped to their runners;
 manual use, signing, and supported OS versions require separate QA.

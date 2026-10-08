@@ -1,5 +1,8 @@
 # Creative preview validation
 
+> Historical first-preview evidence. The newer continuation changes the default desktop workspace and units. See [current validation](CONTINUATION_VALIDATION.md).
+
+
 October 7, 2026, America/Detroit. This evidence concerns an **opt-in source
 experiment**. The Windows artifact recorded in PLATFORM_STATUS.md predates this
 design; it does not contain these changes. No installer/release is produced while

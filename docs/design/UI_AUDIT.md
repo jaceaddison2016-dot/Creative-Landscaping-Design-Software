@@ -1,5 +1,8 @@
 # Desktop interface audit
 
+> Historical first-preview evidence. The newer continuation changes the default desktop workspace and units. See [current validation](CONTINUATION_VALIDATION.md).
+
+
 October 7, 2026, America/Detroit. Baseline: desktop foundation
 `439e486414070161d9fea58a6123644e8d0afdc3`, upstream-derived v1.29.5.
 See [UPSTREAM_PROVENANCE.md](../../UPSTREAM_PROVENANCE.md) and

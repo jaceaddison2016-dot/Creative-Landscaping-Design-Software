@@ -31,7 +31,9 @@ from open_garden_planner.core.measure_snapper import (
     get_anchor_points,
 )
 from open_garden_planner.core.tools.base_tool import BaseTool, ToolType
+from open_garden_planner.core.units import format_dimension, format_length, units_for
 from open_garden_planner.ui.canvas.items import GardenItemMixin
+from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox, widget_units
 
 _log = logging.getLogger(__name__)
 
@@ -43,6 +45,8 @@ PREVIEW_LINE_COLOR = QColor(0, 120, 255, 160)  # Semi-transparent blue for dista
 PREVIEW_H_COLOR = QColor(180, 0, 200, 200)  # Purple for horizontal
 PREVIEW_V_COLOR = QColor(0, 160, 80, 200)  # Green for vertical
 PEN_WIDTH = 2.5
+
+
 
 
 class DistanceInputDialog(QDialog):
@@ -67,15 +71,18 @@ class DistanceInputDialog(QDialog):
                 "Enter the target distance (meters):",
             )
         )
+        if widget_units(self).imperial:
+            label.setText(QCoreApplication.translate("CreativePreview", "Target distance (ft/in):"))
         layout.addWidget(label)
 
-        self._spin = QDoubleSpinBox()
-        self._spin.setRange(0.01, 999.99)
+        self._imperial = widget_units(self).imperial
+        self._spin = LengthSpinBox(unit_source=self) if self._imperial else QDoubleSpinBox()
+        self._spin.setRange(1, 99999) if self._imperial else self._spin.setRange(0.01, 999.99)
         self._spin.setDecimals(2)
-        self._spin.setSuffix(" m")
+        self._spin.setSuffix("" if self._imperial else " m")
         self._spin.setSingleStep(0.10)
         # Pre-fill with current distance converted to meters
-        self._spin.setValue(current_distance_cm / 100.0)
+        self._spin.setValue(current_distance_cm if self._imperial else current_distance_cm / 100.0)
         self._spin.selectAll()
         layout.addWidget(self._spin)
 
@@ -85,6 +92,8 @@ class DistanceInputDialog(QDialog):
                 "Current distance: {distance:.2f} m",
             ).format(distance=current_distance_cm / 100.0)
         )
+        if self._imperial:
+            current_label.setText(format_length(current_distance_cm, widget_units(self)))
         current_label.setProperty("secondary", True)
         current_label.setStyleSheet("font-style: italic;")
         layout.addWidget(current_label)
@@ -98,7 +107,7 @@ class DistanceInputDialog(QDialog):
 
     def distance_cm(self) -> float:
         """Return the entered distance in scene units (cm)."""
-        return self._spin.value() * 100.0
+        return self._spin.value() * (1 if self._imperial else 100.0)
 
 
 class ConstraintTool(BaseTool):
@@ -276,7 +285,7 @@ class ConstraintTool(BaseTool):
             text = QCoreApplication.translate("ConstraintTool", "≡ V (same X)")
         else:
             distance_cm = QLineF(start, end_pos).length()
-            text = f"{distance_cm / 100.0:.2f} m"
+            text = format_dimension(distance_cm, units_for(scene))
 
         mid_x = (start.x() + snapped_end.x()) / 2
         mid_y = (start.y() + snapped_end.y()) / 2
@@ -2325,7 +2334,7 @@ class EdgeLengthConstraintTool(BaseTool):
             self._preview_line.setZValue(1001)
             self._graphics_items.append(self._preview_line)
             length_cm = QLineF(p1.point, p2.point).length()
-            self._preview_text = scene.addText(f"{length_cm / 100.0:.2f} m")
+            self._preview_text = scene.addText(format_dimension(length_cm, units_for(scene)))
             self._preview_text.setDefaultTextColor(PREVIEW_LINE_COLOR)
             font = QFont()
             font.setPointSize(11)
@@ -3778,14 +3787,17 @@ class HDistanceInputDialog(QDialog):
                 "Enter the target horizontal distance (meters):",
             )
         )
+        if widget_units(self).imperial:
+            label.setText(QCoreApplication.translate("CreativePreview", "Target distance (ft/in):"))
         layout.addWidget(label)
 
-        self._spin = QDoubleSpinBox()
-        self._spin.setRange(0.01, 999.99)
+        self._imperial = widget_units(self).imperial
+        self._spin = LengthSpinBox(unit_source=self) if self._imperial else QDoubleSpinBox()
+        self._spin.setRange(1, 99999) if self._imperial else self._spin.setRange(0.01, 999.99)
         self._spin.setDecimals(2)
-        self._spin.setSuffix(" m")
+        self._spin.setSuffix("" if self._imperial else " m")
         self._spin.setSingleStep(0.10)
-        self._spin.setValue(current_h_dist_cm / 100.0)
+        self._spin.setValue(current_h_dist_cm if self._imperial else current_h_dist_cm / 100.0)
         self._spin.selectAll()
         layout.addWidget(self._spin)
 
@@ -3795,6 +3807,8 @@ class HDistanceInputDialog(QDialog):
                 "Current horizontal distance: {distance:.2f} m",
             ).format(distance=current_h_dist_cm / 100.0)
         )
+        if self._imperial:
+            current_label.setText(format_length(current_h_dist_cm, widget_units(self)))
         current_label.setProperty("secondary", True)
         current_label.setStyleSheet("font-style: italic;")
         layout.addWidget(current_label)
@@ -3808,7 +3822,7 @@ class HDistanceInputDialog(QDialog):
 
     def distance_cm(self) -> float:
         """Return the entered distance in scene units (cm)."""
-        return self._spin.value() * 100.0
+        return self._spin.value() * (1 if self._imperial else 100.0)
 
 
 class VDistanceInputDialog(QDialog):
@@ -3828,14 +3842,17 @@ class VDistanceInputDialog(QDialog):
                 "Enter the target vertical distance (meters):",
             )
         )
+        if widget_units(self).imperial:
+            label.setText(QCoreApplication.translate("CreativePreview", "Target distance (ft/in):"))
         layout.addWidget(label)
 
-        self._spin = QDoubleSpinBox()
-        self._spin.setRange(0.01, 999.99)
+        self._imperial = widget_units(self).imperial
+        self._spin = LengthSpinBox(unit_source=self) if self._imperial else QDoubleSpinBox()
+        self._spin.setRange(1, 99999) if self._imperial else self._spin.setRange(0.01, 999.99)
         self._spin.setDecimals(2)
-        self._spin.setSuffix(" m")
+        self._spin.setSuffix("" if self._imperial else " m")
         self._spin.setSingleStep(0.10)
-        self._spin.setValue(current_v_dist_cm / 100.0)
+        self._spin.setValue(current_v_dist_cm if self._imperial else current_v_dist_cm / 100.0)
         self._spin.selectAll()
         layout.addWidget(self._spin)
 
@@ -3845,6 +3862,8 @@ class VDistanceInputDialog(QDialog):
                 "Current vertical distance: {distance:.2f} m",
             ).format(distance=current_v_dist_cm / 100.0)
         )
+        if self._imperial:
+            current_label.setText(format_length(current_v_dist_cm, widget_units(self)))
         current_label.setProperty("secondary", True)
         current_label.setStyleSheet("font-style: italic;")
         layout.addWidget(current_label)
@@ -3858,7 +3877,7 @@ class VDistanceInputDialog(QDialog):
 
     def distance_cm(self) -> float:
         """Return the entered distance in scene units (cm)."""
-        return self._spin.value() * 100.0
+        return self._spin.value() * (1 if self._imperial else 100.0)
 
 
 class HorizontalDistanceConstraintTool(ConstraintTool):
@@ -3914,6 +3933,8 @@ class HorizontalDistanceConstraintTool(ConstraintTool):
         text = QCoreApplication.translate(
             "HorizontalDistanceConstraintTool", "↔ {d:.2f} m"
         ).format(d=h_dist_cm / 100.0)
+        if units_for(scene).imperial:
+            text = "↔ " + format_length(h_dist_cm, units_for(scene))
 
         mid_x = (start.x() + snapped_end.x()) / 2
         mid_y = start.y()
@@ -4023,6 +4044,9 @@ class VerticalDistanceConstraintTool(ConstraintTool):
         text = QCoreApplication.translate(
             "VerticalDistanceConstraintTool", "↕ {d:.2f} m"
         ).format(d=v_dist_cm / 100.0)
+
+        if units_for(scene).imperial:
+            text = "↕ " + format_length(v_dist_cm, units_for(scene))
 
         mid_x = start.x()
         mid_y = (start.y() + snapped_end.y()) / 2

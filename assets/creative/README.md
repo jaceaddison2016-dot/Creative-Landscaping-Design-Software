@@ -19,3 +19,6 @@ October 7, 2026, America/Detroit. No official Creative assets are bundled.
 When approved originals become available, record the filename, owner, license or
 written redistribution permission, permitted uses and approval date here. Preserve
 associated notices. Do not place unapproved assets in this public repository.
+
+
+The continuation adds original procedural architectural plant linework in `core/plant_renderer.py` (GPL-3.0-or-later as part of the derived source), with no imported art file. Local recent-project thumbnails come from the user's own canvas and are cached privately; only the synthetic review project's screenshots are committed. System font fallbacks are used, with no new redistributed font binary.

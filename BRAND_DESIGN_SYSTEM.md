@@ -138,3 +138,8 @@ export title blocks must follow the existing export architecture and preserve
 scale, north, grayscale legibility and vectors. Imperial entry/display and native
 Windows/macOS package QA remain separate required master-plan work. Build a new
 Windows test installer only after this approval gate and relevant checks pass.
+
+
+## Approved color direction, revised density pass (2026-10-08)
+
+The owner approved navy/ivory/gold; the continuation refines density before another installer. Use two compact rows (project/workspace, grouped actions), a ~320 px resizable properties dock and ~200 px library dock. Keep sun controls contextual. Essentials is open; Appearance/Advanced collapse. Controls/measurements use readable sans-serif; serif stays in brand/welcome headings. The normal entry point now uses the Creative shell; --classic remains available. Existing first-preview screenshots are historical. Revised captures and measured widths are in docs/design/creative-preview. The identity stays an explicitly labeled text placeholder until an approved logo is provided.

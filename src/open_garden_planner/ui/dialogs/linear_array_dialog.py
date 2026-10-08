@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox
+
 
 class LinearArrayDialog(QDialog):
     """Dialog for creating a linear array of an object.
@@ -44,7 +46,7 @@ class LinearArrayDialog(QDialog):
 
         # Spacing
         spacing_layout = QHBoxLayout()
-        self._spacing_spin = QDoubleSpinBox()
+        self._spacing_spin = LengthSpinBox(unit_source=self)
         self._spacing_spin.setRange(1.0, 100000.0)
         self._spacing_spin.setValue(100.0)
         self._spacing_spin.setDecimals(1)

@@ -1,6 +1,6 @@
-"""Proposed Creative palette; enabled only by the design-preview runner.
+"""Approved Creative color direction for the derived desktop workspace.
 
-No company colors or fonts have been verified. Reuse the existing theme's
+The owner approved this palette; no official logo/font asset is supplied. Reuse the existing theme's
 component styles and notification hooks; do not replace the canvas or data model.
 """
 
@@ -75,11 +75,11 @@ def apply_creative_theme(app: QApplication, mode: ThemeMode) -> None:
     colors = DARK if resolved == ThemeMode.DARK else LIGHT
     font = QFont(font_family("Source Sans 3", "Segoe UI", "Helvetica Neue", "DejaVu Sans"))
     font.setPixelSize(14)
-    app.setFont(font)
-    apply_theme(app, resolved, color_overrides=colors)
+    if app.font() != font:
+        app.setFont(font)
     # Only these named preview components get additional styling. The inherited
     # stylesheet continues to own menus, native-ish inputs and existing panels.
-    app.setStyleSheet(app.styleSheet() + f"""
+    component_stylesheet = f"""
         QFrame#CreativeIdentity {{ background: {CHROME['identity']}; }}
         QFrame#CreativeIdentity QLabel {{ background: transparent; color: {CHROME['on_identity']}; }}
         QFrame#CreativeIdentity QLabel#CreativePlaceholder {{ color: {CHROME['placeholder']}; }}
@@ -94,4 +94,5 @@ def apply_creative_theme(app: QApplication, mode: ThemeMode) -> None:
         QListWidget#CreativeLibrary:focus, QListWidget#CreativeRecents:focus {{
             border: 2px solid {colors['border_focus']};
         }}
-    """)
+    """
+    apply_theme(app, resolved, color_overrides=colors, component_stylesheet=component_stylesheet)

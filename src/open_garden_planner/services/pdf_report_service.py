@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from PyQt6.QtCore import QCoreApplication, QMarginsF, QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPageLayout, QPageSize, QPainter, QPdfWriter, QPen
 
+from open_garden_planner.core.units import FOOT_CM, METRIC, format_length, units_for
+
 
 def _tr(text: str) -> str:
     """Translate a service-layer string under the PdfReportService context."""
@@ -174,13 +176,15 @@ def _draw_scale_bar(
     bottom: float,
     canvas_width_cm: float,
     page_width_pt: float,
+    display_units=METRIC,
 ) -> None:
     """Draw a 10 m scale bar below the plan overview."""
-    # Pick a round scale bar length: 10 m = 1000 cm
-    bar_m = 10
-    bar_cm = bar_m * 100
+    # Pick an actual length that fits; clamping the old bar under an
+    # unchanged 10 m label misrepresented the exported drawing's scale.
+    choices = [n * FOOT_CM for n in (1, 2, 5, 10, 20, 50, 100, 200)] if display_units.imperial else [10, 20, 50, 100, 200, 500, 1000, 2000]
+    maximum_cm = canvas_width_cm * .25
+    bar_cm = max((n for n in choices if n <= maximum_cm), default=maximum_cm)
     bar_pt = bar_cm / canvas_width_cm * page_width_pt
-    bar_pt = max(20.0, min(bar_pt, page_width_pt * 0.25))  # clamp
 
     pen = QPen(QColor("#333333"))
     pen.setWidthF(1.0)
@@ -197,7 +201,7 @@ def _draw_scale_bar(
     painter.drawText(
         QRectF(left, y + _pt(1), bar_pt, _pt(6)),
         Qt.AlignmentFlag.AlignCenter,
-        f"{bar_m} m",
+        format_length(bar_cm, display_units),
     )
 
 
@@ -292,6 +296,7 @@ def _render_overview(
         content_rect.bottom(),
         canvas_rect.width(),
         content_rect.width(),
+        units_for(scene),
     )
 
     _draw_title_block(
@@ -361,7 +366,7 @@ def _render_plant_list(
     cols = [
         ("Name", 0.35),
         ("Type", 0.20),
-        ("Position (cm)", 0.25),
+        ("Position (ft/in)" if units_for(scene).imperial else "Position (cm)", 0.25),
         ("Notes", 0.20),
     ]
 
@@ -396,8 +401,9 @@ def _render_plant_list(
         name = getattr(item, "name", "") or ""
         obj_type = getattr(item, "object_type", None)
         type_str = obj_type.name.replace("_", " ").title() if obj_type else ""
-        center = item.mapToScene(item.boundingRect().center())
-        pos_str = f"({center.x():.0f}, {center.y():.0f})"
+        center = item.mapToScene(item.rect().center())
+        pos_str = (f"({format_length(center.x(), units_for(scene))}, {format_length(center.y(), units_for(scene))})"
+                   if units_for(scene).imperial else f"({center.x():.0f}, {center.y():.0f})")
         metadata = getattr(item, "metadata", {}) or {}
         notes = (metadata.get("plant_instance") or {}).get("notes", "") or ""
 

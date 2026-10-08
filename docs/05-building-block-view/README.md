@@ -419,3 +419,8 @@ Captures use a separate account and synthetic fixture path and grab actual Qt
 widgets. Normal startup
 remains unchanged. See [ADR-050](../09-architecture-decisions/README.md#adr-050-opt-in-creative-desktop-design-preview)
 and [design review](../design/README.md); no approved production redesign is claimed.
+
+
+### Creative display adapters (draft continuation)
+
+`core/units.py` parses/formats physical quantities without Qt. `core/display_commands.py` provides undoable unit, grid and drawing-presentation preferences. `ui/widgets/length_spin_box.py`, `volume_spin_box.py` and `length_input.py` retain canonical cm/L at the Qt boundary. `app/creative_preview.py` reuses GardenPlannerApp and supplies compact workspace navigation. `ui/project_thumbnails.py` caches only locally captured user canvases; no network or portfolio assets. Details: ADR-051.

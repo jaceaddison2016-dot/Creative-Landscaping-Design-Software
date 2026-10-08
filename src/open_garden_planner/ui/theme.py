@@ -1199,7 +1199,8 @@ def _set_windows_dark_titlebar(window, dark: bool) -> None:
 
 
 def apply_theme(
-    app: QApplication, mode: ThemeMode, *, color_overrides: dict[str, str] | None = None
+    app: QApplication, mode: ThemeMode, *, color_overrides: dict[str, str] | None = None,
+    component_stylesheet: str = "",
 ) -> None:
     """Apply the specified theme to the application.
 
@@ -1219,7 +1220,7 @@ def apply_theme(
     _current_colors = colors
 
     stylesheet = generate_stylesheet(mode, color_overrides=color_overrides)
-    app.setStyleSheet(stylesheet)
+    app.setStyleSheet(stylesheet + component_stylesheet)
 
     # Notify subscribers (e.g. the icon provider) of the new palette.
     # Failures are logged, never swallowed silently, and never abort the

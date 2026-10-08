@@ -2423,3 +2423,10 @@ See [BRAND_DESIGN_SYSTEM.md](../../BRAND_DESIGN_SYSTEM.md),
 [ADR-050](../09-architecture-decisions/README.md#adr-050-opt-in-creative-desktop-design-preview)
 and [validation](../design/VALIDATION.md). The source experiment is opt-in; broad
 application styling, native packaged QA and company assets await owner approval.
+
+
+### Creative presentation and headless Qt lifetime (ADR-051)
+
+Display units belong to each document, never a process-global setting. Keep focused editor units fixed until that editor is rebuilt; preserve the original canonical value when interpreting an untouched rounded display. All geometric commands remain in cm. Architectural symbols and texture strength change painting only.
+
+Qt.Popup is a window flag, not ownership. Parent CategoryDropdown to its toolbar even though it floats. In headless tests, processEvents does not substitute for an exec loop's DeferredDelete handling: the autouse cleanup flushes deferred deletes after pytest-qt destroys its registered widgets. This preserves assertions and avoids repeated global styling of thousands of queued closed windows. Combined Creative QSS is applied once. See the risk log and debug-verbose case for measurements.

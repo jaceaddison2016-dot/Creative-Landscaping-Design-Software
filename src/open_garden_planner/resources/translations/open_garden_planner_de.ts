@@ -764,6 +764,10 @@
             <source>Created {dir} offset of {dist:.1f} cm</source>
             <translation>{dir}-Versatz von {dist:.1f} cm erstellt</translation>
         </message>
+        <message>
+            <source>Invalid distance. Enter a physical length.</source>
+            <translation>Ungültiger Abstand. Eine Länge mit Einheit eingeben.</translation>
+        </message>
     </context>
     <context>
         <name>CircleItem</name>
@@ -1262,6 +1266,10 @@
         <message>
             <source>{a} lies on the circle of {b}</source>
             <translation>{a} liegt auf dem Kreis von {b}</translation>
+        </message>
+        <message>
+            <source>{a} to {b}: {distance}</source>
+            <translation>{a} zu {b}: {distance}</translation>
         </message>
     </context>
     <context>
@@ -3650,6 +3658,10 @@ Details: {error}</translation>
         <message>
             <source>Warning: {count} unrecognized item(s) could not be loaded and were skipped.</source>
             <translation>Warnung: {count} nicht erkannte(s) Objekt(e) konnten nicht geladen werden und wurden übersprungen.</translation>
+        </message>
+        <message>
+            <source>X: {x}  Y: {y}</source>
+            <translation>X: {x}  Y: {y}</translation>
         </message>
     </context>
     <context>
@@ -8141,6 +8153,10 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</source>
             <source>(photo: {filename})</source>
             <translation>(Foto: {filename})</translation>
         </message>
+        <message>
+            <source>Position (ft/in)</source>
+            <translation>Position (ft/in)</translation>
+        </message>
     </context>
     <context>
         <name>MidpointHandle</name>
@@ -11524,6 +11540,170 @@ Geändert am {date}</translation>
         <message>
             <source>{name}  ·  {state}</source>
             <translation>{name}  ·  {state}</translation>
+        </message>
+        <message>
+            <source>Select/Edit</source>
+            <translation>Auswahl/Bearbeiten</translation>
+        </message>
+        <message>
+            <source>Site &amp; Structures</source>
+            <translation>Grundstück &amp; Bauwerke</translation>
+        </message>
+        <message>
+            <source>Hardscape</source>
+            <translation>Beläge</translation>
+        </message>
+        <message>
+            <source>Planting</source>
+            <translation>Bepflanzung</translation>
+        </message>
+        <message>
+            <source>Dimensions</source>
+            <translation>Maße</translation>
+        </message>
+        <message>
+            <source>Sun Study</source>
+            <translation>Sonnenstudie</translation>
+        </message>
+        <message>
+            <source>Export</source>
+            <translation>Export</translation>
+        </message>
+        <message>
+            <source>Landscape</source>
+            <translation>Landschaft</translation>
+        </message>
+        <message>
+            <source>Gardening</source>
+            <translation>Gartenpflege</translation>
+        </message>
+        <message>
+            <source>Workspace</source>
+            <translation>Arbeitsbereich</translation>
+        </message>
+        <message>
+            <source>Landscape tools</source>
+            <translation>Landschaftswerkzeuge</translation>
+        </message>
+        <message>
+            <source>Advanced tools</source>
+            <translation>Weitere Werkzeuge</translation>
+        </message>
+        <message>
+            <source>Project units</source>
+            <translation>Projekteinheiten</translation>
+        </message>
+        <message>
+            <source>Feet &amp; inches</source>
+            <translation>Fuß &amp; Zoll</translation>
+        </message>
+        <message>
+            <source>Decimal feet</source>
+            <translation>Dezimalfuß</translation>
+        </message>
+        <message>
+            <source>Metric</source>
+            <translation>Metrisch</translation>
+        </message>
+        <message>
+            <source>Grid spacing…</source>
+            <translation>Rasterabstand…</translation>
+        </message>
+        <message>
+            <source>Grid spacing</source>
+            <translation>Rasterabstand</translation>
+        </message>
+        <message>
+            <source>Grid spacing (cm):</source>
+            <translation>Rasterabstand (cm):</translation>
+        </message>
+        <message>
+            <source>Open sun workspace</source>
+            <translation>Sonnenarbeitsbereich öffnen</translation>
+        </message>
+        <message>
+            <source>Drawing presentation</source>
+            <translation>Plandarstellung</translation>
+        </message>
+        <message>
+            <source>Architectural plant symbols</source>
+            <translation>Architektonische Pflanzensymbole</translation>
+        </message>
+        <message>
+            <source>Detailed plant symbols</source>
+            <translation>Detaillierte Pflanzensymbole</translation>
+        </message>
+        <message>
+            <source>Material texture strength…</source>
+            <translation>Stärke der Materialtexturen…</translation>
+        </message>
+        <message>
+            <source>Material texture strength</source>
+            <translation>Stärke der Materialtexturen</translation>
+        </message>
+        <message>
+            <source>Texture detail (%):</source>
+            <translation>Texturdetails (%):</translation>
+        </message>
+        <message>
+            <source>Gardening workspace</source>
+            <translation>Gartenpflege-Arbeitsbereich</translation>
+        </message>
+        <message>
+            <source>Essentials</source>
+            <translation>Grunddaten</translation>
+        </message>
+        <message>
+            <source>Appearance</source>
+            <translation>Darstellung</translation>
+        </message>
+        <message>
+            <source>Advanced</source>
+            <translation>Erweitert</translation>
+        </message>
+        <message>
+            <source>Change project units</source>
+            <translation>Projekteinheiten ändern</translation>
+        </message>
+        <message>
+            <source>Change drawing presentation</source>
+            <translation>Plandarstellung ändern</translation>
+        </message>
+        <message>
+            <source>Change grid spacing</source>
+            <translation>Rasterabstand ändern</translation>
+        </message>
+        <message>
+            <source>Target distance (ft/in):</source>
+            <translation>Zielabstand (ft/in):</translation>
+        </message>
+        <message>
+            <source>Distance (ft/in)</source>
+            <translation>Abstand (ft/in)</translation>
+        </message>
+        <message>
+            <source>Enter a length within the allowed range, such as 10' 6 1/2" or 10.5 ft.</source>
+            <translation>Eine Länge im zulässigen Bereich eingeben, z. B. 10' 6 1/2" oder 10.5 ft.</translation>
+        </message>
+        <message>
+            <source>Bare numbers mean feet. Use commas between coordinates; fractions such as 10' 6 1/2" are accepted. @ means relative; &lt; introduces a polar angle.</source>
+            <translation>Zahlen ohne Einheit sind Fuß. Koordinaten mit Kommas trennen; Brüche wie 10' 6 1/2" sind erlaubt. @ bedeutet relativ; &lt; leitet einen Polarwinkel ein.</translation>
+        </message>
+        <message>
+            <source>Canvas: {width} × {height}</source>
+            <translation>Zeichenfläche: {width} × {height}</translation>
+        </message>
+        <message>
+            <source>A4 Landscape (11.69 in wide)</source>
+            <translation>A4 quer (11.69 in breit)</translation>
+        </message>
+        <message>
+            <source>A3 Landscape (16.54 in wide)</source>
+            <translation>A3 quer (16.54 in breit)</translation>
+        </message>
+        <message>
+            <source>Letter Landscape (11 in wide)</source>
+            <translation>Letter quer (11 in breit)</translation>
         </message>
     </context>
     <context>

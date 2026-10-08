@@ -1,72 +1,32 @@
-# Review the Creative desktop direction
+# Revised Creative desktop design
 
-**Awaiting visual approval. No new installer is published for this experiment.**
+The navy/ivory/gold direction is approved; this revised layout awaits owner visual review before a new installer. The normal desktop entry point now opens the real Creative workspace over Open Garden Planner's editor. The internal subclass name remains CreativePreviewWindow to avoid an unnecessary package rename.
 
-The two primary previews are captures of running Qt desktop windows:
+These are genuine captures of running Qt widgets and an editable synthetic `.ogp` project. The labeled identity text remains a placeholder; there is no approved company logo. No client data, company photographs or fake templates were added.
 
-1. [Proposed main editor](previews/light/editor.png): actual populated landscape,
-   working tools, library/layers, original property editor and sun simulation.
-2. [Proposed welcome](previews/light/welcome.png): working New/Open/recents, actual
-   file-modification date and a canvas thumbnail injected by the capture runner.
+![Revised landscape editor](creative-preview/revised-light/editor.png)
 
-![Proposed editor](previews/light/editor.png)
+![Revised welcome](creative-preview/revised-light/welcome.png)
 
-![Proposed welcome](previews/light/welcome.png)
+[Before editor](previews/before/editor.png) · [Before welcome](previews/before/welcome.png) · [Sun workspace](creative-preview/revised-light/sun-study.png) · [Imperial properties](creative-preview/revised-light/imperial.png) · [Dark](creative-preview/revised-dark/editor.png) · [960 × 720](creative-preview/revised-small/editor.png)
 
-[Before editor](previews/before/editor.png) · [Before welcome](previews/before/welcome.png) ·
-[Dark editor](previews/dark/editor.png) · [Dark welcome](previews/dark/welcome.png) ·
-[Narrow editor](previews/narrow/editor.png) · [150%](previews/scale150/editor.png) ·
-[200%](previews/scale200/editor.png)
+The before captures record the prior source interface and its old synthetic 24 × 18 m sample. The revised sample is 80 × 60 ft with a 20 × 12 ft patio, curved polygon bed, house, walk, plants and a live dimension; it remains editable. These are source captures, not Windows installer screenshots.
 
-Everything pictured is actual Qt UI or existing rendered plan geometry. The
-identity block is a **labeled text placeholder**; it is not an official logo.
-There are no website mockups, company photos, invented templates or fake controls.
-This is an opt-in design experiment, not the finished production redesign.
+See [validation and unit coverage](CONTINUATION_VALIDATION.md), [original interface audit](UI_AUDIT.md), [design system](../../BRAND_DESIGN_SYSTEM.md) and [asset inventory](../../assets/creative/README.md).
 
-For a nonprogrammer, **review the two images above first**. Approval can be a
-simple “Approve this direction” or a description of the visual changes wanted.
-The brief's execution step 4 requires this approval before broad application
-redesign. A new Windows download follows that stage and its checks; the earlier
-[Windows desktop-foundation download](../WINDOWS_DOWNLOAD.md) still contains the
-existing upstream interface.
+## Trying the source
 
-## Developer source preview
+A developer with the prepared environment can run `.venv/bin/python -m open_garden_planner` (Windows: `.venv\Scripts\python.exe -m open_garden_planner`). `--classic` retains the inherited shell. To open the synthetic review plan in an isolated account, run `.venv/bin/python scripts/creative_design_preview.py`; it preserves subsequently saved sample edits. No new dependency is needed.
 
-From this feature branch, use the already prepared cloud `.venv`, or follow the
-existing Python 3.12 dependency setup with `installer/constraints-desktop.txt`.
-No new dependencies are required. Run from the repository root:
+For the owner, review the images first. A new Windows test installer follows revised visual approval and successful native validation; the [existing test download](../WINDOWS_DOWNLOAD.md) contains the older desktop foundation.
 
-```bash
-.venv/bin/python scripts/creative_design_preview.py
-```
+## Source review checklist
 
-On an already prepared Windows source checkout:
+- Dimensions → Project units selects feet/inches, decimal feet or metric. Bare imperial numbers mean feet; `10' 6 1/2"`, `10.5 ft`, `3/8 in`, and explicit cm/m are accepted. Use commas between typed coordinates.
+- Select a patio, edit its width, then Ctrl+Z / Ctrl+Y. Save As and reopen the `.ogp` project.
+- Use the workspace selector for Landscape, Sun Study or Gardening. Sun controls use the computer's time zone; location is saved, simulation time is runtime-only.
+- View → Focus canvas / Reset workspace, or dock close buttons, changes the drawing area; resizing/closing docks persists.
+- View → Drawing presentation switches existing detailed symbols and original architectural linework; texture strength is independent.
+- Existing File → Export and advanced tools remain available. Scientific gardening units and API/provider data remain canonical; see coverage limits.
 
-```powershell
-.venv\Scripts\python.exe scripts\creative_design_preview.py
-```
-
-The runner initially opens a synthetic landscape and the real welcome proposal.
-Close the welcome to edit. Later launches preserve edits saved to this sample and
-respect the welcome checkbox, saved theme and workspace. It isolates preferences,
-recents and recovery from the normal application and disables its optional agent
-server. Other projects open only when selected through the normal Open controls.
-`--dark` selects dark mode; `--original` opens the unchanged reference interface
-in another isolated account. Normal `python -m open_garden_planner` is unchanged.
-
-Source-review steps verified through Qt interactions/tests:
-
-- Library → search “Round Deciduous” → choose row → click center and rim on the
-  canvas: a real tree appears. Ctrl+Z removes it; Ctrl+Y restores it.
-- Layers tab → rename a layer: both views reflect it, and undo restores its name.
-- Ctrl+Shift+S (Save As) → choose your own file, then Ctrl+O → reopen: the plan
-  remains editable. Ctrl+S updates the current file.
-- View → Focus canvas hides both docks; Reset workspace restores them.
-- F11 → added chrome hides; Escape restores the previous workspace.
-- View → Theme → Dark changes the proposed chrome and keeps the canvas light.
-- Sun row → adjust time/date: the inherited controller changes geometric shade.
-
-Cloud automation does not prove native mouse feel, screen-reader behavior, font
-rendering or packaged GPU use. See [validation](VALIDATION.md),
-[audit](UI_AUDIT.md), [design system](../../BRAND_DESIGN_SYSTEM.md) and
-[asset inventory](../../assets/creative/README.md).
+No merge or production release is authorized.

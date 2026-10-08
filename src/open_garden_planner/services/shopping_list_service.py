@@ -25,6 +25,7 @@ from PyQt6.QtCore import QCoreApplication
 from open_garden_planner.core import container_model as _container_model
 from open_garden_planner.core.measurements import calculate_area_and_perimeter
 from open_garden_planner.core.object_types import ObjectType, is_bed_type, is_container_type
+from open_garden_planner.core.units import CUBIC_YARD_CM3, SQUARE_FOOT_CM2, format_length, units_for
 from open_garden_planner.models.amendment import Amendment
 from open_garden_planner.models.plant_data import species_key
 from open_garden_planner.models.shopping_list import (
@@ -155,7 +156,21 @@ class ShoppingListService:
         items.extend(self._collect_seed_gaps())
         items.extend(self._collect_materials())
         self._apply_saved_prices(items)
+        if units_for(self._scene).imperial:
+            for item in items:
+                factor = self._display_factor(item.id)
+                if factor != 1:
+                    item.quantity *= factor
+                    item.unit = "yd³" if item.id == "soil_fill:m3" else "ft²"
+                    if item.price_each is not None:
+                        item.price_each /= factor
         return items
+
+    def _display_factor(self, item_id: str) -> float:
+        if not units_for(self._scene).imperial:
+            return 1.0
+        return {"soil_fill:m3": 1_000_000 / CUBIC_YARD_CM3,
+                "mulch:m2": 10_000 / SQUARE_FOOT_CM2}.get(item_id, 1.0)
 
     # ── Aggregators ───────────────────────────────────────────────────────────
 
@@ -194,7 +209,8 @@ class ShoppingListService:
             size = ""
             if slot["spreads"]:
                 avg = sum(slot["spreads"]) / len(slot["spreads"])
-                size = _tr("~{avg} cm spread").format(avg=f"{avg:.0f}")
+                size = (format_length(avg, units_for(self._scene)) if units_for(self._scene).imperial
+                        else _tr("~{avg} cm spread").format(avg=f"{avg:.0f}"))
             out.append(
                 ShoppingListItem(
                     id=f"plant:{species_id}",
@@ -364,7 +380,7 @@ class ShoppingListService:
         if price is None:
             prices.pop(item.id, None)
         else:
-            prices[item.id] = float(price)
+            prices[item.id] = float(price) * self._display_factor(item.id)
         self._project_manager.set_shopping_list_prices(prices)
 
     def prune_stale_prices(self) -> None:

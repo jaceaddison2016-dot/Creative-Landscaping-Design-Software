@@ -1,9 +1,8 @@
 """Experimental widgets attached to the real editor, awaiting owner approval."""
 
-from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QDateTime, QLocale, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -47,7 +46,7 @@ def identity(*, compact: bool = False) -> QFrame:
     layout = QVBoxLayout(frame)
     if compact:
         layout.setContentsMargins(14, 7, 14, 7)
-        frame.setFixedWidth(280)
+        frame.setFixedWidth(220)
     else:
         layout.setContentsMargins(20, 15, 20, 15)
     title = QLabel(_tr("Creative Landscape Studio"))
@@ -130,16 +129,16 @@ class CreativeWelcomeDialog(WelcomeDialog):
     """Proposed welcome, reusing the upstream opening/recents signal contract."""
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle(_tr("Creative design preview"))
-        self.setMinimumSize(820, 540)
+        self.setWindowTitle(_tr("Creative Landscape Studio"))
+        self.setMinimumSize(760, 480)
         self.setMaximumSize(1300, 900)
-        self.resize(1080, 660)
+        self.resize(880, 560)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         body = QHBoxLayout()
         body.setSpacing(0)
         rail = identity()
-        rail.setFixedWidth(250)
+        rail.setFixedWidth(220)
         rail.layout().addStretch()
         note = QLabel(_tr("A workspace for landscape planning"))
         note.setWordWrap(True)
@@ -174,10 +173,13 @@ class CreativeWelcomeDialog(WelcomeDialog):
         self._recent_list = QListWidget()
         self._recent_list.setObjectName("CreativeRecents")
         self._recent_list.setAccessibleName(_tr("Recent projects"))
-        self._recent_list.setIconSize(QSize(130, 85))
+        self._recent_list.setIconSize(QSize(104, 64))
         self._recent_list.itemDoubleClicked.connect(self._on_recent_double_clicked)
         self._recent_list.itemSelectionChanged.connect(self._on_selection_changed)
-        layout.addWidget(self._recent_list, 1)
+        self._recent_list.setMinimumHeight(80)
+        self._recent_list.setMaximumHeight(220)
+        layout.addWidget(self._recent_list)
+        layout.addStretch()
         row = QHBoxLayout()
         self._open_selected_btn = QPushButton(_tr("Open selected"))
         self._open_selected_btn.setEnabled(False)
@@ -200,13 +202,19 @@ class CreativeWelcomeDialog(WelcomeDialog):
             row = self._recent_list.item(index)
             if row.data(Qt.ItemDataRole.UserRole) == str(path):
                 row.setIcon(QIcon(pixmap))
-                row.setSizeHint(QSize(400, 112))
+                row.setSizeHint(QSize(360, 82))
 
     def _populate_recent_files(self) -> None:
         super()._populate_recent_files()
         for index, file_path in enumerate(get_settings().recent_files):
             path = Path(file_path)
             if path.is_file():
-                edited = datetime.fromtimestamp(path.stat().st_mtime).strftime("%b %d, %Y")
+                edited = QLocale(get_settings().language).toString(
+                    QDateTime.fromSecsSinceEpoch(int(path.stat().st_mtime)), "MMM d, yyyy")
                 row = self._recent_list.item(index)
                 row.setText(_tr("{name}\nModified {date}").format(name=path.stem, date=edited))
+                from open_garden_planner.ui.project_thumbnails import thumbnail_path
+                cached = thumbnail_path(path)
+                if cached.is_file():
+                    row.setIcon(QIcon(str(cached)))
+                    row.setSizeHint(QSize(360, 82))

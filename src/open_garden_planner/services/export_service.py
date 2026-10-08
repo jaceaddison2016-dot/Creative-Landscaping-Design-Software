@@ -9,6 +9,8 @@ from PyQt6.QtGui import QColor, QFont, QImage, QPainter
 from PyQt6.QtSvg import QSvgGenerator
 from PyQt6.QtWidgets import QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsTextItem
 
+from open_garden_planner.core.units import FOOT_CM, units_for
+
 
 class ExportService:
     """Service for exporting garden plans to PNG and SVG formats."""
@@ -567,17 +569,29 @@ class ExportService:
 
             plant_items.append(item)
 
+        imperial = units_for(scene).imperial
+        headers = [h.removesuffix("_cm") + "_ft" if imperial and h.endswith("_cm") else h
+                   for h in ExportService._get_csv_headers(include_species_data)]
         if not plant_items:
             # Create empty file with header if no plants
             with open(file_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(ExportService._get_csv_headers(include_species_data))
+                writer.writerow(headers)
             return 0
 
         # Extract data from plant items
         rows = []
         for item in plant_items:
             row_data = ExportService._extract_plant_data(item, include_species_data)
+            if imperial:
+                position = item.mapToScene(item.rect().center())
+                row_data["position_x_cm"] = position.x()
+                row_data["position_y_cm"] = position.y()
+                row_data = {
+                    (key.removesuffix("_cm") + "_ft" if key.endswith("_cm") else key):
+                    (float(value) / FOOT_CM if key.endswith("_cm") and value not in (None, "") else value)
+                    for key, value in row_data.items()
+                }
             rows.append(row_data)
 
         # Write to CSV
@@ -585,7 +599,7 @@ class ExportService:
             with open(file_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(
                     f,
-                    fieldnames=ExportService._get_csv_headers(include_species_data),
+                    fieldnames=headers,
                     extrasaction="ignore",
                 )
                 writer.writeheader()
@@ -664,7 +678,8 @@ class ExportService:
             data["type"] = ""
 
         # Get position
-        pos = item.pos()
+        from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+        pos = item.mapToScene(item.rect().center()) if isinstance(item, CircleItem) else item.pos()
         data["position_x_cm"] = round(pos.x(), 2)
         data["position_y_cm"] = round(pos.y(), 2)
 

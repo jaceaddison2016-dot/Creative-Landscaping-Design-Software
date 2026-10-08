@@ -1,5 +1,8 @@
 # Independent review — Creative desktop design preview
 
+> Historical first-preview evidence. The newer continuation changes the default desktop workspace and units. See [current validation](../design/CONTINUATION_VALIDATION.md).
+
+
 Scope: the opt-in redesign experiment above desktop-foundation commit
 439e486414070161d9fea58a6123644e8d0afdc3. The production entry point, installer,
 license notices, file schema and measurement units remain inherited.
@@ -17,9 +20,8 @@ clone. Its verdict required changes. Findings and dispositions:
 | P1: fullscreen leaves enabled sun toolbar/new label visible | Include sun toolbar in saved/hide/restore set; fullscreen restoration assertion. |
 | P1: Windows download document link is broken | Link to existing docs/WINDOWS_DOWNLOAD.md. |
 
-Review P2 follow-ups remain explicit: selected-language formatting of recent-file
-dates and consolidation of global theme restyling. Neither is represented as
-completed; styling performance is also an unresolved full-suite validation issue.
+Historical review P2 follow-ups were: selected-language formatting of recent-file
+dates and consolidation of global theme restyling. The continuation now localizes recent dates with QLocale and consolidates styling; its new independent review and full-suite evidence are recorded separately.
 
 Clean re-review of 439e486..2c255dacdbd84492ff9f9cd6db63dc387096ef89 completed
 from a fresh ordinary clone. All previous P0/P1 findings were resolved, with no
