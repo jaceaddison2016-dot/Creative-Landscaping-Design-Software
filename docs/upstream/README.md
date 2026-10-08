@@ -1,9 +1,13 @@
-![Open Garden Planner Banner](src/open_garden_planner/resources/icons/banner.png)
+> Upstream README from the imported baseline, with relative links adjusted.
+> See [Creative Landscape Studio instructions](../../README.md) for this fork.
+> The byte-exact original is retained in import commit cb188d8.
+
+![Open Garden Planner Banner](../../src/open_garden_planner/resources/icons/banner.png)
 
 # Open Garden Planner
 
 [![Latest Release](https://img.shields.io/github/v/release/cofade/open-garden-planner?label=Latest%20Release)](https://github.com/cofade/open-garden-planner/releases/latest)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](../../LICENSE)
 
 **Precision garden planning for passionate gardeners who value independence and transparency.**
 
@@ -125,7 +129,7 @@ The installer will be created in the `dist\` directory.
 
 ### Plant Database (optional)
 
-To enable online plant search, see the [Plant API Setup Guide](docs/03-context-and-scope/PLANT_API_SETUP.md).
+To enable online plant search, see the [Plant API Setup Guide](../03-context-and-scope/PLANT_API_SETUP.md).
 
 ## Tech Stack
 
@@ -139,7 +143,7 @@ To enable online plant search, see the [Plant API Setup Guide](docs/03-context-a
 **Core 2D, 3D, and visual-refresh phases shipped** — CAD precision tooling and garden
 smart features are complete; the embedded AI Agent Integration's read/export and
 token-gated D1/D2 tool surfaces are live, with D3 domain intelligence next. See the
-[Development Roadmap](docs/roadmap.md) for the authoritative, up-to-date phase/user-story
+[Development Roadmap](../roadmap.md) for the authoritative, up-to-date phase/user-story
 table and current version.
 
 ## Documentation
@@ -148,24 +152,24 @@ Project documentation follows the [arc42](https://arc42.org/) architecture templ
 
 | Document | Description |
 |----------|-------------|
-| [Introduction & Goals](docs/01-introduction-and-goals/) | Product vision, target users |
-| [Functional Requirements](docs/functional-requirements.md) | Detailed requirements specification |
-| [Solution Strategy](docs/04-solution-strategy/) | Technology choices and design decisions |
-| [Building Block View](docs/05-building-block-view/) | Architecture and module structure |
-| [Development Roadmap](docs/roadmap.md) | Phases, user stories, progress tracking |
-| [All Documentation](docs/01-introduction-and-goals/prd.md) | Documentation index |
+| [Introduction & Goals](../01-introduction-and-goals/) | Product vision, target users |
+| [Functional Requirements](../functional-requirements.md) | Detailed requirements specification |
+| [Solution Strategy](../04-solution-strategy/) | Technology choices and design decisions |
+| [Building Block View](../05-building-block-view/) | Architecture and module structure |
+| [Development Roadmap](../roadmap.md) | Phases, user stories, progress tracking |
+| [All Documentation](../01-introduction-and-goals/prd.md) | Documentation index |
 
 ## Community
 
 - **[GitHub Discussions](https://github.com/cofade/open-garden-planner/discussions)** — questions, ideas, feature requests, and general chat
 - **[Issue Tracker](https://github.com/cofade/open-garden-planner/issues)** — bug reports and confirmed tasks; this is the authoritative list of open work
-- **[Roadmap](docs/roadmap.md)** — phases, user stories, and what is planned next
+- **[Roadmap](../roadmap.md)** — phases, user stories, and what is planned next
 
 ## Contributing
 
 We welcome contributions! This project aims to be technically clean and attractive for both users and contributors.
 
-- Read the [Roadmap](docs/roadmap.md) and [Architecture](docs/05-building-block-view/) to understand the vision
+- Read the [Roadmap](../roadmap.md) and [Architecture](../05-building-block-view/) to understand the vision
 - Browse the **[Issue Tracker](https://github.com/cofade/open-garden-planner/issues)** for ready-to-pick work items — anything open and unassigned is fair game
 - Join **[GitHub Discussions](https://github.com/cofade/open-garden-planner/discussions)** if you have questions or ideas before opening a PR
 - PRs must pass CI (tests, linting, security scan); type checking is not yet a CI gate (#401)
@@ -174,7 +178,7 @@ We welcome contributions! This project aims to be technically clean and attracti
 
 ## License
 
-[GPLv3](LICENSE) - Free software, free forever.
+[GPLv3](../../LICENSE) - Free software, free forever.
 
 ---
 

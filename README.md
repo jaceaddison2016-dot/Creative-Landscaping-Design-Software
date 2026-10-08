@@ -1,3 +1,5 @@
+![Open Garden Planner Banner](src/open_garden_planner/resources/icons/banner.png)
+
 # Creative Landscape Studio
 
 A desktop landscape planning prototype based on the actual
@@ -29,7 +31,7 @@ desktop testing.
 - [Validation and remaining checks](VALIDATION.md)
 - [License and asset/data attribution](THIRD_PARTY_NOTICES.md)
 - [Windows rebuild instructions](docs/WINDOWS_BUILD.md)
-- [Original upstream README](docs/upstream/README.md) and [architecture docs](docs/README.md)
+- [Original upstream README](docs/upstream/README.md) and [architecture docs](docs/05-building-block-view/README.md)
 
 The full source remains in `src/open_garden_planner`, with upstream tests and
 resources. The older browser experiment remains in draft PR #1 on its separate
