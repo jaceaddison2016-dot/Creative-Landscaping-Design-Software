@@ -1,0 +1,160 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-garden-planner"
+version = "1.29.5"
+description = "Open-source garden planning tool with CAD-like precision"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.11"
+authors = [
+    {name = "cofade", email = "cofade@users.noreply.github.com"}
+]
+keywords = ["garden", "planner", "CAD", "landscape", "design"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: Editors",
+]
+dependencies = [
+    # 3D view (US-E6/US-E7, ADR-038, issue #277). PyQt6's Qt3D bindings link
+    # against the Qt DLLs bundled by PyQt6-Qt6, so the Qt3D runtime wheel
+    # (PyQt6-3D-Qt6) MUST be the SAME Qt micro — otherwise Qt3DCore fails to
+    # import ("DLL load failed … Die angegebene Prozedur wurde nicht
+    # gefunden") and the lazily-loaded 3D view crashes the whole process.
+    # Pinning PyQt6-3D-Qt6 alone was NOT enough (issue #277): an unpinned
+    # "PyQt6>=6.6.0" let a fresh CI resolve float PyQt6-Qt6 to a newer micro
+    # (6.11.1) next to the 6.11.0 Qt3D wheels. ALL FOUR move together to equal
+    # micros — pin the core Qt runtime too. tests/unit/test_qt3d_version_guard.py
+    # fails CI if these ever drift again.
+    "PyQt6==6.11.0",
+    "PyQt6-Qt6==6.11.0",
+    "PyQt6-WebEngine>=6.10.0,<6.11",
+    "PyQt6-3D==6.11.0",
+    "PyQt6-3D-Qt6==6.11.0",
+    "Pillow>=10.0.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "numpy>=1.24",
+    "pyclipper>=1.3.0",
+    "ezdxf>=0.18",
+    # Agent API (US-D1.1): embedded MCP server over streamable-HTTP.
+    # Pinned to mcp v1 — v2 renames FastMCP -> MCPServer. uvicorn/starlette/
+    # pydantic/anyio/sse-starlette come transitively but are listed where used.
+    # Floor is 1.23, the first release whose FastMCP auto-enables transport
+    # security for loopback hosts (#396). We now pass TransportSecuritySettings
+    # explicitly, but the floor still tracks the SDK behaviour the guard depends
+    # on rather than allowing a wheel where the default is off.
+    "mcp>=1.23,<2.0",
+    "uvicorn>=0.30",
+    "starlette>=0.37",
+    "pydantic>=2.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-qt>=4.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-timeout>=2.3.0",
+    "ruff>=0.1.0",
+    "mypy>=1.8.0",
+    "bandit>=1.7.0",
+]
+
+[project.scripts]
+open-garden-planner = "open_garden_planner.main:main"
+
+[project.gui-scripts]
+open-garden-planner-gui = "open_garden_planner.main:main"
+
+[project.urls]
+Homepage = "https://github.com/cofade/open-garden-planner"
+Repository = "https://github.com/cofade/open-garden-planner"
+Issues = "https://github.com/cofade/open-garden-planner/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["open_garden_planner"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ARG001", "ARG002"]  # pytest fixtures like qtbot are often unused but required
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+follow_imports = "silent"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+qt_api = "pyqt6"
+# Per-test hang guard (pytest-timeout): a stalled full-app test used to freeze the
+# whole battery silently (2026-08-17, Package 3a run stalled 18 min in
+# test_trellis.py). Generous — the slowest legitimate tests build the full app
+# in ~6 s. On Linux/CI the signal method fails just the test; on Windows the
+# thread method dumps every thread's stack and aborts the run — both beat a hang.
+timeout = 180
+
+[tool.coverage.run]
+source = ["src/open_garden_planner"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

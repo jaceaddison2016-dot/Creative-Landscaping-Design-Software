@@ -1,0 +1,1118 @@
+"""Polygon item for the garden canvas."""
+
+import math
+import uuid
+from typing import Any
+
+from PyQt6.QtCore import QCoreApplication, QLineF, QPointF, QRectF, Qt
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+    QTransform,
+)
+from PyQt6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsPolygonItem,
+    QGraphicsSceneContextMenuEvent,
+    QGraphicsSceneMouseEvent,
+    QMenu,
+    QStyleOptionGraphicsItem,
+    QWidget,
+)
+
+from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
+from open_garden_planner.core.object_types import ObjectType, StrokeStyle, get_style, is_bed_type
+
+from .garden_item import GardenItemMixin
+from .resize_handle import ResizeHandlesMixin, RotationHandleMixin, VertexEditMixin
+
+
+def _project_to_polygon_boundary(polygon: QPolygonF, point: QPointF) -> QPointF:
+    """Find the closest point on a polygon's boundary to *point*.
+
+    Iterates over every edge of *polygon*, projects *point* onto it, and
+    returns the nearest result.  Coordinates are in whatever space the
+    polygon vertices use (usually item-local).
+    """
+    best_pt = point
+    best_dist_sq = float("inf")
+    n = polygon.count()
+    for i in range(n):
+        v1 = polygon.at(i)
+        v2 = polygon.at((i + 1) % n)
+        ex = v2.x() - v1.x()
+        ey = v2.y() - v1.y()
+        len_sq = ex * ex + ey * ey
+        if len_sq < 1e-10:
+            proj = QPointF(v1)
+        else:
+            t = ((point.x() - v1.x()) * ex + (point.y() - v1.y()) * ey) / len_sq
+            t = max(0.0, min(1.0, t))
+            proj = QPointF(v1.x() + t * ex, v1.y() + t * ey)
+        dx = proj.x() - point.x()
+        dy = proj.y() - point.y()
+        d2 = dx * dx + dy * dy
+        if d2 < best_dist_sq:
+            best_dist_sq = d2
+            best_pt = proj
+    return best_pt
+
+
+def _split_path_by_line(
+    path: QPainterPath, line: QLineF
+) -> tuple[QPainterPath, QPainterPath]:
+    """Split a QPainterPath into two halves along a line.
+
+    Returns (left_half, right_half) where "left" is the side that the
+    perpendicular points toward negative when walking from line.p1 to p2.
+
+    Args:
+        path: The path to split
+        line: The dividing line (will be extended far beyond the path bounds)
+
+    Returns:
+        Tuple of (left_path, right_path)
+    """
+    bounds = path.boundingRect()
+    ext = max(bounds.width(), bounds.height()) * 10.0 + 1000.0
+
+    dx = line.dx()
+    dy = line.dy()
+    length = math.sqrt(dx * dx + dy * dy)
+    if length < 1e-9:
+        return path, QPainterPath()
+
+    # Unit direction and unit perpendicular
+    ux, uy = dx / length, dy / length
+    px, py = -uy, ux  # left-perpendicular
+
+    # Midpoint of the supplied line segment
+    mid_x = (line.x1() + line.x2()) / 2.0
+    mid_y = (line.y1() + line.y2()) / 2.0
+
+    # Extended ridge endpoints
+    e1 = QPointF(mid_x - ux * ext, mid_y - uy * ext)
+    e2 = QPointF(mid_x + ux * ext, mid_y + uy * ext)
+
+    # Left half-plane polygon (perpendicular direction is "left")
+    left_rect = QPainterPath()
+    left_rect.moveTo(e1)
+    left_rect.lineTo(e2)
+    left_rect.lineTo(QPointF(e2.x() + px * ext, e2.y() + py * ext))
+    left_rect.lineTo(QPointF(e1.x() + px * ext, e1.y() + py * ext))
+    left_rect.closeSubpath()
+
+    # Right half-plane polygon
+    right_rect = QPainterPath()
+    right_rect.moveTo(e1)
+    right_rect.lineTo(e2)
+    right_rect.lineTo(QPointF(e2.x() - px * ext, e2.y() - py * ext))
+    right_rect.lineTo(QPointF(e1.x() - px * ext, e1.y() - py * ext))
+    right_rect.closeSubpath()
+
+    return path.intersected(left_rect), path.intersected(right_rect)
+
+
+def _show_properties_dialog(item: QGraphicsPolygonItem) -> None:
+    """Show properties dialog for an item (imported locally to avoid circular import)."""
+    from open_garden_planner.core.object_types import get_style
+    from open_garden_planner.ui.dialogs import PropertiesDialog
+
+    dialog = PropertiesDialog(item)
+    if dialog.exec():
+        # Apply name change
+        if hasattr(item, 'name'):
+            item.name = dialog.get_name()
+            # Update the label if it exists
+            if hasattr(item, '_update_label'):
+                item._update_label()  # type: ignore[attr-defined]
+
+        # Apply layer change — consolidated onto MoveToLayerCommand (issue
+        # #338); z is derived from the scene's normalized stacking order,
+        # not set directly here.
+        if hasattr(item, 'layer_id'):
+            new_layer_id = dialog.get_layer_id()
+            if new_layer_id is not None and new_layer_id != item.layer_id:
+                from open_garden_planner.core.commands import MoveToLayerCommand
+
+                scene = item.scene()
+                if scene is not None:
+                    target_layer = (
+                        scene.get_layer_by_id(new_layer_id)
+                        if hasattr(scene, 'get_layer_by_id')
+                        else None
+                    )
+                    layer_name = target_layer.name if target_layer else str(new_layer_id)
+                    cmd = MoveToLayerCommand([item], new_layer_id, scene, layer_name)
+                    command_manager = getattr(scene, '_command_manager', None)
+                    if command_manager:
+                        command_manager.execute(cmd)
+                    else:
+                        cmd.execute()
+                else:
+                    item.layer_id = new_layer_id
+
+        # Apply object type change (updates styling)
+        new_object_type = dialog.get_object_type()
+        if new_object_type and hasattr(item, 'object_type'):
+            item.object_type = new_object_type
+            # Update to default styling for new type
+            style = get_style(new_object_type)
+            pen = item.pen()
+            pen.setColor(style.stroke_color)
+            pen.setWidthF(style.stroke_width)
+            pen.setStyle(style.stroke_style.to_qt_pen_style())
+            item.setPen(pen)
+            # Apply pattern brush and store pattern
+            if hasattr(item, 'fill_pattern'):
+                item.fill_pattern = style.fill_pattern
+            brush = create_pattern_brush(style.fill_pattern, style.fill_color)
+            item.setBrush(brush)
+
+        # Apply custom fill color and pattern (overrides type default)
+        fill_color = dialog.get_fill_color()
+        fill_pattern = dialog.get_fill_pattern()
+        # Store the pattern and base color
+        if hasattr(item, 'fill_pattern'):
+            item.fill_pattern = fill_pattern
+        if hasattr(item, 'fill_color'):
+            item.fill_color = fill_color
+        brush = create_pattern_brush(fill_pattern, fill_color)
+        item.setBrush(brush)
+
+        # Apply custom stroke properties (overrides type default)
+        stroke_color = dialog.get_stroke_color()
+        stroke_width = dialog.get_stroke_width()
+        stroke_style = dialog.get_stroke_style()
+        # Store stroke properties
+        if hasattr(item, 'stroke_color'):
+            item.stroke_color = stroke_color
+        if hasattr(item, 'stroke_width'):
+            item.stroke_width = stroke_width
+        if hasattr(item, 'stroke_style'):
+            item.stroke_style = stroke_style
+        pen = item.pen()
+        pen.setColor(stroke_color)
+        pen.setWidthF(stroke_width)
+        pen.setStyle(stroke_style.to_qt_pen_style())
+        item.setPen(pen)
+
+
+def polygon_resize_apply(item: QGraphicsItem, geom: dict[str, Any]) -> None:
+    """Apply a resize geometry dict to a ``PolygonItem`` - the ONE apply path.
+
+    ``ResizeItemCommand`` calls this for ``execute``, ``undo`` **and** ``redo``,
+    so this is the path an undo of a HOUSE resize re-enters, and it must
+    re-derive the linked roof ridge exactly as ``_apply_resize`` does for the
+    live drag. Found by the #364 senior-review round: it did not, which left
+    the polygon restored and the ridge still sized for the *resized* house -
+    measured 300 cm of drift on a 300->600 cm resize, persisted into the
+    ``.ogp`` because the ridge is itself a serialized item.
+
+    Module-level rather than a closure inside ``_on_resize_end`` so a test can
+    drive the production function instead of re-implementing it: a test that
+    copies the apply logic passes while the real one stays broken.
+    ``setPos`` fires ``_move_ridge_by_delta`` first; the recompute below
+    overwrites it wholesale. ``_update_area_label`` is here so this path and
+    ``_apply_resize`` (the live drag) do not disagree: ``setPos`` only fires
+    ``itemChange`` when the position actually changes, so a resize that holds
+    ``pos`` fixed would otherwise leave a stale area label. See ADR-046.
+    """
+    if not isinstance(item, PolygonItem):
+        return
+    vertices = [QPointF(v["x"], v["y"]) for v in geom["vertices"]]
+    item.setPolygon(QPolygonF(vertices))
+    item.setPos(geom["pos_x"], geom["pos_y"])
+    item.update_resize_handles()
+    item._position_label()
+    item._update_area_label()
+    # Derived state: a HOUSE's roof ridge is a function of the polygon, so
+    # every polygon-apply path must re-derive it. Adding a new apply path
+    # without this call silently rots the invariant.
+    item._update_ridge_on_boundary()
+
+
+class PolygonItem(VertexEditMixin, RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGraphicsPolygonItem):
+    """A polygon shape on the garden canvas.
+
+    Supports property object types with appropriate styling.
+    Supports selection, movement, resizing, rotation, and vertex editing.
+    """
+
+    def __init__(
+        self,
+        vertices: list[QPointF],
+        object_type: ObjectType = ObjectType.GENERIC_POLYGON,
+        name: str = "",
+        metadata: dict[str, Any] | None = None,
+        fill_pattern: FillPattern | None = None,
+        stroke_style: StrokeStyle | None = None,
+        layer_id: uuid.UUID | None = None,
+    ) -> None:
+        """Initialize the polygon item.
+
+        Args:
+            vertices: List of vertices defining the polygon
+            object_type: Type of property object
+            name: Optional name/label for the object
+            metadata: Optional metadata dictionary
+            fill_pattern: Fill pattern (defaults to pattern from object type)
+            stroke_style: Stroke style (defaults to style from object type)
+            layer_id: Layer ID this item belongs to (optional)
+        """
+        # Get default pattern and color from object type if not provided
+        style = get_style(object_type)
+        if fill_pattern is None:
+            fill_pattern = style.fill_pattern
+        if stroke_style is None:
+            stroke_style = style.stroke_style
+
+        GardenItemMixin.__init__(
+            self, object_type=object_type, name=name, metadata=metadata,
+            fill_pattern=fill_pattern, fill_color=style.fill_color,
+            stroke_color=style.stroke_color, stroke_width=style.stroke_width,
+            stroke_style=stroke_style, layer_id=layer_id
+        )
+        polygon = QPolygonF(vertices)
+        QGraphicsPolygonItem.__init__(self, polygon)
+
+        # Initialize resize, rotation, and vertex editing handles
+        self.init_resize_handles()
+        self.init_rotation_handle()
+        self.init_vertex_edit()
+        self._resize_initial_polygon: QPolygonF | None = None
+
+        self._setup_styling()
+        self._setup_flags()
+        self.initialize_label()
+
+    def _setup_styling(self) -> None:
+        """Configure visual appearance based on object type."""
+        style = get_style(self.object_type) if self.object_type else get_style(ObjectType.GENERIC_POLYGON)
+
+        # Use stored stroke properties if available, otherwise use style defaults
+        stroke_color = self.stroke_color if self.stroke_color is not None else style.stroke_color
+        stroke_width = self.stroke_width if self.stroke_width is not None else style.stroke_width
+        stroke_style = self.stroke_style if self.stroke_style is not None else style.stroke_style
+
+        pen = QPen(stroke_color)
+        pen.setWidthF(stroke_width)
+        pen.setStyle(stroke_style.to_qt_pen_style())
+        self.setPen(pen)
+
+        # Use stored fill_pattern and color if available, otherwise use style defaults
+        pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
+        color = self.fill_color if self.fill_color is not None else style.fill_color
+        brush = create_pattern_brush(pattern, color)
+        self.setBrush(brush)
+
+    def _setup_flags(self) -> None:
+        """Configure item interaction flags."""
+        self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsFocusable, True)
+
+    def boundingRect(self) -> QRectF:
+        """Return bounding rect, expanded for shadow."""
+        base = super().boundingRect()
+        m = self._shadow_margin()
+        if m > 0:
+            base = base.adjusted(-m, -m, m, m)
+        return base
+
+    def _find_ridge(self) -> "QGraphicsItem | None":
+        """Look up the associated roof ridge item in the scene by metadata ID."""
+        rid = self.get_metadata("ridge_item_id")
+        if not rid:
+            return None
+        scene = self.scene()
+        if scene is None:
+            return None
+        for item in scene.items():
+            if hasattr(item, "item_id") and str(item.item_id) == rid:
+                return item
+        return None
+
+    def _update_ridge_on_boundary(self) -> None:
+        """Recompute the linked roof ridge from the current polygon (issue #364).
+
+        Called after a vertex edit, resize, or rotation. The ridge is
+        **derived** geometry, so it is recomputed here through
+        :func:`~open_garden_planner.core.roof_ridge.compute_roof_ridge_endpoints`
+        — the one canonical computation shared with creation — rather than
+        adjusted from wherever it currently sits.
+
+        Two properties follow from recomputing instead of projecting, and both
+        were defects before (see ADR-046 and §11.4):
+
+        * **It is self-healing and undo-safe.** An earlier version re-projected
+          the ridge's *existing* endpoints onto the boundary, which is a
+          membrane: once an endpoint landed on the wrong edge it had no way
+          back to canonical, and because the write bypassed the command system
+          an undo that restored the polygon left the ridge behind. Drift
+          accumulated over repeated edit/undo cycles. Deriving the ridge purely
+          from the polygon means restoring the polygon *is* restoring the
+          ridge, with no extra undo bookkeeping.
+        * **It is rotation- and scale-correct.** The canonical endpoints are
+          computed in the polygon's LOCAL frame and mapped through this item's
+          full transform, so a rotated house gets a ridge along its rotated
+          long axis. The projection path kept the old orientation, so a house
+          rotated 90 degrees kept a ridge at 0 degrees — 180 cm off — and
+          ``_paint_with_ridge`` mirrors the roof texture along this line, so
+          the roof itself was wrong too.
+
+        A ridge endpoint dragged by hand (see ``PolylineItem._move_vertex_to``,
+        which still constrains it to this outline) is therefore *not* sticky: the
+        next polygon edit returns it to canonical. That is the recorded
+        decision — the ridge and the roof texture derived from it must agree.
+        """
+        from open_garden_planner.core.roof_ridge import compute_roof_ridge_endpoints
+        from open_garden_planner.ui.canvas.items import PolylineItem
+
+        ridge = self._find_ridge()
+        if ridge is None or not isinstance(ridge, PolylineItem):
+            return
+
+        poly = self.polygon()
+        if poly.count() < 3:
+            return
+
+        # Compute in the LOCAL frame (pos is the origin), then map through this
+        # item's full transform — including rotation and scale.
+        local_1, local_2 = compute_roof_ridge_endpoints(poly, QPointF(0.0, 0.0))
+        new_pts = [
+            ridge.mapFromScene(self.mapToScene(local_1)),
+            ridge.mapFromScene(self.mapToScene(local_2)),
+        ]
+
+        ridge._points = new_pts
+        ridge._rebuild_path()
+        # `ridge` is already known to be a PolylineItem, so these attributes
+        # exist; the old hasattr/getattr guards were dead and are dropped.
+        if ridge.is_vertex_edit_mode:
+            ridge._update_vertex_handles()
+        ridge._position_label()
+
+    def _paint_with_ridge(self, painter: QPainter, ridge: "QGraphicsItem") -> None:
+        """Paint HOUSE polygon with tile texture mirrored on each side of the ridge."""
+        # Get ridge endpoints in item-local coordinates of THIS polygon.
+        #
+        # Since #364 the ridge's points are SCENE coordinates, not ridge-item
+        # locals: `_update_ridge_on_boundary` computes them in the polygon's
+        # local frame and maps them out with `mapToScene`. So scene -> local is
+        # `ridge.mapToScene` then `self.mapFromScene`. Do not add a second
+        # `house.mapToScene` on top — that rotates the axis twice and is
+        # precisely the bug that made the #372 test sample off-axis (§11.4).
+        pts = ridge.points
+        if len(pts) < 2:
+            return
+        p1 = self.mapFromScene(ridge.mapToScene(pts[0]))
+        p2 = self.mapFromScene(ridge.mapToScene(pts[-1]))
+
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.sqrt(dx * dx + dy * dy)
+        if length < 1e-9:
+            return
+        mid_x = (p1.x() + p2.x()) / 2.0
+        mid_y = (p1.y() + p2.y()) / 2.0
+        angle_deg = math.degrees(math.atan2(dy, dx))
+
+        # Build polygon QPainterPath
+        poly = self.polygon()
+        poly_path = QPainterPath()
+        if poly.count() > 0:
+            poly_path.moveTo(poly.at(0))
+            for i in range(1, poly.count()):
+                poly_path.lineTo(poly.at(i))
+            poly_path.closeSubpath()
+
+        # Build half-plane clipping paths along the ridge line
+        left_path, right_path = _split_path_by_line(poly_path, QLineF(p1, p2))
+
+        brush = self.brush()
+
+        # Rotate the tile texture to the ridge, tiling origin at the midpoint.
+        # QBrush.setTransform(T) means: a local point (x,y) samples the texture
+        # at T^-1.(x,y). Because the sampling is the inverse, the texture's own
+        # +Y (its down-slope, see the assignment note below) lands in the world
+        # at R(angle).(0,1) = the ridge's left-perpendicular.
+        normal_tx = QTransform()
+        normal_tx.translate(mid_x, mid_y)
+        normal_tx.rotate(angle_deg)
+        normal_brush = QBrush(brush)
+        normal_brush.setTransform(normal_tx)
+
+        # Mirrored brush: reflects the down-slope across the ridge, for the
+        # half that faces the other way (issue #372).
+        mirrored_tx = QTransform()
+        mirrored_tx.translate(mid_x, mid_y)
+        mirrored_tx.rotate(angle_deg)
+        mirrored_tx.scale(1.0, -1.0)
+        mirrored_brush = QBrush(brush)
+        mirrored_brush.setTransform(mirrored_tx)
+
+        # Bounding rect for fill (clip handles actual shape)
+        bounds = poly_path.boundingRect()
+        ext = max(bounds.width(), bounds.height()) + 100.0
+        fill_rect = QRectF(
+            bounds.center().x() - ext,
+            bounds.center().y() - ext,
+            ext * 2.0,
+            ext * 2.0,
+        )
+
+        # Paint the two halves of the roof (issue #372).
+        #
+        # The assignment is gravity-relative, and it used to be name-relative.
+        # ``_split_path_by_line`` names its halves by the left-perpendicular
+        # ``n = (-uy, ux)``, which follows the ridge's *direction* and has
+        # nothing to do with which side is downhill -- for a +X ridge
+        # ``left_path`` is the LOWER half, for a +Y ridge it is the LEFT half.
+        #
+        # Meanwhile the roof-tile texture has a fixed, non-negotiable
+        # direction: each tile's rounded free edge points +Y and laps the tile
+        # below it, so +Y is down-slope. Measured from the texture, a dark
+        # lapse line sits near y=10 with the light free edge beneath.
+        #
+        # The arithmetic that decides the assignment: ``normal_tx`` is
+        # ``translate(mid) . rotate(angle)`` and a QBrush transform samples the
+        # texture at ``T^-1 . p``, so the texture's +Y lands in the world at
+        # ``R(angle).(0,1) = (-sin a, cos a)`` -- exactly ``n``. So
+        # ``left_path`` is the half the texture's true down-slope points into,
+        # and it is the half that must keep the NORMAL brush. The previous
+        # code handed it the mirrored one, so its tiles lapped back up toward
+        # the ridge: water would run uphill under the laps.
+        #
+        # Note this is NOT a one-sided defect. The two clip halves are mirror
+        # images across the ridge, so they read the same outward sequence and
+        # the inversion appeared on BOTH halves (``BRRBRR`` either way) rather
+        # than on one. It was wrong at EVERY ridge angle -- measured identical
+        # across all 24 fifteen-degree steps from 0 to 345 -- which is why
+        # horizontal and vertical houses were both affected.
+        #
+        # This depends on the ridge's point ORDER only through the *along-ridge*
+        # axis, and it does NOT change the lap direction. Reversing the two
+        # points flips the texture coordinate u while leaving v alone, i.e. it
+        # mirrors the tile pattern along the ridge: measured with a probe
+        # symmetric in x, reversal changes 0.00% of the painted pixels, while a
+        # probe asymmetric in x changes 44-93%. So a reversed ridge is a
+        # cosmetic along-ridge mirror, not the laps defect this fix is about.
+        #
+        # The order is nevertheless canonical, and every production writer
+        # emits it: `compute_roof_ridge_endpoints` orders its two crossings by
+        # the line parameter (verified: 0 inversions across 36 shape variants),
+        # and both callers -- creation and `_update_ridge_on_boundary` -- keep
+        # that order. A hand drag of a ridge endpoint can reorder them, but it
+        # is not sticky: the next polygon edit recomputes them canonically.
+        #
+        # The two-sided clip + oversized drawRect shape is load-bearing and
+        # must not be flattened: Qt does not serialize the painter clip into
+        # SVG, and ``ExportService._fix_svg_qt_texture_clipping`` pairs each
+        # shadow group with the next texture group 1:1 (§11.4).
+        #
+        # Pinned by tests/unit/test_roof_tile_orientation.py over eight
+        # house/rotation cases spanning landscape, portrait and square; 8 of its
+        # 11 cases fail against the previous brush assignment.
+        painter.save()
+        painter.setClipPath(left_path)
+        painter.setBrush(normal_brush)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(fill_rect)
+        painter.restore()
+
+        painter.save()
+        painter.setClipPath(right_path)
+        painter.setBrush(mirrored_brush)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(fill_rect)
+        painter.restore()
+
+        # Draw outline on top
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(self.pen())
+        painter.drawPath(poly_path)
+
+    def _draw_grid_overlay(self, painter: QPainter) -> None:
+        """Draw a square-foot grid overlay clipped to the polygon boundary."""
+        spacing = self._grid_spacing
+        if spacing <= 0:
+            return
+        poly = self.polygon()
+        if poly.isEmpty():
+            return
+
+        # Build clip path from polygon
+        clip_path = QPainterPath()
+        clip_path.addPolygon(poly)
+        clip_path.closeSubpath()
+
+        painter.save()
+        painter.setClipPath(clip_path, Qt.ClipOperation.IntersectClip)
+
+        pen = QPen(QColor(255, 255, 255, 120))
+        pen.setCosmetic(True)
+        pen.setWidthF(1.0)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        br = poly.boundingRect()
+        # Align grid lines to spacing multiples for consistent appearance
+        x0 = math.floor(br.left() / spacing) * spacing
+        y0 = math.floor(br.top() / spacing) * spacing
+
+        # Vertical lines
+        x = x0
+        while x <= br.right():
+            painter.drawLine(QPointF(x, br.top()), QPointF(x, br.bottom()))
+            x += spacing
+
+        # Horizontal lines
+        y = y0
+        while y <= br.bottom():
+            painter.drawLine(QPointF(br.left(), y), QPointF(br.right(), y))
+            y += spacing
+
+        painter.restore()
+
+    def grid_cell_count(self) -> int:
+        """Return the approximate number of grid cells inside the polygon."""
+        poly = self.polygon()
+        if poly.isEmpty() or self._grid_spacing <= 0:
+            return 0
+        # Shoelace formula for polygon area
+        n = poly.count()
+        area = 0.0
+        for i in range(n):
+            p1 = poly.at(i)
+            p2 = poly.at((i + 1) % n)
+            area += p1.x() * p2.y() - p2.x() * p1.y()
+        area = abs(area) / 2.0
+        cell_area = self._grid_spacing ** 2
+        return int(area / cell_area)
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,
+    ) -> None:
+        """Paint the polygon with an optional painted shadow."""
+        if self._shadows_enabled:
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.SHADOW_COLOR)
+            shadow_poly = self.polygon().translated(
+                self.SHADOW_OFFSET_X, self.SHADOW_OFFSET_Y,
+            )
+            painter.drawPolygon(shadow_poly)
+            painter.restore()
+
+        # For HOUSE polygons with a ridge: use mirrored tile rendering
+        ridge = self._find_ridge()
+        if ridge is not None and self.object_type == ObjectType.HOUSE:
+            self._paint_with_ridge(painter, ridge)
+        else:
+            super().paint(painter, option, widget)
+
+        # Draw square-foot grid overlay inside bed
+        if self._grid_enabled and is_bed_type(self.object_type):
+            self._draw_grid_overlay(painter)
+
+        # Draw crop rotation status indicator (colored inner border on beds)
+        if self._rotation_status is not None:
+            _rotation_colors = {
+                "good": QColor(46, 125, 50, 160),
+                "suboptimal": QColor(245, 127, 23, 160),
+                "violation": QColor(198, 40, 40, 160),
+            }
+            indicator_color = _rotation_colors.get(self._rotation_status)
+            if indicator_color is not None:
+                indicator_pen = QPen(indicator_color)
+                indicator_pen.setWidthF(4.0)
+                painter.setPen(indicator_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPolygon(self.polygon())
+
+        # Draw soil mismatch border outside rotation border (US-12.10d)
+        if is_bed_type(self.object_type):
+            self._draw_soil_mismatch_border(painter)
+
+    def itemChange(
+        self,
+        change: QGraphicsItem.GraphicsItemChange,
+        value: Any,
+    ) -> Any:
+        """Handle item state changes.
+
+        Shows/hides resize and rotation handles based on selection state.
+        Exits vertex edit mode when deselected.
+        Updates annotations when position changes.
+        Moves the attached ridge when the polygon moves.
+        """
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
+            if value:  # Being selected
+                # Only show resize/rotation handles if not in vertex edit mode
+                if not self.is_vertex_edit_mode:
+                    self.show_resize_handles()
+                    self.show_rotation_handle()
+            else:  # Being deselected
+                # Exit vertex edit mode when deselected
+                if self.is_vertex_edit_mode:
+                    self.exit_vertex_edit_mode()
+                self.hide_resize_handles()
+                self.hide_rotation_handle()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            # Record old pos BEFORE it changes so we can compute the delta
+            self._pre_move_pos = QPointF(self.pos())
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            if self.is_vertex_edit_mode:
+                self._update_annotations()
+            # Move attached ridge by the same delta
+            self._move_ridge_by_delta()
+            self._update_area_label()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemSceneChange and value is None:
+            self.remove_rotation_handle()
+
+        return super().itemChange(change, value)
+
+    def _compute_area_cm2(self) -> float | None:
+        poly = self.polygon()
+        n = poly.count()
+        if n < 3:
+            return None
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += poly.at(i).x() * poly.at(j).y()
+            area -= poly.at(j).x() * poly.at(i).y()
+        return abs(area) / 2.0
+
+    def _move_ridge_by_delta(self) -> None:
+        """Translate the attached ridge by the same delta as this polygon moved."""
+        old_pos = getattr(self, "_pre_move_pos", None)
+        if old_pos is None:
+            return
+        new_pos = self.pos()
+        dx = new_pos.x() - old_pos.x()
+        dy = new_pos.y() - old_pos.y()
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            return
+
+        ridge = self._find_ridge()
+        if ridge is None:
+            return
+
+        from open_garden_planner.ui.canvas.items import PolylineItem
+
+        if not isinstance(ridge, PolylineItem):
+            return
+
+        # Shift every ridge point by the same delta (both are scene-space items)
+        new_pts = [QPointF(pt.x() + dx, pt.y() + dy) for pt in ridge._points]
+        ridge._points = new_pts
+        ridge._rebuild_path()
+        if hasattr(ridge, "_update_vertex_handles") and ridge.is_vertex_edit_mode:
+            ridge._update_vertex_handles()
+        if hasattr(ridge, "_position_label"):
+            ridge._position_label()
+
+    def _move_vertex_to(self, index: int, pos: QPointF) -> None:
+        """Move a polygon vertex and keep the attached ridge on the boundary."""
+        super()._move_vertex_to(index, pos)
+        # Re-project ridge endpoints when the polygon shape changes
+        self._update_ridge_on_boundary()
+
+    def _after_vertex_topology_change(self) -> None:
+        """Keep a HOUSE's linked roof ridge attached after add/delete/undo."""
+        self._update_ridge_on_boundary()
+
+    def _apply_rotation(self, angle: float) -> None:
+        """Apply rotation and keep the attached ridge on the boundary."""
+        super()._apply_rotation(angle)
+        self._update_ridge_on_boundary()
+
+    def _on_resize_start(self) -> None:
+        """Called when a resize operation starts. Store initial polygon."""
+        super()._on_resize_start()
+        self._resize_initial_polygon = QPolygonF(self.polygon())
+
+    def _apply_resize(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        pos_x: float,
+        pos_y: float,
+    ) -> None:
+        """Apply a resize transformation to this polygon.
+
+        Scales polygon vertices proportionally based on bounding box change.
+
+        Args:
+            x: New x position of rect (in item coords)
+            y: New y position of rect (in item coords)
+            width: New width
+            height: New height
+            pos_x: New scene x position
+            pos_y: New scene y position
+        """
+        # Get current polygon and bounding rect
+        current_poly = self.polygon()
+        old_rect = current_poly.boundingRect()
+
+        # Calculate scale factors
+        scale_x = width / old_rect.width() if old_rect.width() > 0 else 1.0
+        scale_y = height / old_rect.height() if old_rect.height() > 0 else 1.0
+
+        # Scale each vertex relative to the bounding rect's top-left
+        new_vertices = []
+        for i in range(current_poly.count()):
+            old_point = current_poly.at(i)
+            # Calculate relative position within bounding rect
+            rel_x = old_point.x() - old_rect.x()
+            rel_y = old_point.y() - old_rect.y()
+            # Scale and reposition
+            new_x = x + rel_x * scale_x
+            new_y = y + rel_y * scale_y
+            new_vertices.append(QPointF(new_x, new_y))
+
+        # Update polygon
+        self.setPolygon(QPolygonF(new_vertices))
+
+        # Update position
+        self.setPos(pos_x, pos_y)
+
+        # Update resize handles
+        self.update_resize_handles()
+
+        # Update label position
+        self._position_label()
+        self._update_area_label()
+
+        # Keep ridge endpoints on the polygon boundary
+        self._update_ridge_on_boundary()
+
+    def _on_resize_end(
+        self,
+        initial_rect: QRectF | None,
+        initial_pos: QPointF | None,
+    ) -> None:
+        """Called when resize operation completes. Registers undo command."""
+        if initial_rect is None or initial_pos is None or self._resize_initial_polygon is None:
+            return
+
+        scene = self.scene()
+        if scene is None or not hasattr(scene, 'get_command_manager'):
+            return
+
+        command_manager = scene.get_command_manager()
+        if command_manager is None:
+            return
+
+        # Get current geometry
+        current_pos = self.pos()
+        current_poly = self.polygon()
+
+        # Only register command if geometry actually changed
+        if (self._resize_initial_polygon == current_poly and initial_pos == current_pos):
+            self._resize_initial_polygon = None
+            return
+
+        from open_garden_planner.core.commands import ResizeItemCommand
+
+        # The module-level apply path, shared with the tests so they drive the
+        # production function rather than a copy of it.
+        apply_geometry = polygon_resize_apply
+
+        # Convert polygon vertices to serializable format
+        def polygon_to_vertices(poly: QPolygonF) -> list[dict[str, float]]:
+            return [{'x': poly.at(i).x(), 'y': poly.at(i).y()} for i in range(poly.count())]
+
+        old_geometry = {
+            'vertices': polygon_to_vertices(self._resize_initial_polygon),
+            'pos_x': initial_pos.x(),
+            'pos_y': initial_pos.y(),
+        }
+
+        new_geometry = {
+            'vertices': polygon_to_vertices(current_poly),
+            'pos_x': current_pos.x(),
+            'pos_y': current_pos.y(),
+        }
+
+        command = ResizeItemCommand(
+            self,
+            old_geometry,
+            new_geometry,
+            apply_geometry,
+        )
+
+        # Add to undo stack without executing (geometry already applied)
+        command_manager.register_applied(command)
+
+        # Clear stored initial polygon
+        self._resize_initial_polygon = None
+
+    def _on_rotation_end(self, initial_angle: float) -> None:
+        """Called when rotation operation completes. Registers undo command."""
+        scene = self.scene()
+        if scene is None or not hasattr(scene, 'get_command_manager'):
+            return
+
+        command_manager = scene.get_command_manager()
+        if command_manager is None:
+            return
+
+        # Get current angle
+        current_angle = self.rotation_angle
+
+        # Only register command if angle actually changed
+        if abs(initial_angle - current_angle) < 0.01:
+            return
+
+        from open_garden_planner.core.commands import RotateItemCommand
+
+        # US-D2.2: the canonical rotate apply path (ui.canvas.geometry_apply),
+        # shared with the Agent API's rotate_object. Every item class had an
+        # identical private copy of this one-liner; a shared name means the
+        # agent and the drag handles provably rotate the same way.
+        from open_garden_planner.ui.canvas.geometry_apply import apply_rotation
+
+        command = RotateItemCommand(
+            self,
+            initial_angle,
+            current_angle,
+            apply_rotation,
+        )
+
+        # Add to undo stack without executing (rotation already applied)
+        command_manager.register_applied(command)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        """Handle double-click to enter vertex edit mode and start label edit."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            if not self.is_vertex_edit_mode:
+                # Exit vertex edit mode on any other item first
+                for item in self.scene().items():
+                    if item is not self and hasattr(item, 'is_vertex_edit_mode') and item.is_vertex_edit_mode:
+                        item.exit_vertex_edit_mode()
+                self.enter_vertex_edit_mode()
+            self.start_label_edit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle key presses - Escape exits vertex edit mode."""
+        if event.key() == Qt.Key.Key_Escape and self.is_vertex_edit_mode:
+            self.exit_vertex_edit_mode()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        """Show context menu on right-click."""
+        # Select this item if not already selected
+        if not self.isSelected():
+            self.scene().clearSelection()
+            self.setSelected(True)
+
+        _ = QCoreApplication.translate
+        menu = QMenu()
+
+        # Edit vertices action
+        if self.is_vertex_edit_mode:
+            exit_edit_action = menu.addAction(_("PolygonItem", "Exit Vertex Edit Mode"))
+            edit_vertices_action = None
+        else:
+            edit_vertices_action = menu.addAction(_("PolygonItem", "Edit Vertices"))
+            exit_edit_action = None
+
+        # Edit label action
+        edit_label_action = menu.addAction(_("PolygonItem", "Edit Label"))
+
+        # Bed-specific actions (grid toggle, soil test, pest log, succession)
+        # are built centrally on GardenItemMixin — see ADR-017 / §8.12.
+        from open_garden_planner.core.object_types import is_plant_parent_type
+        from open_garden_planner.ui.canvas.items.garden_item import BedMenuActions
+        bed_actions = BedMenuActions()
+        if is_plant_parent_type(self.object_type):
+            soil = is_bed_type(self.object_type)
+            bed_actions = self.build_bed_context_menu(
+                menu,
+                grid_enabled=self._grid_enabled,
+                supports_grid=soil,
+                supports_soil=soil,
+            )
+
+        menu.addSeparator()
+
+        # Move to Layer submenu (hidden when project has only one layer)
+        move_layer_menu = self._build_move_to_layer_menu(menu)
+
+        # Arrange submenu (Bring to Front / Forward / Send Backward / Back)
+        arrange_menu = self._build_arrange_menu(menu)
+
+        # Change Type submenu
+        from open_garden_planner.core.object_types import get_valid_types_for_shape
+        change_type_menu = self._build_change_type_menu(menu, get_valid_types_for_shape("polygon"))
+
+        # Show Area toggle
+        show_area_action = menu.addAction(_("PolygonItem", "Show Area"))
+        show_area_action.setCheckable(True)
+        show_area_action.setChecked(self._area_label_visible)
+
+        menu.addSeparator()
+
+        # Delete action
+        delete_action = menu.addAction(_("PolygonItem", "Delete"))
+
+        menu.addSeparator()
+
+        # Duplicate action
+        duplicate_action = menu.addAction(_("PolygonItem", "Duplicate"))
+
+        # Linear array action
+        linear_array_action = menu.addAction(_("PolygonItem", "Create Linear Array..."))
+
+        # Grid array action
+        grid_array_action = menu.addAction(_("PolygonItem", "Create Grid Array..."))
+
+        # Circular array action
+        circular_array_action = menu.addAction(_("PolygonItem", "Create Circular Array..."))
+
+        # Boolean operations (requires exactly 2 selected closed shapes)
+        boolean_union_action = None
+        boolean_intersect_action = None
+        boolean_subtract_action = None
+        array_along_path_action = None
+        selected = self.scene().selectedItems()
+        if len(selected) == 2:
+            from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+            from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+            from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+
+            shape_types = (PolygonItem, RectangleItem, CircleItem)
+            if all(isinstance(s, shape_types) for s in selected):
+                menu.addSeparator()
+                bool_menu = menu.addMenu(_("PolygonItem", "Boolean"))
+                boolean_union_action = bool_menu.addAction(_("PolygonItem", "Union"))
+                boolean_intersect_action = bool_menu.addAction(_("PolygonItem", "Intersect"))
+                boolean_subtract_action = bool_menu.addAction(_("PolygonItem", "Subtract"))
+            if any(isinstance(s, PolylineItem) for s in selected):
+                array_along_path_action = menu.addAction(
+                    _("PolygonItem", "Array Along Path...")
+                )
+
+        # Execute menu and handle result
+        action = menu.exec(event.screenPos())
+
+        # Dispatch bed-specific actions via the shared mixin handler.
+        if self.dispatch_bed_action(action, bed_actions):
+            return
+
+        if action == edit_vertices_action and edit_vertices_action is not None:
+            # Enter vertex edit mode and switch to Select tool
+            self.enter_vertex_edit_mode()
+            self.setFocus()
+            scene = self.scene()
+            if scene:
+                for v in scene.views():
+                    if hasattr(v, "_tool_manager"):
+                        from open_garden_planner.core.tools import ToolType
+                        v._tool_manager.set_active_tool(ToolType.SELECT)
+                        break
+        elif action == exit_edit_action and exit_edit_action is not None:
+            # Exit vertex edit mode
+            self.exit_vertex_edit_mode()
+        elif action == edit_label_action:
+            # Edit the label
+            self.start_label_edit()
+        elif action == show_area_action:
+            self.area_label_visible = not self._area_label_visible
+        elif action == delete_action:
+            # Delete this item and any other selected items
+            scene = self.scene()
+            for item in scene.selectedItems():
+                scene.removeItem(item)
+        elif action == duplicate_action:
+            # Duplicate via canvas view
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "duplicate_selected"):
+                        view.duplicate_selected()
+        elif action == linear_array_action:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "create_linear_array"):
+                        view.create_linear_array()
+        elif action == grid_array_action:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "create_grid_array"):
+                        view.create_grid_array()
+        elif action == circular_array_action:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "create_circular_array"):
+                        view.create_circular_array()
+        elif action is not None and action in (
+            boolean_union_action, boolean_intersect_action, boolean_subtract_action
+        ):
+            op_map = {
+                boolean_union_action: "union",
+                boolean_intersect_action: "intersect",
+                boolean_subtract_action: "subtract",
+            }
+            scene = self.scene()
+            if scene:
+                for v in scene.views():
+                    if hasattr(v, "boolean_operation"):
+                        v.boolean_operation(op_map[action])
+                        break
+        elif action == array_along_path_action and array_along_path_action is not None:
+            scene = self.scene()
+            if scene:
+                for v in scene.views():
+                    if hasattr(v, "create_array_along_path"):
+                        v.create_array_along_path()
+                        break
+        elif move_layer_menu and action and action.parent() is move_layer_menu:
+            self._dispatch_move_to_layer(action.data())
+        elif arrange_menu and action and action.parent() is arrange_menu:
+            self._dispatch_arrange(action.data())
+        elif change_type_menu and action and action.parent() is change_type_menu:
+            self._dispatch_change_type(action.data())
+
+    @classmethod
+    def from_polygon(cls, polygon: QPolygonF) -> "PolygonItem":
+        """Create a PolygonItem from a QPolygonF.
+
+        Args:
+            polygon: The polygon geometry
+
+        Returns:
+            A new PolygonItem
+        """
+        vertices = [polygon.at(i) for i in range(polygon.count())]
+        return cls(vertices)

@@ -1,0 +1,336 @@
+"""Unit tests for the Agent API write-tool bearer-token gate (US-D2.0).
+
+These exercise the pure gate logic without a running server:
+  - ``_require_write_auth`` accepts the exact token, rejects wrong/missing.
+  - ``_bearer_token_middleware`` extracts the token from either the
+    ``Authorization: Bearer`` header or the ``?token=`` query param into the
+    ContextVar (the URL query token wins when both are present).
+  - the write tools are registered only when writes are enabled AND a token
+    is configured (the ADR-033/ADR-036 gate).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+
+from open_garden_planner.agent_api.providers import AgentProviders
+from open_garden_planner.agent_api.server import (
+    WriteAuthError,
+    _bearer_token_middleware,
+    _presented_token,
+    _require_write_auth,
+    build_server,
+)
+from tests.integration.agent_task_soil_stubs import TASK_SOIL_STUBS
+
+
+def _stub_providers() -> AgentProviders:
+    def _boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise AssertionError("provider must not run in an auth-only test")
+
+    return AgentProviders(
+        snapshot=lambda: {},
+        diagnostics=lambda: [],
+        render=lambda *_a: {},
+        save_plan=lambda _p: {},
+        new_plan=_boom,
+        open_plan=_boom,
+        export_pdf=lambda *_a: {},
+        export_dxf=lambda _p: {},
+        export_csv=lambda *_a: {},
+        create_object=_boom,
+        get_geometry=_boom,
+        get_succession_plan=_boom,
+        find_succession_gaps=_boom,
+        suggest_succession=_boom,
+        set_succession_plan=_boom,
+        move_object=_boom,
+        set_object_position=_boom,
+        delete_object=_boom,
+        resize_object=_boom,
+        rotate_object=_boom,
+        set_vertex=_boom,
+        add_vertex=_boom,
+        delete_vertex=_boom,
+        set_species=_boom,
+        set_parent_bed=_boom,
+        arrange_object=_boom,
+        set_object_layer=_boom,
+        create_layer=_boom,
+        rename_layer=_boom,
+        delete_layer=_boom,
+        set_active_layer=_boom,
+        set_layer_property=_boom,
+        undo=_boom,
+        redo=_boom,
+        **TASK_SOIL_STUBS,
+        get_history=_boom,
+        suggest_companions=_boom,
+        find_compatible_sets=_boom,
+        find_sets_for_bed=_boom,
+        check_placement=_boom,
+    )
+
+
+def _tool_names(mcp: Any) -> list[str]:
+    return [t.name for t in asyncio.run(mcp.list_tools())]
+
+
+def test_require_write_auth_accepts_exact_token() -> None:
+    _presented_token.set("s3cret")
+    _require_write_auth("s3cret")  # no raise
+
+
+@pytest.mark.parametrize("presented", [None, "", "wrong", "s3cre", "s3crett"])
+def test_require_write_auth_rejects_bad_token(presented: str | None) -> None:
+    _presented_token.set(presented)
+    with pytest.raises(WriteAuthError):
+        _require_write_auth("s3cret")
+
+
+def test_require_write_auth_rejects_non_ascii_without_raising_typeerror() -> None:
+    """secrets.compare_digest raises TypeError on non-ASCII str input; a
+    malformed/hostile Authorization header must fail closed as a normal
+    WriteAuthError, never propagate an unhandled exception."""
+    _presented_token.set("café")
+    with pytest.raises(WriteAuthError):
+        _require_write_auth("s3cret")
+
+
+def test_require_write_auth_rejects_when_no_token_configured() -> None:
+    # Even a present header can't authorise if the server has no token.
+    _presented_token.set("anything")
+    with pytest.raises(WriteAuthError):
+        _require_write_auth(None)
+
+
+#: Every scene-mutating tool, which must ALL sit behind the ADR-036 double gate.
+#: Named explicitly rather than derived, so adding a write tool without adding
+#: it here fails ``test_gate_covers_every_write_tool`` below — the guard exists
+#: because the original tests only named move_object/delete_object, so a new
+#: write tool registered outside the gate would have gone unnoticed.
+WRITE_TOOL_NAMES = frozenset(
+    {
+        "create_object",
+        "move_object",
+        "set_object_position",
+        "delete_object",
+        "resize_object",
+        "rotate_object",
+        "set_vertex",
+        "add_vertex",
+        "delete_vertex",
+        "set_species",
+        "set_parent_bed",
+        "arrange_object",
+        # US-D3.3 / US-D3.4: manual-task writes and the soil-test write. The
+        # manual-task writes mutate ProjectManager.manual_tasks and the soil
+        # write mutates ProjectManager.soil_tests - stored document state, not
+        # scene state - so they carry the same gate as set_succession_plan.
+        "add_manual_task",
+        "edit_manual_task",
+        "delete_manual_task",
+        "record_soil_test",
+        # US-D2.4: layer write tools.
+        "set_object_layer",
+        "create_layer",
+        "rename_layer",
+        "delete_layer",
+        "set_active_layer",
+        "set_layer_property",
+        # issue #365: document lifecycle. These REPLACE the open document and
+        # can discard unsaved work, so they are gated exactly like
+        # delete_object rather than sitting ungated beside save_plan.
+        "new_plan",
+        "open_plan",
+        "undo",
+        "redo",
+        # US-D3.2: the first agent write into ProjectData rather than the scene
+        # graph. Gated exactly like delete_object - it replaces or deletes a
+        # stored plan.
+        "set_succession_plan",
+    }
+)
+
+
+def test_gate_covers_every_write_tool() -> None:
+    """The tools that appear when writes are enabled are EXACTLY the ones this
+    file knows about — so a new write tool must be added to WRITE_TOOL_NAMES,
+    and one registered outside the ``if writes_active:`` block is caught here."""
+    ungated = set(_tool_names(build_server(_stub_providers(), writes_enabled=False)))
+    gated = set(
+        _tool_names(
+            build_server(_stub_providers(), writes_enabled=True, write_token="tok")
+        )
+    )
+    assert gated - ungated == set(WRITE_TOOL_NAMES)
+
+
+def test_write_tools_absent_when_writes_disabled() -> None:
+    names = set(_tool_names(build_server(_stub_providers(), writes_enabled=False)))
+    assert not (names & WRITE_TOOL_NAMES)
+    # Read tools still present, including the D2.6 low-level geometry read.
+    assert "get_plan_summary" in names
+    assert "get_geometry" in names
+
+
+def test_write_tools_absent_when_token_missing() -> None:
+    names = set(
+        _tool_names(
+            build_server(_stub_providers(), writes_enabled=True, write_token=None)
+        )
+    )
+    assert not (names & WRITE_TOOL_NAMES)
+
+
+def test_write_tools_present_when_enabled_and_tokened() -> None:
+    names = set(
+        _tool_names(
+            build_server(_stub_providers(), writes_enabled=True, write_token="tok")
+        )
+    )
+    assert names >= WRITE_TOOL_NAMES
+
+
+def test_callout_offset_schema_matches_null_rejection_contract() -> None:
+    tools = asyncio.run(
+        build_server(
+            _stub_providers(), writes_enabled=True, write_token="tok"
+        ).list_tools()
+    )
+    create = next(tool for tool in tools if tool.name == "create_object")
+    properties = create.inputSchema["properties"]
+    for field in ("box_dx", "box_dy"):
+        assert properties[field]["type"] == "number"
+        assert "anyOf" not in properties[field]
+        assert "default" not in properties[field]
+
+
+def test_move_object_description_uses_y_up_compass_frame() -> None:
+    """Regression (#267): the move_object description must tell the agent the
+    canvas is Y-up (a positive dy moves NORTH, a negative dy SOUTH). It used to
+    say "+y is down", so an agent asked to move an object south computed a
+    positive dy and moved it the wrong way (north)."""
+    tools = asyncio.run(
+        build_server(
+            _stub_providers(), writes_enabled=True, write_token="tok"
+        ).list_tools()
+    )
+    move = next(t for t in tools if t.name == "move_object")
+    desc = (move.description or "").lower()
+    assert "north" in desc and "south" in desc
+    # The exact mis-description that caused the bug must not reappear.
+    assert "+y is down" not in desc
+    assert "+y down" not in desc
+
+
+def _run_middleware(
+    headers: list[tuple[bytes, bytes]], query_string: bytes = b""
+) -> str | None:
+    """Drive the ASGI middleware with a fake HTTP scope; return the captured token."""
+    return _run_middleware_full(headers, query_string)["token"]
+
+
+def _run_middleware_full(
+    headers: list[tuple[bytes, bytes]], query_string: bytes = b""
+) -> dict[str, Any]:
+    """Like ``_run_middleware`` but also returns the (possibly mutated) scope's
+    ``query_string`` as seen by the downstream app."""
+    captured: dict[str, Any] = {}
+
+    async def inner(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        captured["token"] = _presented_token.get()
+        captured["downstream_query_string"] = scope.get("query_string")
+
+    wrapped = _bearer_token_middleware(inner)
+
+    async def drive() -> None:
+        _presented_token.set("stale-from-a-previous-request")
+        scope = {"type": "http", "headers": headers, "query_string": query_string}
+        await wrapped(scope, None, None)
+
+    asyncio.run(drive())
+    return captured
+
+
+def test_middleware_extracts_bearer_token() -> None:
+    assert _run_middleware([(b"authorization", b"Bearer abc123")]) == "abc123"
+
+
+def test_middleware_is_case_insensitive_on_scheme() -> None:
+    assert _run_middleware([(b"authorization", b"bearer abc123")]) == "abc123"
+
+
+def test_middleware_sets_none_without_header() -> None:
+    # No Authorization header -> None (not the stale value from a prior request).
+    assert _run_middleware([(b"content-type", b"application/json")]) is None
+
+
+def test_middleware_ignores_non_bearer_scheme() -> None:
+    assert _run_middleware([(b"authorization", b"Basic Zm9v")]) is None
+
+
+def test_middleware_extracts_query_param_token() -> None:
+    # The ?token= route Claude Code needs (headers not transmitted on tool calls).
+    assert _run_middleware([], query_string=b"token=abc123") == "abc123"
+
+
+def test_middleware_query_token_among_other_params() -> None:
+    assert _run_middleware([], query_string=b"foo=bar&token=abc123&baz=1") == "abc123"
+
+
+def test_middleware_query_token_wins_over_header() -> None:
+    # Both present: the URL query token wins (it's the reliable primary channel;
+    # a stale legacy header must not shadow a fresh URL token).
+    got = _run_middleware(
+        [(b"authorization", b"Bearer from-header")], query_string=b"token=from-query"
+    )
+    assert got == "from-query"
+
+
+def test_middleware_falls_back_to_query_when_header_non_bearer() -> None:
+    # A non-Bearer header yields no header token, so the query param is used.
+    got = _run_middleware(
+        [(b"authorization", b"Basic Zm9v")], query_string=b"token=from-query"
+    )
+    assert got == "from-query"
+
+
+def test_middleware_sets_none_without_header_or_query() -> None:
+    assert _run_middleware([], query_string=b"") is None
+
+
+def test_middleware_strips_token_from_scope_for_downstream() -> None:
+    # Defense-in-depth: the secret must not survive in the scope the MCP app /
+    # any access logger sees.
+    got = _run_middleware_full([], query_string=b"foo=bar&token=s3cret&baz=1")
+    assert got["token"] == "s3cret"
+    downstream = got["downstream_query_string"].decode("latin-1")
+    assert "token" not in downstream
+    assert "s3cret" not in downstream
+    # Other params are preserved.
+    assert "foo=bar" in downstream
+    assert "baz=1" in downstream
+
+
+def test_middleware_leaves_scope_untouched_when_token_in_header() -> None:
+    # No query token to strip; the query string passes through unchanged.
+    got = _run_middleware_full(
+        [(b"authorization", b"Bearer h")], query_string=b"foo=bar"
+    )
+    assert got["token"] == "h"
+    assert got["downstream_query_string"] == b"foo=bar"
+
+
+def test_middleware_strips_query_token_even_when_header_present() -> None:
+    # A query token is stripped from the scope regardless of whether a header is
+    # also present — the secret must never survive downstream.
+    got = _run_middleware_full(
+        [(b"authorization", b"Bearer h")], query_string=b"token=s3cret&keep=1"
+    )
+    downstream = got["downstream_query_string"].decode("latin-1")
+    assert "s3cret" not in downstream
+    assert "keep=1" in downstream

@@ -1,0 +1,9210 @@
+"""Main application window."""
+
+import contextlib
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
+
+from PyQt6.QtCore import QCoreApplication, QEvent, Qt, QTimer
+from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
+
+from open_garden_planner.app.paths import default_dialog_dir, default_save_path
+from open_garden_planner.core import (
+    ProjectManager,
+    calculate_area_and_perimeter,
+    format_area,
+    format_length,
+)
+from open_garden_planner.core.plant_renderer import is_plant_type
+from open_garden_planner.core.tools import ToolType
+from open_garden_planner.services.companion_planting_service import (
+    ANTAGONISTIC,
+    BENEFICIAL,
+    CompanionPlantingService,
+)
+from open_garden_planner.services.export_service import ExportService
+from open_garden_planner.services.soil_service import (
+    ALL_PARAMS,
+    PARAM_K,
+    PARAM_N,
+    PARAM_OVERALL,
+    PARAM_P,
+    PARAM_PH,
+    SoilService,
+)
+from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+from open_garden_planner.ui.canvas.canvas_view import CanvasView
+from open_garden_planner.ui.icons import get_icon, get_pixmap
+from open_garden_planner.ui.panels import (
+    CompanionPanel,
+    ConstraintsPanel,
+    CropRotationPanel,
+    JournalPanel,
+    LayersPanel,
+    PestOverviewPanel,
+    PlantDatabasePanel,
+    PlantSearchPanel,
+    PropertiesPanel,
+    SmartSymbolsPanel,
+)
+from open_garden_planner.ui.theme import (
+    ThemeMode,
+    apply_theme,
+    set_text_role,
+    theme_color,
+)
+from open_garden_planner.ui.views.harvest_view import HarvestView
+from open_garden_planner.ui.views.planting_calendar_view import PlantingCalendarView
+from open_garden_planner.ui.views.seed_inventory_view import SeedInventoryView
+from open_garden_planner.ui.views.tasks_view import TasksView
+from open_garden_planner.ui.widgets import (
+    CategoryToolbar,
+    CollapsiblePanel,
+    ConstraintToolbar,
+    MainToolbar,
+    SidebarController,
+    TaskReminderBar,
+    UpdateBar,
+)
+
+if TYPE_CHECKING:
+    import datetime
+
+    from open_garden_planner.agent_api import AgentApiServer
+
+logger = logging.getLogger(__name__)
+
+
+def _entry_species_names(entry: dict[str, Any]) -> list[str]:
+    """Every name an entry can be resolved by, machine key FIRST.
+
+    ``species_key`` is the machine contract and ``common_name`` is display text
+    (that is how the curated schema documents them, and what
+    ``set_succession_plan`` validates). An earlier version preferred
+    ``common_name``; since the validator never checks it, an agent could store
+    ``{species_key: "solanum lycopersicum", common_name: "Cabbage"}`` and the
+    rotation filter would then exclude the WRONG family - Brassicaceae instead
+    of Solanaceae. Key first, display name only as the fallback for a
+    free-text slot.
+    """
+    names: list[str] = []
+    for field in ("species_key", "common_name", "scientific_name"):
+        value = str(entry.get(field, "") or "").strip()
+        if value and value not in names:
+            names.append(value)
+    return names
+
+
+def _lookup_entry_species(entry: dict[str, Any]) -> dict | None:
+    """Resolve a succession entry to a bundled species record, or None."""
+    from open_garden_planner.services.bundled_species_db import lookup_species
+
+    for name in _entry_species_names(entry):
+        found = lookup_species(name)
+        if found is not None:
+            return found
+    return None
+
+
+def _read_crop_rotation_record(raw: object) -> Any:
+    """Deserialize one `crop_rotation` row, or return None if it is unusable.
+
+    A ``.ogp`` is untrusted input (architecture invariant 14), so the catch is
+    deliberately broad rather than an enumerated list of exception families: a
+    previous version listed four types and still let a row through, because
+    `PlantingRecord.from_dict` only does `data["year"]` and never type-checks it.
+    A STRING or None year then survives deserialization and raises `TypeError`
+    later, inside `get_records_for_area`'s sort - i.e. outside the loop that
+    was supposed to protect it, and inside a Qt signal handler whose own guard
+    catches only `RuntimeError`. That is an uncaught exception in the event
+    loop, the `qFatal()`/abort shape #366 recorded.
+
+    So the row is validated, not just parsed: `year` must really be an int.
+    """
+    from open_garden_planner.models.crop_rotation import PlantingRecord
+
+    try:
+        record = PlantingRecord.from_dict(raw)  # type: ignore[arg-type]
+        if not isinstance(record.year, int) or isinstance(record.year, bool):
+            raise ValueError(f"year is not an int: {record.year!r}")
+        return record
+    except Exception:  # noqa: BLE001 - untrusted .ogp ingestion seam
+        logger.warning(
+            "Skipping an unreadable crop-rotation record; crop rotation "
+            "indicators and the family cooldown stay incomplete until it is fixed"
+        )
+        return None
+
+
+def _parse_agent_date(
+    value: str | None,
+    fallback: "datetime.date",
+    field: str,
+) -> "datetime.date":
+    """Parse an agent-supplied ISO date, falling back when omitted.
+
+    Agent read tools that answer "what is current" accept an injected date so
+    the answer is reproducible and testable — a suite that pins "today"
+    silently rots the day after it is written, and an agent that cannot name the
+    date it reasoned about cannot explain its own answer. Omitting the field
+    still means "today"; supplying a malformed one is refused rather than
+    quietly ignored, because a wrong reference date produces a confidently wrong
+    current_entry.
+    """
+    import datetime
+
+    if value is None or value == "":
+        return fallback
+    try:
+        return datetime.date.fromisoformat(str(value))
+    except ValueError:
+        raise ValueError(
+            f"{field}={value!r} is not an ISO date. Use YYYY-MM-DD."
+        ) from None
+
+
+def _records_equivalent(a: object, b: object) -> bool:
+    """True iff two SoilTestRecord instances match field-by-field, ignoring id and date.
+
+    Used by ``_open_soil_test_dialog`` (F12 / F2.6c) to skip ``AddSoilTestCommand``
+    when the user clicks OK without changing the entry tab — common after using
+    Edit-via-History, which already committed the change via ``EditSoilTestCommand``.
+    """
+    if a is None or b is None:
+        return False
+    fields = (
+        "ph",
+        "n_level", "p_level", "k_level",
+        "ca_level", "mg_level", "s_level",
+        "n_ppm", "p_ppm", "k_ppm",
+        "ca_ppm", "mg_ppm", "s_ppm",
+        "notes",
+        "mode",
+    )
+    return all(getattr(a, f, None) == getattr(b, f, None) for f in fields)
+
+
+def _should_skip_add_after_dialog(
+    form_record: object,
+    existing_pre_dialog: object,
+    latest_after_dialog: object,
+) -> bool:
+    """Decide whether to skip ``AddSoilTestCommand`` after the soil test dialog closes.
+
+    Two cases must skip the Add:
+
+    1. **No-op outer OK.** The user clicked OK without touching the entry
+       tab. The form values therefore equal the originally-shown
+       ``existing_pre_dialog`` record — this also covers the
+       Edit-via-History flow where an inner ``EditSoilTestCommand`` already
+       committed the change but the outer entry tab still displays the
+       *pre-edit* values. Comparing against ``latest_after_dialog`` alone
+       would miss this case (regression discovered 2026-05-07).
+
+    2. **Form happens to match the current latest.** Defensive: if the
+       form ended up identical to whatever record is currently latest
+       (e.g. user re-typed the existing values), don't append a duplicate.
+
+    Otherwise return False so the Add proceeds normally.
+    """
+    if existing_pre_dialog is not None and _records_equivalent(
+        form_record, existing_pre_dialog
+    ):
+        return True
+    return latest_after_dialog is not None and _records_equivalent(
+        form_record, latest_after_dialog
+    )
+
+
+class GardenPlannerApp(QMainWindow):
+    """Main application window for Open Garden Planner.
+
+    Provides the main window with menu bar, status bar, and central widget area.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the main window."""
+        super().__init__()
+
+        self.setMinimumSize(800, 600)
+
+        # Persistent UI state (window geometry, main splitter)
+        from open_garden_planner.app.ui_state import UiStateStore
+        self._ui_state = UiStateStore()
+
+        # Project manager for save/load
+        self._project_manager = ProjectManager(self)
+        self._project_manager.project_changed.connect(self._update_window_title)
+        self._project_manager.dirty_changed.connect(self._update_window_title)
+        self._project_manager.location_changed.connect(self._on_location_changed)
+        self._project_manager.crop_rotation_changed.connect(self._on_crop_rotation_changed)
+        self._project_manager.season_changed.connect(self._on_season_changed)
+
+        # Set up UI components
+        self._setup_menu_bar()
+        self._setup_status_bar()
+        self._setup_central_widget()
+        self._restore_ui_state()
+
+        # Set up auto-save manager
+        self._setup_autosave()
+
+        # Preview mode state
+        self._preview_mode = False
+        self._pre_preview_state: dict | None = None
+        self._active_satellite_picker: QWidget | None = None
+        self._app_close_pending = False
+
+        # Initial window title
+        self._update_window_title()
+
+        # First-launch fallback: maximize. On subsequent launches the persisted
+        # geometry from _restore_ui_state() above is honoured instead.
+        if not self._geometry_restored:
+            self.showMaximized()
+        QTimer.singleShot(100, self.canvas_view.fit_in_view)
+
+        # Check for recovery files after UI is fully loaded
+        # Then show welcome dialog if enabled
+        QTimer.singleShot(500, self._startup_sequence)
+
+        # Check for updates in background (2-second delay so UI is fully ready)
+        QTimer.singleShot(2000, self._start_update_check)
+
+        # Agent API (US-D1.1): bridge + opt-in embedded MCP server.
+        self._setup_agent_api()
+
+    def _setup_agent_api(self) -> None:
+        """Create the main-thread bridge and defer auto-start if the user enabled it."""
+        from open_garden_planner.agent_api import MainThreadBridge
+
+        self._agent_bridge = MainThreadBridge(self)
+        self._agent_server: AgentApiServer | None = None
+        # Auto-start shortly after launch (when enabled in Preferences).
+        QTimer.singleShot(1500, self._maybe_start_agent_api)
+
+    def _agent_snapshot(self) -> dict[str, Any]:
+        """Read a snapshot of the live plan ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._project_manager.snapshot_dict(self.canvas_scene)
+        )
+
+    def _agent_diagnostics(self) -> list[dict[str, Any]]:
+        """Harvest the plan's current warnings ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._project_manager.diagnostics_snapshot(self.canvas_scene)
+        )
+
+    def _agent_render(
+        self,
+        region: tuple[float, float, float, float] | None,
+        layers: list[str] | None,
+        image_width_px: int,
+    ) -> dict[str, Any]:
+        """Render a PNG of the live plan ON the Qt main thread (for the server)."""
+        from open_garden_planner.agent_api.render import render_canvas_image
+
+        return self._agent_bridge.run_on_main(
+            lambda: render_canvas_image(self.canvas_scene, region, layers, image_width_px)
+        )
+
+    def _agent_save_plan(self, file_path: str | None) -> dict[str, Any]:
+        """Save the live plan to disk ON the Qt main thread (for the server)."""
+        from open_garden_planner.agent_api.exports import save_plan_file
+
+        return self._agent_bridge.run_on_main(
+            lambda: save_plan_file(
+                self.canvas_scene, self._project_manager, self._soil_service, file_path
+            )
+        )
+
+    def _agent_new_plan(
+        self,
+        width_cm: float | None,
+        height_cm: float | None,
+        force: bool,
+    ) -> dict[str, Any]:
+        """Start a fresh, empty plan ON the Qt main thread (issue #365).
+
+        The unsaved-changes guard lives HERE rather than in the Qt-free
+        validation module, because only the main thread can read the live
+        ``is_dirty`` flag — and because the GUI's own equivalent is
+        ``_confirm_discard_changes``, which is likewise a main-thread
+        interaction. An agent cannot raise a modal prompt, so the choice is
+        binary: refuse, or proceed when the caller passes ``force=True``.
+        """
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_new_plan(width_cm, height_cm, force)
+        )
+
+    def _do_agent_new_plan(
+        self,
+        width_cm: float | None = None,
+        height_cm: float | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Main-thread body of ``new_plan``.
+
+        Reuses ``_new_project_document`` — the same method File > New runs
+        after its dialog, so there is exactly one new-document path.
+        """
+        from open_garden_planner.agent_api.exports import validate_new_plan
+
+        if self._project_manager.is_dirty and not force:
+            raise ValueError(
+                "The open plan has unsaved changes. Re-run with force=true to "
+                "discard them and start a new plan, or save it first with "
+                "save_plan. (The GUI asks the user at this point; an agent "
+                "cannot, so it must be told.)"
+            )
+
+        # Read BEFORE the mutation: after _new_project_document the plan is
+        # clean by construction, so reading it afterwards would always report
+        # False and the agent would never learn that it just discarded work.
+        was_dirty = bool(self._project_manager.is_dirty)
+
+        plan_width, plan_height = validate_new_plan(
+            width_cm, height_cm, self.canvas_scene.width_cm, self.canvas_scene.height_cm
+        )
+        self._new_project_document(width_cm=plan_width, height_cm=plan_height)
+        return {
+            "file_path": None,
+            "width_cm": plan_width,
+            "height_cm": plan_height,
+            "was_dirty": was_dirty,
+        }
+
+    def _agent_open_plan(self, file_path: str, force: bool) -> dict[str, Any]:
+        """Load a ``.ogp`` file ON the Qt main thread (issue #365).
+
+        Reuses ``_open_project_file`` — the same method File > Open and the
+        Recent-files menu run — so the agent and the GUI load a plan through
+        one path rather than two that can drift.
+        """
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_open_plan(file_path, force)
+        )
+
+    def _do_agent_open_plan(self, file_path: str, force: bool = False) -> dict[str, Any]:
+        """Main-thread body of ``open_plan``.
+
+        Path handling deliberately mirrors ``save_plan`` and NOT a sandbox:
+        this server is loopback-only (ADR-033), so a local MCP client already
+        has the same filesystem access as the OS user account. Inventing a
+        stricter rule here than the export tools enforce would be a policy the
+        rest of the surface does not hold. What IS enforced is the part that
+        prevents a silent surprise: the file must exist, and the extension
+        must be ``.ogp``.
+        """
+        from open_garden_planner.agent_api.exports import validate_open_plan
+
+        if self._project_manager.is_dirty and not force:
+            raise ValueError(
+                "The open plan has unsaved changes. Re-run with force=true to "
+                "discard them and open another plan, or save it first with "
+                "save_plan. (The GUI asks the user at this point; an agent "
+                "cannot, so it must be told.)"
+            )
+
+        resolved = validate_open_plan(file_path)
+        # Read before the load, which resets the flag.
+        was_dirty = bool(self._project_manager.is_dirty)
+        # _load_project_file RAISES on a parse failure, which is what an agent
+        # needs. The GUI's _open_project_file is the same call wrapped in a
+        # modal QMessageBox, which an agent must never raise on its behalf.
+        self._load_project_file(str(resolved))
+        return {
+            "file_path": str(resolved),
+            "width_cm": self.canvas_scene.width_cm,
+            "height_cm": self.canvas_scene.height_cm,
+            # A load resets the dirty flag, so read it BEFORE, for the same
+            # reason new_plan does.
+            "was_dirty": was_dirty,
+        }
+
+    def _agent_export_pdf(
+        self,
+        file_path: str | None,
+        paper_size: Literal["A4", "A3", "Letter", "Legal"],
+        orientation: Literal["landscape", "portrait"],
+    ) -> dict[str, Any]:
+        """Export the PDF report ON the Qt main thread (for the server)."""
+        from open_garden_planner.agent_api.exports import export_pdf_file
+
+        return self._agent_bridge.run_on_main(
+            lambda: export_pdf_file(
+                self.canvas_scene, self._project_manager, file_path, paper_size, orientation
+            )
+        )
+
+    def _agent_export_dxf(self, file_path: str | None) -> dict[str, Any]:
+        """Export a DXF drawing ON the Qt main thread (for the server)."""
+        from open_garden_planner.agent_api.exports import export_dxf_file
+
+        return self._agent_bridge.run_on_main(
+            lambda: export_dxf_file(self.canvas_scene, self._project_manager, file_path)
+        )
+
+    def _agent_export_csv(
+        self, kind: Literal["shopping_list", "harvest"], file_path: str | None
+    ) -> dict[str, Any]:
+        """Export a shopping-list/harvest CSV ON the Qt main thread (for the server)."""
+        from open_garden_planner.agent_api.exports import export_csv_file
+
+        return self._agent_bridge.run_on_main(
+            lambda: export_csv_file(
+                self.canvas_scene, self._project_manager, self._soil_service, kind, file_path
+            )
+        )
+
+    def _agent_create_object(
+        self,
+        object_type: str,
+        x: float | None,
+        y: float | None,
+        width: float | None,
+        height: float | None,
+        radius: float | None,
+        name: str | None,
+        species: str | None,
+        points: list[list[float]] | None = None,
+        text: str | None = None,
+        box_dx: float | None = None,
+        box_dy: float | None = None,
+    ) -> dict[str, Any]:
+        """Create one object ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_create_object(
+                object_type,
+                x,
+                y,
+                width,
+                height,
+                radius,
+                name,
+                species,
+                points,
+                text,
+                box_dx,
+                box_dy,
+            )
+        )
+
+    def _do_agent_create_object(
+        self,
+        object_type: str,
+        x: float | None,
+        y: float | None,
+        width: float | None,
+        height: float | None,
+        radius: float | None,
+        name: str | None,
+        species: str | None,
+        points: list[list[float]] | None = None,
+        text: str | None = None,
+        box_dx: float | None = None,
+        box_dy: float | None = None,
+    ) -> dict[str, Any]:
+        """Create one supported object — one undoable step (US-D2.1/D2.5).
+
+        Mirrors the GUI's own creation orchestration, not merely
+        ``CreateItemCommand``. The gallery-drop path in ``CanvasView`` does five
+        things in order, and skipping any of them ships a subtly broken object:
+        build the item, apply the species, auto-populate its species metadata
+        from the bundled DB (so the plant-detail panel and US-12.10d
+        soil-mismatch warnings light up without a manual "Suchen"), stamp
+        today's planting date (US-E8 — deliberately OUTSIDE the species guard,
+        so a placeholder that gains a species later is not left permanently
+        undated, which would break the growth model), and assign the active
+        layer.
+
+        The item itself is built by ``_deserialize_item_core`` — the file
+        loader's own factory — so an agent-created object is constructed by
+        exactly the code path a loaded one is.
+
+        Bed membership needs no work here: ``CreateItemCommand.execute`` already
+        calls ``_auto_parent_plant``, which links a plant to the smallest bed
+        containing it (and ``undo`` calls ``_detach_from_parent``). So the link
+        is established *inside* the single create step — unlike ``move_object``,
+        which must reconcile explicitly because ``MoveItemsCommand`` has no such
+        hook. This is therefore ALWAYS exactly one undo step. The resulting
+        parent, if any, is reported back as ``new_parent_bed_id``.
+
+        Refuses (raises) rather than guessing: an unsupported type, a dimension
+        that doesn't fit the type's shape, a non-finite or non-positive extent
+        (all in the Qt-free ``creates`` module), or a locked active layer — the
+        GUI can't draw onto a locked layer either.
+        """
+        from datetime import date
+
+        from open_garden_planner.agent_api import creates
+        from open_garden_planner.core.commands import CreateItemCommand, CreateItemsCommand
+        from open_garden_planner.core.growth_model import stamp_default_planting_date
+
+        if species and not creates.is_plant_type_name(object_type):
+            # The only silent-ignore an otherwise loud tool would have had.
+            raise ValueError(
+                f"{object_type} is not a plant, so it cannot take a species "
+                f"({species!r}). Drop the 'species' argument, or create a "
+                "TREE/SHRUB/PERENNIAL instead."
+            )
+
+        canvas_rect = self.canvas_scene.canvas_rect
+        spec = creates.build_create_dict(
+            object_type=object_type,
+            x=x,
+            y=y,
+            canvas_width_cm=canvas_rect.width(),
+            canvas_height_cm=canvas_rect.height(),
+            width=width,
+            height=height,
+            radius=radius,
+            name=name,
+            points=points,
+            text=text,
+            box_dx=box_dx,
+            box_dy=box_dy,
+        )
+
+        active_layer = self._agent_creation_target_layer()
+        if active_layer is not None:
+            spec["layer_id"] = str(active_layer.id)
+
+        item = self._project_manager._deserialize_item_core(spec)
+        if item is None:
+            raise ValueError(f"Could not build a {object_type} from those parameters.")
+
+        if creates.is_plant_type_name(object_type):
+            if species:
+                from open_garden_planner.services.bundled_species_db import (
+                    populate_item_species_metadata,
+                )
+
+                item.plant_species = species
+                populate_item_species_metadata(item, species)
+            # US-E8: every new plant is dated, species or not (see docstring).
+            stamp_default_planting_date(item.metadata, date.today())
+
+        linked_items: list[Any] = []
+        if object_type == "HOUSE":
+            from open_garden_planner.core.roof_ridge import compute_roof_ridge_endpoints
+
+            p1, p2 = compute_roof_ridge_endpoints(item.polygon(), item.pos())
+            # Keep the derived sibling on the loader path too.  The house and
+            # ridge are both created from the same serialized shape vocabulary
+            # that ProjectManager.load() consumes; CreateItemsCommand still
+            # makes their visible appearance one atomic undo step.
+            ridge_spec = {
+                "type": "polyline",
+                "object_type": "ROOF_RIDGE",
+                "points": [
+                    {"x": p1.x(), "y": p1.y()},
+                    {"x": p2.x(), "y": p2.y()},
+                ],
+                "layer_id": str(getattr(item, "layer_id", None))
+                if getattr(item, "layer_id", None) is not None
+                else None,
+            }
+            if ridge_spec["layer_id"] is None:
+                ridge_spec.pop("layer_id")
+            ridge = self._project_manager._deserialize_item_core(ridge_spec)
+            if ridge is None:
+                raise ValueError("Could not build the HOUSE roof ridge.")
+            ridge.set_metadata("owner_polygon_id", str(item.item_id))
+            item.set_metadata("ridge_item_id", str(ridge.item_id))
+            linked_items.append(ridge)
+
+        items = [item, *linked_items]
+        # Clamp the whole creation group onto the canvas (issue #380). The GUI
+        # clamps every object it draws; before this an agent could create one
+        # entirely off-plan and it became invisible and unselectable. `creates`
+        # stays Qt-free — the clamp is applied here, where the live bounding
+        # rects are available, and uses the same shared math the GUI drag path
+        # does (core/canvas_bounds).
+        self._clamp_agent_items_to_canvas(items)
+
+        if linked_items:
+            create_cmd = CreateItemsCommand(self.canvas_scene, items, "objects")
+        else:
+            create_cmd = CreateItemCommand(self.canvas_scene, item)
+        self.canvas_view.command_manager.execute(create_cmd)
+
+        # Read back whatever _auto_parent_plant established inside the command.
+        # (See _agent_creation_target_layer for what creation validates; the
+        # shape/size/position half lives in the Qt-free agent_api.creates.)
+        parent_bed_id = getattr(item, "parent_bed_id", None)
+
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": str(item.item_id),
+            "action": "create",
+            "undo_description": create_cmd.description,
+            "x": cx,
+            "y": cy,
+            # False by definition for create: the link (if any) happened inside
+            # the one create step, not as a separate second one.
+            "bed_membership_changed": False,
+            "new_parent_bed_id": str(parent_bed_id) if parent_bed_id else None,
+            "linked_items_created": len(linked_items),
+        }
+
+    def _agent_creation_target_layer(self) -> Any:
+        """The layer a new agent-created object must land on, or raise.
+
+        The creation-side counterpart of ``_resolve_agent_item``'s checks: a
+        write tool that *resolves* an existing item inherits that chokepoint,
+        but a tool that creates one has nothing to resolve, so the scene-level
+        guard lives here — as a seam, so the next creation-shaped tool
+        (`create_shape`, `duplicate_object`, …) inherits it instead of
+        copy-pasting the check.
+
+        Returns ``None`` when the scene has no active layer at all, matching the
+        GUI drop path (which also leaves ``layer_id`` unset in that case).
+
+        The shape/size/position half of creation's validation is the Qt-free
+        ``agent_api.creates`` module — keep the two in step.
+        """
+        active_layer = self.canvas_scene.active_layer
+        if active_layer is None:
+            return None
+        if active_layer.locked:
+            # The GUI enforces layer-lock by clearing the item interaction
+            # flags, so nothing can be drawn onto a locked layer there either.
+            raise ValueError(
+                f"The active layer {active_layer.name!r} is locked; unlock it "
+                "with set_layer_property(layer_id, locked=False) (or make "
+                "another layer active) before creating objects."
+            )
+        return active_layer
+
+    def _agent_get_geometry(self, item_id: str) -> dict[str, Any]:
+        """Read one object's live low-level geometry ON the Qt main thread."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_get_geometry(item_id)
+        )
+
+    def _do_agent_get_geometry(self, item_id: str) -> dict[str, Any]:
+        """Main-thread body of the unauthenticated ``get_geometry`` read."""
+        from open_garden_planner.ui.canvas.geometry_inspect import describe_geometry
+
+        item = self._resolve_agent_read_item(item_id)
+        self._agent_require_unique_items([item], action="get_geometry")
+        center = self._agent_item_center(item)
+        constraints = self._agent_item_constraints(item)
+        return describe_geometry(
+            item,
+            center=center,
+            constraints=constraints,
+        )
+
+    def _agent_move_object(self, item_id: str, dx: float, dy: float) -> dict[str, Any]:
+        """Move one object by (dx, dy) scene cm ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_move_object(item_id, dx, dy)
+        )
+
+    def _do_agent_move_object(
+        self, item_id: str, dx: float, dy: float
+    ) -> dict[str, Any]:
+        """Main-thread body of ``move_object`` (US-D2.0)."""
+        from PyQt6.QtCore import QPointF
+
+        item = self._resolve_agent_item(item_id)
+        return self._agent_apply_object_move(
+            item,
+            item_id,
+            QPointF(float(dx), float(dy)),
+            action="move",
+        )
+
+    def _agent_set_object_position(
+        self, item_id: str, x: float, y: float
+    ) -> dict[str, Any]:
+        """Set one object's centre ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_object_position(item_id, x, y)
+        )
+
+    def _do_agent_set_object_position(
+        self, item_id: str, x: float, y: float
+    ) -> dict[str, Any]:
+        """Main-thread body of ``set_object_position`` (US-D2.6)."""
+        import math
+
+        from PyQt6.QtCore import QPointF
+
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            GEOMETRY_ROUNDTRIP_EPS_CM,
+        )
+
+        canvas = self.canvas_scene.canvas_rect
+        target_x, target_y = edits.validate_scene_point(
+            x,
+            y,
+            canvas_width_cm=canvas.width(),
+            canvas_height_cm=canvas.height(),
+        )
+        item = self._resolve_agent_item(item_id)
+        self._agent_require_unique_items([item], action="set_object_position")
+        current_x, current_y = self._agent_item_center(item)
+        delta = QPointF(target_x - current_x, target_y - current_y)
+        item_deltas = self._agent_move_item_deltas(item, delta)
+        self._agent_preflight_object_move(item_deltas, item_id, "set_object_position")
+        if math.hypot(target_x - current_x, target_y - current_y) <= (
+            GEOMETRY_ROUNDTRIP_EPS_CM
+        ):
+            raise ValueError(
+                f"{item_id} is already centred at ({current_x:g}, {current_y:g}); "
+                "nothing to change."
+            )
+        return self._agent_apply_object_move(
+            item,
+            item_id,
+            delta,
+            action="set_position",
+            item_deltas=item_deltas,
+        )
+
+    def _clamp_agent_items_to_canvas(self, items: list[Any]) -> None:
+        """Shift a group of newly created items so it lies inside the canvas.
+
+        The agent counterpart of ``CanvasView._clamp_items_to_canvas`` (issue
+        #380), using the same shared math so the two cannot drift. Background
+        images are exempt, matching the GUI. A no-op when everything is already
+        inside.
+        """
+        from open_garden_planner.core.canvas_bounds import clamp_shift_within_canvas
+        from open_garden_planner.ui.canvas.items import BackgroundImageItem
+
+        clampable = [i for i in items if not isinstance(i, BackgroundImageItem)]
+        if not clampable:
+            return
+        canvas = self.canvas_scene.canvas_rect
+        rects = [
+            (
+                bounded.sceneBoundingRect().left(),
+                bounded.sceneBoundingRect().top(),
+                bounded.sceneBoundingRect().right(),
+                bounded.sceneBoundingRect().bottom(),
+            )
+            for bounded in clampable
+        ]
+        dx, dy = clamp_shift_within_canvas(rects, canvas.width(), canvas.height())
+        if dx != 0 or dy != 0:
+            for bounded in clampable:
+                bounded.moveBy(dx, dy)
+
+    def _agent_preflight_object_move(
+        self,
+        item_deltas: list[tuple[Any, Any]],
+        item_id: str,
+        tool_name: str,
+    ) -> None:
+        """Refuse the complete move graph before any command can be executed."""
+        for constrained_item, _ in item_deltas:
+            constrained_id = getattr(constrained_item, "item_id", None)
+            subject_id = str(constrained_id) if constrained_id is not None else item_id
+            self._agent_require_unconstrained(
+                constrained_item,
+                subject_id,
+                tool_name,
+            )
+
+    def _agent_apply_object_move(
+        self,
+        item: Any,
+        item_id: str,
+        delta: Any,
+        *,
+        action: str,
+        item_deltas: list[tuple[Any, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Apply the complete GUI move orchestration for one resolved item.
+
+        ``move_object`` and ``set_object_position`` differ only in how they
+        derive ``delta``. Both therefore share child propagation, constraint
+        preflight, command selection, and bed-membership reconciliation. A plant
+        crossing a bed boundary inherits ``move_object``'s documented second
+        undo step; every other move is one step.
+        """
+        from open_garden_planner.core.commands import AlignItemsCommand, MoveItemsCommand
+
+        if item_deltas is None:
+            item_deltas = self._agent_move_item_deltas(item, delta)
+            constraint_tool_name = (
+                "set_object_position" if action == "set_position" else "move_object"
+            )
+            self._agent_preflight_object_move(
+                item_deltas, item_id, constraint_tool_name
+            )
+
+        # Clamp the move so the whole group stays on the canvas (issue #380) —
+        # the GUI clamps drags and nudges; the agent path did not, so it could
+        # push an object entirely off-plan in one call. Shared math with the GUI
+        # (core/canvas_bounds). Background images are exempt, as in the GUI.
+        from PyQt6.QtCore import QPointF as _QPointF
+
+        from open_garden_planner.core.canvas_bounds import clamp_delta_within_canvas
+        from open_garden_planner.ui.canvas.items import BackgroundImageItem
+
+        canvas = self.canvas_scene.canvas_rect
+        clampable_rects = [
+            (
+                moved_item.sceneBoundingRect().left(),
+                moved_item.sceneBoundingRect().top(),
+                moved_item.sceneBoundingRect().right(),
+                moved_item.sceneBoundingRect().bottom(),
+            )
+            for moved_item, _ in item_deltas
+            if not isinstance(moved_item, BackgroundImageItem)
+        ]
+        clamped_dx, clamped_dy = clamp_delta_within_canvas(
+            clampable_rects,
+            delta.x(),
+            delta.y(),
+            canvas.width(),
+            canvas.height(),
+        )
+        # A NON-ZERO requested move that the clamp erases entirely is a no-op, not
+        # a move. Without this it still executed a MoveItemsCommand that changed
+        # nothing but pushed a dead undo step — a Ctrl+Z that visibly does nothing
+        # (issue #380 review). Refuse instead, matching the existing unclamped
+        # no-op guard in _do_agent_set_object_position, so the stack stays
+        # untouched.
+        #
+        # A requested delta that is ALREADY zero is deliberately left alone: it is
+        # a legal call that re-reads and returns the current centre (an existing
+        # test relies on `move_object(0, 0)` reporting the read-layer centre for a
+        # badge-bearing plant). Only a request the clamp *canceled* is refused.
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            GEOMETRY_ROUNDTRIP_EPS_CM,
+        )
+
+        requested_was_nonzero = (
+            abs(delta.x()) > GEOMETRY_ROUNDTRIP_EPS_CM
+            or abs(delta.y()) > GEOMETRY_ROUNDTRIP_EPS_CM
+        )
+        clamp_erased_the_move = (
+            abs(clamped_dx) <= GEOMETRY_ROUNDTRIP_EPS_CM
+            and abs(clamped_dy) <= GEOMETRY_ROUNDTRIP_EPS_CM
+        )
+        if requested_was_nonzero and clamp_erased_the_move:
+            raise ValueError(
+                f"{item_id} (with anything it carries) is already at the canvas "
+                "edge; the requested move was clamped to no displacement. "
+                "Nothing to change."
+            )
+        if clamped_dx != delta.x() or clamped_dy != delta.y():
+            item_deltas = [
+                (moved_item, _QPointF(clamped_dx, clamped_dy))
+                for moved_item, _ in item_deltas
+            ]
+            delta = _QPointF(clamped_dx, clamped_dy)
+
+        if len(item_deltas) == 1:
+            move_cmd = MoveItemsCommand([item], delta)
+        else:
+            from PyQt6.QtCore import QCoreApplication
+
+            move_cmd = AlignItemsCommand(
+                item_deltas, QCoreApplication.translate("Commands", "Move item")
+            )
+        self.canvas_view.command_manager.execute(move_cmd)
+
+        reparented, new_parent_bed_id = self._agent_reconcile_bed_membership(item)
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id,
+            "action": action,
+            "undo_description": move_cmd.description,
+            "x": cx,
+            "y": cy,
+            "children_moved": len(item_deltas) - 1,
+            "bed_membership_changed": reparented,
+            "new_parent_bed_id": new_parent_bed_id,
+        }
+
+    def _agent_move_item_deltas(
+        self, item: Any, delta: Any
+    ) -> list[tuple[Any, Any]]:
+        """``(item, delta)`` pairs for one move: the item plus every contained
+        plant, uniformly offset — the release-time equivalent of
+        ``CanvasView._propagate_bed_children_during_drag``. A plain plant/shape
+        with no children returns just itself."""
+        from open_garden_planner.core.object_types import is_plant_parent_type
+        from open_garden_planner.ui.canvas.items import GardenItemMixin
+
+        item_deltas: list[tuple[Any, Any]] = [(item, delta)]
+        if isinstance(item, GardenItemMixin) and is_plant_parent_type(item.object_type):
+            for child_id in item.child_item_ids:
+                child = self.canvas_scene.find_item_by_id(child_id)
+                if child is not None:
+                    item_deltas.append((child, delta))
+        return item_deltas
+
+    def _agent_reconcile_bed_membership(self, item: Any) -> tuple[bool, str | None]:
+        """After moving a plant, re-evaluate its bed membership — the
+        release-time equivalent of ``CanvasView._update_plant_bed_relationships``.
+        Returns ``(changed, new_parent_bed_id)``; a non-plant item or an
+        unchanged membership returns ``(False, None)``."""
+        from open_garden_planner.core.commands import SetParentBedCommand
+        from open_garden_planner.core.plant_renderer import is_plant_type
+        from open_garden_planner.ui.canvas.items import GardenItemMixin
+
+        if not isinstance(item, GardenItemMixin) or not is_plant_type(item.object_type):
+            return False, None
+
+        plant_center = item.mapToScene(item.boundingRect().center())
+        current_parent_id = item.parent_bed_id
+        new_bed = self.canvas_scene.find_smallest_bed_containing(plant_center)
+        new_parent_id = (
+            new_bed.item_id
+            if new_bed is not None and isinstance(new_bed, GardenItemMixin)
+            else None
+        )
+        if new_parent_id == current_parent_id:
+            return False, None
+
+        cmd = SetParentBedCommand(
+            self.canvas_scene, item, current_parent_id, new_parent_id
+        )
+        self.canvas_view.command_manager.execute(cmd)
+        return True, str(new_parent_id) if new_parent_id is not None else None
+
+    def _agent_item_center(self, item: Any) -> tuple[float, float]:
+        """The object's centre in scene cm, using the SAME source the read tools do.
+
+        ``get_object``/``list_objects`` report the serialised-geometry centre
+        (``agent_api.queries.object_center``); reusing it here keeps a moved
+        object's returned x/y identical to what a follow-up read reports —
+        ``sceneBoundingRect().center()`` would diverge for a plant showing the
+        runtime-only antagonist badge (asymmetric boundingRect, invariant #2).
+        Falls back to the bounding-rect centre only if the item can't serialise.
+        """
+        from open_garden_planner.agent_api import queries
+
+        data = self._project_manager._serialize_item(item)
+        if data is not None:
+            return queries.object_center(data)
+        c = item.sceneBoundingRect().center()
+        return c.x(), c.y()
+
+    def _agent_delete_object(self, item_id: str) -> dict[str, Any]:
+        """Delete one object ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_delete_object(item_id)
+        )
+
+    def _do_agent_delete_object(self, item_id: str) -> dict[str, Any]:
+        """Main-thread body of ``delete_object``.
+
+        Mirrors ``CanvasView._delete_selected_items``, not just
+        ``DeleteItemsCommand`` in isolation: that method also (a) removes any
+        constraint referencing the deleted item — left alone, the constraint
+        graph would keep a dangling reference to a UUID no longer in the
+        scene — and (b) deletes a HOUSE's linked roof ridge (a
+        metadata-``ridge_item_id`` association, not a Qt-child or bed
+        relationship), which would otherwise be orphaned. Contained plants are
+        detached (not deleted) by ``DeleteItemsCommand`` itself, matching the
+        GUI's "Keep plants" choice — the only sensible default for a
+        single-object programmatic delete, which can't prompt.
+        """
+        from open_garden_planner.core.commands import DeleteItemsCommand, RemoveConstraintCommand
+
+        item = self._resolve_agent_item(item_id)
+        linked_ridge = self._agent_linked_roof_ridge(item)
+        targets = [item, *linked_ridge]
+        self._agent_require_unique_items(targets)
+        target_ids = {
+            self._agent_item_uuid(candidate) for candidate in targets
+        }
+
+        constraints = self._agent_item_constraints(item)
+        for constraint in constraints:
+            self.canvas_view.command_manager.execute(
+                RemoveConstraintCommand(self.canvas_scene.constraint_graph, constraint)
+            )
+
+        cmd = DeleteItemsCommand(self.canvas_scene, targets)
+        self.canvas_view.command_manager.execute(cmd)
+        # The response is a completion receipt, not merely a command queued on
+        # the main thread.  Check every serialized UUID, not just the Python
+        # wrappers we passed to DeleteItemsCommand: a cross-class duplicate
+        # could otherwise survive and make a successful reply a lie.
+        remaining = [
+            candidate
+            for candidate in self._agent_document_items()
+            if self._agent_item_uuid(candidate) in target_ids
+        ]
+        if remaining:
+            raise RuntimeError(
+                "delete_object left a live document object with a target UUID; "
+                "the operation was not reported as successful."
+            )
+        return {
+            "item_id": item_id,
+            "action": "delete",
+            "undo_description": cmd.description,
+            "linked_items_deleted": len(linked_ridge),
+            "constraints_removed": len(constraints),
+        }
+
+    def _agent_undo(self) -> dict[str, Any]:
+        """Undo one command on the GUI's global history stack."""
+        return self._agent_bridge.run_on_main(self._do_agent_undo)
+
+    def _do_agent_undo(self) -> dict[str, Any]:
+        """Main-thread body of the authenticated MCP ``undo`` tool."""
+        manager = self.canvas_view.command_manager
+        if not manager.can_undo:
+            raise ValueError("Nothing to undo.")
+        description = manager.undo_description or "Unknown command"
+        manager.undo()
+        return {
+            "action": "undo",
+            "command_description": description,
+            "can_undo": manager.can_undo,
+            "can_redo": manager.can_redo,
+        }
+
+    def _agent_redo(self) -> dict[str, Any]:
+        """Redo one command on the GUI's global history stack."""
+        return self._agent_bridge.run_on_main(self._do_agent_redo)
+
+    def _do_agent_redo(self) -> dict[str, Any]:
+        """Main-thread body of the authenticated MCP ``redo`` tool."""
+        manager = self.canvas_view.command_manager
+        if not manager.can_redo:
+            raise ValueError("Nothing to redo.")
+        description = manager.redo_description or "Unknown command"
+        manager.redo()
+        return {
+            "action": "redo",
+            "command_description": description,
+            "can_undo": manager.can_undo,
+            "can_redo": manager.can_redo,
+        }
+
+    def _agent_get_history(self) -> dict[str, Any]:
+        """Read the undo/redo stack state (US-D2.7, read-only)."""
+        from open_garden_planner.agent_api.history import history_from_command_manager
+
+        return self._agent_bridge.run_on_main(
+            lambda: history_from_command_manager(
+                self.canvas_view.command_manager
+            ).model_dump()
+        )
+
+    def _agent_suggest_companions(
+        self,
+        species_key: str,
+        exclude_antagonists_of: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Suggest companion plants for a species (US-D3.1, read-only)."""
+        from open_garden_planner.agent_api.domain import suggest_companions_for_agent
+        from open_garden_planner.app.settings import active_language
+
+        def _run() -> list[dict[str, Any]]:
+            # Resolve the language on the main thread, beside the other
+            # settings reads the agent bodies perform.
+            language = active_language()
+            return [
+                s.model_dump()
+                for s in suggest_companions_for_agent(
+                    self._companion_service,
+                    species_key,
+                    exclude_antagonists_of=exclude_antagonists_of,
+                    language=language,
+                )
+            ]
+
+        return self._agent_bridge.run_on_main(_run)
+
+    def _agent_find_compatible_sets(
+        self,
+        candidates: list[str],
+        size: int = 3,
+        must_include: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find mutually compatible sets of plants (US-D3.1, read-only)."""
+        from open_garden_planner.agent_api.domain import find_compatible_sets_for_agent
+
+        return self._agent_bridge.run_on_main(
+            lambda: [
+                s.model_dump()
+                for s in find_compatible_sets_for_agent(
+                    self._companion_service,
+                    candidates,
+                    size=size,
+                    must_include=must_include,
+                )
+            ]
+        )
+
+    def _agent_find_sets_for_bed(
+        self,
+        bed_plants: list[str],
+        size: int = 3,
+    ) -> dict[str, Any]:
+        """Rank compatible sets by bed coverage (US-D3.1, read-only)."""
+        from open_garden_planner.services.companion_sets import find_sets_for_bed
+
+        return self._agent_bridge.run_on_main(
+            lambda: find_sets_for_bed(self._companion_service, bed_plants, size=size)
+        )
+
+    def _agent_check_placement(
+        self,
+        species_key: str,
+        bed_id: str,
+        bed_plants: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Check whether a species is well-placed in a bed (US-D3.1, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_check_placement(species_key, bed_id, bed_plants)
+        )
+
+    def _do_agent_check_placement(
+        self,
+        species_key: str,
+        bed_id: str,
+        bed_plants: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only MCP ``check_placement`` tool.
+
+        Resolves the bed's own plants when the caller did not supply them, so
+        an unknown ``bed_id`` is reported as such instead of looking like an
+        empty bed (P1-5).
+
+        Bed membership in this codebase is the ``parent_bed_id`` PROPERTY on
+        ``GardenItem`` — NOT Qt item parenting. ``bed.childItems()`` returns
+        ``[]`` for every real bed (``setParentItem`` is used only for label
+        items), so the first version of this silently reported every bed as
+        empty and answered ``overall="neutral"`` for a bed whose real answer
+        was ``"critical"`` — a fabricated clean result, the exact failure class
+        this tool exists to avoid. Membership is read the way
+        ``queries.plants_in_bed`` does, and ``bed_exists`` is resolved
+        UNCONDITIONALLY so supplying ``bed_plants`` cannot bypass the
+        existence check.
+        """
+        from open_garden_planner.agent_api.domain import check_placement_for_agent
+        from open_garden_planner.core.object_types import is_plant_parent_type
+
+        bed_exists: bool | None = None
+        try:
+            target_id = UUID(bed_id)
+        except (ValueError, TypeError, AttributeError):
+            target_id = None
+
+        resolved = bed_plants
+        if target_id is not None:
+            bed = self.canvas_scene.find_item_by_id(target_id)
+            # Existence is NOT enough: a plant's own id, or a shape's, also
+            # resolves. Reporting "neutral" for a non-bed says "I inspected
+            # this bed's plants and none relate" about an object that is not a
+            # bed — the same fabrication ADR-045's honesty invariant forbids,
+            # and the published contract says an id that names no bed is
+            # `unknown_bed`. `is_plant_parent_type` is the codebase's own
+            # predicate for "can hold plants" and covers every bed type plus
+            # TRELLIS.
+            if bed is None or not is_plant_parent_type(
+                getattr(bed, "object_type", None)
+            ):
+                bed_exists = False
+            else:
+                bed_exists = True
+                if resolved is None:
+                    resolved = self._agent_bed_species_keys(target_id)
+        else:
+            bed_exists = False
+
+        if resolved is None and bed_exists is not False:
+            # Bed exists but we could not enumerate it — say so rather than
+            # implying the bed is empty.
+            bed_exists = None
+
+        return check_placement_for_agent(
+            self._companion_service,
+            species_key,
+            bed_id,
+            bed_plants=resolved,
+            bed_exists=bed_exists,
+        ).model_dump()
+
+    def _agent_bed_species_keys(self, bed_id: UUID) -> list[str]:
+        """Species keys of the plants linked to ``bed_id``.
+
+        Reads the ``parent_bed_id`` PROPERTY, which is how this codebase
+        records bed membership (``queries.plants_in_bed`` does the same, and
+        ``canvas_scene``/``commands`` maintain it). Returns ``None`` only if
+        the scene cannot be walked at all, so the caller can tell "the bed is
+        empty" apart from "I could not look".
+        """
+        try:
+            items = list(self.canvas_scene.items())
+        except Exception:
+            return None
+
+        out: list[str] = []
+        for item in items:
+            if getattr(item, "parent_bed_id", None) != bed_id:
+                continue
+            # Delegate to the SHARED resolver rather than re-implementing the
+            # precedence. This was attribute-first while
+            # `_companion_species_name` and `queries._species_name` are
+            # metadata-first, so on a plant where both are set and DISAGREE
+            # (a gallery drop sets both; a later species-search assignment
+            # overwrites only the metadata) the agent resolved the stale
+            # attribute and found zero relationships while the panel found real
+            # ones. One resolver, one answer (the same divergence class ADR-045's
+            # addendum is about).
+            name = self._companion_species_name(item)
+            if name:
+                out.append(str(name).lower())
+        return out
+
+    # --- US-D3.2 (issue #331): succession ------------------------------------
+    #
+    # The FIRST agent writes into ProjectData rather than the QGraphicsScene.
+    # Succession plans live on ``ProjectManager.succession_plans``, so the write
+    # path is a command on the project manager, not an item mutation — but it is
+    # still exactly one undoable command through the shared CommandManager
+    # (architecture invariants #3/#4/#13), mirroring what the GUI's own
+    # ``_open_succession_plan_dialog`` does.
+
+    def _agent_resolve_soil_bed(self, bed_id: str) -> Any:
+        """Resolve ``bed_id`` to a soil-capable canvas item, or raise.
+
+        Succession planning attaches to a BED, so this uses ``is_bed_type``
+        (soil-capable: GARDEN_BED, RAISED_BED, CONTAINER, CONTAINER_ROUND,
+        WALL_PLANTER) rather than the looser ``is_plant_parent_type`` that
+        ``check_placement`` uses. A TRELLIS is a plant parent but holds no soil,
+        so a succession plan on one is refused rather than silently accepted —
+        the difference is deliberate and commented so it is not "corrected" later.
+        """
+        from open_garden_planner.core.object_types import is_bed_type
+
+        try:
+            target = UUID(bed_id)
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError(
+                f"{bed_id!r} is not a valid bed id. Use the stable UUID from "
+                "list_objects or get_object."
+            ) from None
+
+        item = self.canvas_scene.find_item_by_id(target)
+        if item is None:
+            raise ValueError(
+                f"No object with id {bed_id!r} exists in this plan. Read "
+                "list_objects for the beds it contains."
+            )
+        if not is_bed_type(getattr(item, "object_type", None)):
+            raise ValueError(
+                f"{bed_id!r} is a "
+                f"{getattr(item, 'object_type', None)} — succession planning "
+                "needs a soil-capable bed (GARDEN_BED, RAISED_BED, CONTAINER, "
+                "CONTAINER_ROUND or WALL_PLANTER)."
+            )
+        return item
+
+    def _agent_succession_plan_raw(self, bed_id: str) -> dict | None:
+        """The bed's raw succession plan dict, or None when it has no plan."""
+        return self._project_manager.succession_plans.get(bed_id)
+
+    def _agent_get_succession_plan(
+        self,
+        bed_id: str,
+        year: int | None = None,
+        today: str | None = None,
+    ) -> dict[str, Any]:
+        """Read a bed's succession plan (US-D3.2, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_get_succession_plan(bed_id, year, today)
+        )
+
+    def _do_agent_get_succession_plan(
+        self,
+        bed_id: str,
+        year: int | None,
+        today: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only ``get_succession_plan`` tool."""
+        import datetime
+
+        from open_garden_planner.agent_api.domain import get_succession_plan_for_agent
+
+        self._agent_resolve_soil_bed(bed_id)
+        reference = _parse_agent_date(today, datetime.date.today(), "today")
+        view = get_succession_plan_for_agent(
+            self._agent_succession_plan_raw(bed_id),
+            bed_id,
+            year=year,
+            today=reference,
+            location=self._project_manager.location,
+        )
+        return view.model_dump()
+
+    def _agent_find_succession_gaps(
+        self,
+        bed_id: str,
+        year: int | None = None,
+        today: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Report a bed's uncovered growing-season ranges (US-D3.2, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_find_succession_gaps(bed_id, year, today)
+        )
+
+    def _do_agent_find_succession_gaps(
+        self,
+        bed_id: str,
+        year: int | None,
+        today: str | None,
+    ) -> list[dict[str, Any]]:
+        """Main-thread body of the read-only ``find_succession_gaps`` tool."""
+        import datetime
+
+        from open_garden_planner.agent_api.domain import find_succession_gaps_for_agent
+
+        self._agent_resolve_soil_bed(bed_id)
+        reference = _parse_agent_date(today, datetime.date.today(), "today")
+        return [
+            gap.model_dump()
+            for gap in find_succession_gaps_for_agent(
+                self._agent_succession_plan_raw(bed_id),
+                year=year,
+                today=reference,
+                location=self._project_manager.location,
+            )
+        ]
+
+    def _agent_suggest_succession(
+        self,
+        bed_id: str,
+        gap_start: str,
+        gap_end: str,
+        candidates: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rank crops for a succession gap (US-D3.2, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_suggest_succession(
+                bed_id, gap_start, gap_end, candidates
+            )
+        )
+
+    def _do_agent_suggest_succession(
+        self,
+        bed_id: str,
+        gap_start: str,
+        gap_end: str,
+        candidates: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """Main-thread body of the read-only ``suggest_succession`` tool."""
+        from open_garden_planner.agent_api.domain import suggest_succession_for_agent
+
+        self._agent_resolve_soil_bed(bed_id)
+        plan_raw = self._agent_succession_plan_raw(bed_id)
+        records = self._agent_species_records(candidates)
+        within = self._agent_plan_families_before(plan_raw, gap_start)
+        avoid = self._agent_rotation_avoid_families(bed_id)
+        neighbours = self._agent_concurrent_species_keys(plan_raw, gap_start, gap_end)
+
+        return [
+            s.model_dump()
+            for s in suggest_succession_for_agent(
+                candidates=records,
+                gap_start=gap_start,
+                gap_end=gap_end,
+                avoid_families=avoid,
+                within_plan_families=within,
+                neighbour_keys=neighbours,
+                service=self._companion_service,
+            )
+        ]
+
+    def _agent_species_records(self, candidates: list[str] | None) -> list[dict]:
+        """Resolve species names/keys to bundled species records.
+
+        An unresolvable name yields NO record rather than a blank placeholder, so
+        it cannot be suggested as a crop with no family and no maturity.
+        """
+
+        names = candidates or []
+        from open_garden_planner.services.bundled_species_db import lookup_species
+
+        records: list[dict] = []
+        for name in names:
+            found = lookup_species(str(name))
+            if found is not None:
+                records.append(dict(found))
+        return records
+
+    def _agent_plan_families_before(self, plan_raw: dict | None, gap_start: str) -> list[str]:
+        """Botanical families the bed already plans BEFORE a gap starts.
+
+        Succession is several crops in ONE season, which is why
+        ``CropRotationService.check_plant_placement`` cannot answer this: it
+        compares a candidate only against ``records[0]``, the single most recent
+        planting record, and therefore cannot see "tomato after the garlic entry
+        three slots ago". Succession entries also never enter the rotation
+        history (only the Crop Rotation panel writes those). So the within-plan
+        rule is computed here, from the plan itself, and the cross-YEAR rule is
+        still delegated to the service by ``_agent_rotation_avoid_families``.
+        """
+        from open_garden_planner.agent_api.domain import parse_iso_date
+
+        if not plan_raw:
+            return []
+        start = parse_iso_date(gap_start)
+        families: list[str] = []
+        for entry in plan_raw.get("entries", []):
+            entry_start = parse_iso_date(str(entry.get("start_date", "")))
+            if start is None or entry_start is None or entry_start >= start:
+                continue
+            found = _lookup_entry_species(entry)
+            if found is not None and found.get("family"):
+                families.append(str(found["family"]))
+        return families
+
+    def _agent_rotation_avoid_families(self, bed_id: str) -> list[str]:
+        """Cross-year family cooldown from the existing rotation service.
+
+        Reuses ``CropRotationService.get_recommendation`` verbatim — the 3-year
+        same-family rule is its job and is already Qt-free. With no recorded
+        history it reports UNKNOWN and no families to avoid, which correctly
+        constrains nothing.
+        """
+        from open_garden_planner.models.crop_rotation import CropRotationHistory, PlantingRecord
+        from open_garden_planner.services.crop_rotation_service import CropRotationService
+
+        # One malformed record must not silently disable the cooldown for
+        # EVERY bed, which a comprehension plus a broad catch did: a record
+        # missing `year` raised and returned [] for the whole garden.
+        records: list[PlantingRecord] = [
+            rec
+            for rec in (
+                _read_crop_rotation_record(raw)
+                for raw in self._project_manager.crop_rotation.get("records", [])
+            )
+            if rec is not None
+        ]
+        service = CropRotationService(CropRotationHistory(records=records))
+        return list(service.get_recommendation(bed_id).avoid_families)
+
+    def _agent_concurrent_species_keys(
+        self, plan_raw: dict | None, gap_start: str, gap_end: str
+    ) -> list[str]:
+        """Species planted in the plan OVERLAPPING a gap — the antagonism peers."""
+        from open_garden_planner.agent_api.domain import parse_iso_date
+
+        if not plan_raw:
+            return []
+        start = parse_iso_date(gap_start)
+        end = parse_iso_date(gap_end)
+        if start is None or end is None:
+            return []
+        keys: list[str] = []
+        for entry in plan_raw.get("entries", []):
+            entry_start = parse_iso_date(str(entry.get("start_date", "")))
+            entry_end = parse_iso_date(str(entry.get("end_date", "")))
+            if entry_start is None or entry_end is None:
+                continue
+            if entry_start <= end and entry_end >= start:
+                keys.extend(_entry_species_names(entry))
+        return keys
+
+    def _agent_set_succession_plan(
+        self,
+        bed_id: str,
+        entries: list[dict[str, Any]] | None,
+        year: int | None = None,
+    ) -> dict[str, Any]:
+        """Write a bed's succession plan (US-D3.2, token-gated write)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_succession_plan(bed_id, entries, year)
+        )
+
+    def _do_agent_set_succession_plan(
+        self,
+        bed_id: str,
+        entries: list[dict[str, Any]] | None,
+        year: int | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the token-gated ``set_succession_plan`` tool.
+
+        Validation happens BEFORE the command is built, so a refused call never
+        touches ``ProjectManager.succession_plans`` and never pushes onto the
+        undo stack — the refusal path is asserted, not assumed.
+
+        Mirrors ``_open_succession_plan_dialog``'s orchestration exactly: one
+        ``SetSuccessionPlanCommand`` executed through the shared CommandManager.
+        The canvas succession badge is refreshed by the already-wired
+        ``succession_plans_changed`` signal chain, not by a duplicated call here.
+        """
+        import datetime
+
+        from open_garden_planner.agent_api.domain import (
+            SuccessionPlanError,
+            build_succession_plan_for_agent,
+        )
+        from open_garden_planner.agent_api.schema import WriteResult
+        from open_garden_planner.core.commands import SetSuccessionPlanCommand
+
+        self._agent_resolve_soil_bed(bed_id)
+
+        resolved_year = year or datetime.date.today().year
+        if resolved_year < 1900 or resolved_year > 2200:
+            raise ValueError(
+                f"year {resolved_year} is out of range; pass a four-digit year."
+            )
+
+        known = self._agent_known_species_keys()
+        if not known:
+            logger.warning(
+                "Species roster unavailable; succession writes will accept any "
+                "species_key, so the rotation and companion checks cannot run "
+                "on them."
+            )
+
+        try:
+            plan = build_succession_plan_for_agent(
+                entries,
+                bed_id,
+                resolved_year,
+                known_species_keys=known or None,
+            )
+        except SuccessionPlanError as exc:
+            raise ValueError(str(exc)) from exc
+
+        cmd = SetSuccessionPlanCommand(self._project_manager, bed_id, plan)
+        self.canvas_view.command_manager.execute(cmd)
+        return WriteResult(
+            action="set_succession_plan",
+            undo_description=(
+                "Delete succession plan"
+                if plan is None
+                else f"Set succession plan ({len(plan.entries)} entries)"
+            ),
+        ).model_dump()
+
+    def _agent_set_frost_alerts(self, alerts: list) -> None:
+        """Keep an application-owned copy of the frost alerts (US-D3.3)."""
+        self._agent_frost_alerts = list(alerts or [])
+
+    # ── US-D3.3: calendar & task tools ───────────────────────────────────────
+
+    def _agent_build_task_state(
+        self, today: "datetime.date", *, year: int | None = None,
+        actionable_only: bool = True,
+    ) -> Any:
+        """Build the shared ``PlanState`` with an injected reference date.
+
+        One snapshot per tool call, exactly as the Tasks tab builds it, so an
+        agent and the user's own task list can never describe different tasks
+        from different inputs. ``today`` is threaded through
+        ``build_plan_state`` rather than read here, which is what makes the
+        whole answer reproducible.
+        """
+        from open_garden_planner.services.task_generator import build_plan_state
+
+        return build_plan_state(
+            self.canvas_scene,
+            self._project_manager,
+            getattr(self, "_agent_frost_alerts", None) or None,
+            self._soil_service,
+            today=today,
+            year=year,
+            actionable_only=actionable_only,
+            include_propagation=True,
+        )
+
+    def _agent_reference_date(self, today: str | None) -> "datetime.date":
+        """Parse the tool's injected reference date, defaulting to the wall clock."""
+        import datetime
+
+        return _parse_agent_date(today, datetime.date.today(), "today")
+
+    def _agent_get_tasks(
+        self,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        source: str | None = None,
+        bed_id: str | None = None,
+        species_key: str | None = None,
+        include_dismissed: bool = False,
+        today: str | None = None,
+    ) -> dict[str, Any]:
+        """Read the task calendar (US-D3.3, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_get_tasks(
+                from_date, to_date, source, bed_id, species_key, include_dismissed, today
+            )
+        )
+
+    def _do_agent_get_tasks(
+        self,
+        from_date: str | None,
+        to_date: str | None,
+        source: str | None,
+        bed_id: str | None,
+        species_key: str | None,
+        include_dismissed: bool,
+        today: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only ``get_tasks`` tool."""
+        import datetime
+
+        from open_garden_planner.agent_api.domain import (
+            TASK_SOURCES,
+            get_tasks_for_agent,
+        )
+        from open_garden_planner.services.task_generator import generate_for_date_window
+
+        if source is not None and source not in TASK_SOURCES:
+            raise ValueError(
+                f"source={source!r} is not a task source. Use one of: "
+                f"{', '.join(TASK_SOURCES)}."
+            )
+        if bed_id is not None:
+            self._agent_resolve_soil_bed(bed_id)
+
+        reference = self._agent_reference_date(today)
+        start = (
+            _parse_agent_date(from_date, reference - datetime.timedelta(days=30), "from_date")
+            if from_date
+            else None
+        )
+        end = (
+            _parse_agent_date(to_date, reference + datetime.timedelta(days=30), "to_date")
+            if to_date
+            else None
+        )
+
+        state = self._agent_build_task_state(
+            reference, actionable_only=from_date is None and to_date is None,
+        )
+        view = get_tasks_for_agent(
+            generate_for_date_window(
+                state,
+                start or reference - datetime.timedelta(days=30),
+                end or reference + datetime.timedelta(days=30),
+            ),
+            today=reference,
+            task_states=self._project_manager.task_states,
+            from_date=start,
+            to_date=end,
+            source=source,
+            bed_id=bed_id,
+            species_key=species_key,
+            include_dismissed=include_dismissed,
+            has_frost_dates=state.last_frost is not None,
+        )
+        return view.model_dump()
+
+    def _agent_get_task_calendar(
+        self,
+        year: int | None = None,
+        today: str | None = None,
+    ) -> dict[str, Any]:
+        """Read the month-bucketed task overview (US-D3.3, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_get_task_calendar(year, today)
+        )
+
+    def _do_agent_get_task_calendar(
+        self,
+        year: int | None,
+        today: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only ``get_task_calendar`` tool."""
+        import datetime
+
+        from open_garden_planner.agent_api.domain import get_task_calendar_for_agent
+        from open_garden_planner.services.task_generator import generate_for_date_window
+
+        reference = self._agent_reference_date(today)
+        if year is not None and (year < 1900 or year > 2200):
+            raise ValueError(f"year {year} is out of range; pass a four-digit year.")
+        state = self._agent_build_task_state(reference, year=year, actionable_only=False)
+        view = get_task_calendar_for_agent(
+            generate_for_date_window(
+                state, datetime.date(state.year, 1, 1), datetime.date(state.year, 12, 31),
+            ),
+            today=reference,
+            year=year,
+            task_states=self._project_manager.task_states,
+            has_frost_dates=state.last_frost is not None,
+        )
+        return view.model_dump()
+
+    def _agent_add_manual_task(
+        self,
+        title: str,
+        date: str | None = None,
+        notes: str | None = None,
+        bed_id: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """File or edit one manual task (US-D3.3, token-gated write)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_manual_task(
+                title, date, notes, bed_id, task_id, adding=task_id is None
+            )
+        )
+
+    def _agent_edit_manual_task(
+        self,
+        title: str,
+        date: str | None = None,
+        notes: str | None = None,
+        bed_id: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Edit one manual task (US-D3.3, token-gated write).
+
+        Shares one body with ``add_manual_task``: the only difference is which
+        command runs, and a separate body would be a second validation path.
+        """
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_manual_task(
+                title, date, notes, bed_id, task_id, adding=False
+            )
+        )
+
+    def _do_agent_manual_task(
+        self,
+        title: str,
+        date: str | None,
+        notes: str | None,
+        bed_id: str | None,
+        task_id: str | None,
+        *,
+        adding: bool,
+    ) -> dict[str, Any]:
+        """Main-thread body of ``add_manual_task`` / ``edit_manual_task``.
+
+        Validation happens BEFORE the command is built, so a refused call never
+        touches ``ProjectManager.manual_tasks`` and never pushes onto the undo
+        stack. One command either way, so one call is exactly one undo step.
+        """
+        import datetime  # noqa: PLC0415 - local, as elsewhere in this module
+
+        from open_garden_planner.agent_api.schema import ManualTaskResult
+        from open_garden_planner.core.commands import (
+            AddManualTaskCommand,
+            EditManualTaskCommand,
+        )
+        from open_garden_planner.models.task import ManualTask
+
+        clean_title = (title or "").strip()
+        if not clean_title:
+            raise ValueError("title is required and must not be empty.")
+
+        resolved_date = ""
+        if date:
+            resolved_date = _parse_agent_date(
+                date, datetime.date.today(), "date"
+            ).isoformat()
+
+        if bed_id is not None:
+            self._agent_resolve_soil_bed(bed_id)
+
+        if not adding:
+            if not task_id:
+                raise ValueError("task_id is required to edit a task.")
+            if task_id not in self._project_manager.manual_tasks:
+                self._agent_refuse_generated_task(task_id)
+
+        task = ManualTask(
+            date=resolved_date,
+            title=clean_title,
+            notes=notes or "",
+            bed_id=bed_id,
+        )
+        if task_id:
+            task.id = task_id
+
+        cmd = (
+            AddManualTaskCommand(self._project_manager, task)
+            if adding
+            else EditManualTaskCommand(self._project_manager, task)
+        )
+        self.canvas_view.command_manager.execute(cmd)
+        self.tasks_view.schedule_refresh()
+        return ManualTaskResult(
+            task_id=task.id,
+            title=task.title,
+            date=task.date,
+        ).model_dump()
+
+    def _agent_refuse_generated_task(self, task_id: str) -> None:
+        """Refuse a non-manual task id, naming why (US-D3.3).
+
+        Raised when an id is not in ``manual_tasks``. The id is then either a
+        generated task — which is derived state, rebuilt from the plan on every
+        call, so editing or deleting it would be silently undone by the next
+        read — or simply unknown. Both are refusals, and the message says which
+        is which rather than pretending to know.
+        """
+        from open_garden_planner.agent_api.domain import TASK_SOURCES
+
+        raise ValueError(
+            f"No manual task has id {task_id!r}. Generated tasks "
+            f"({', '.join(s for s in TASK_SOURCES if s != 'manual')}) are "
+            "derived from the plan and are rebuilt on every read, so they cannot "
+            "be edited or deleted — editing one would be undone by the next "
+            "call. Use add_manual_task for new work, and dismiss or complete "
+            "this task in the Tasks tab."
+        )
+
+    def _agent_delete_manual_task(self, task_id: str) -> dict[str, Any]:
+        """Delete one manual task (US-D3.3, token-gated write)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_delete_manual_task(task_id)
+        )
+
+    def _do_agent_delete_manual_task(self, task_id: str) -> dict[str, Any]:
+        """Main-thread body of the token-gated ``delete_manual_task`` tool."""
+        from open_garden_planner.agent_api.schema import ManualTaskResult
+        from open_garden_planner.core.commands import DeleteManualTaskCommand
+
+        # `manual_tasks` stores ManualTask.to_dict() values, not objects.
+        existing = self._project_manager.manual_tasks.get(task_id)
+        if existing is None:
+            self._agent_refuse_generated_task(task_id)
+
+        self.canvas_view.command_manager.execute(
+            DeleteManualTaskCommand(self._project_manager, task_id)
+        )
+        self.tasks_view.schedule_refresh()
+        return ManualTaskResult(
+            task_id=task_id,
+            title=existing.get("title", ""),
+            date=existing.get("date", ""),
+            deleted=True,
+        ).model_dump()
+
+    # ── US-D3.4: soil amendment tools ────────────────────────────────────────
+
+    @staticmethod
+    def _agent_global_target_id() -> str:
+        """The plan-wide soil-test target id (the GUI's 'global' default)."""
+        from open_garden_planner.services.soil_service import GLOBAL_TARGET_ID
+
+        return GLOBAL_TARGET_ID
+
+    def _agent_soil_target(self, bed_id: str | None) -> tuple[str, str, bool]:
+        """Resolve ``bed_id`` to a soil-test target id, its label, and a flag.
+
+        Returns ``(target_id, display_name, is_global)``. ``bed_id=None`` means
+        the plan-wide default, the same target the GUI's context menu offers.
+        Anything else must be a soil-capable bed: a TRELLIS is a plant parent
+        but holds no soil, so it is refused here for soil reads exactly as it is
+        for a succession plan.
+        """
+        from open_garden_planner.services.soil_service import GLOBAL_TARGET_ID
+
+        if bed_id is None:
+            return GLOBAL_TARGET_ID, self.tr("Plan-wide default"), True
+        item = self._agent_resolve_soil_bed(bed_id)
+        name = getattr(item, "name", "") or str(bed_id)
+        return bed_id, name, False
+
+    def _agent_get_soil_status(
+        self,
+        bed_id: str | None = None,
+        today: str | None = None,
+    ) -> dict[str, Any]:
+        """Read one bed's effective soil record (US-D3.4, read-only).
+
+        ``bed_id=None`` covers every soil-capable bed, each labelled with its own
+        ``record_source``, so a bed answered by the plan default is never
+        mistaken for a bed that was tested.
+        """
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_get_soil_status(bed_id, today)
+        )
+
+    def _do_agent_get_soil_status(
+        self,
+        bed_id: str | None,
+        today: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only ``get_soil_status`` tool."""
+        from open_garden_planner.agent_api.domain import _soil_status_from
+
+        reference = self._agent_reference_date(today)
+        if bed_id is not None:
+            targets = [self._agent_soil_target(bed_id)]
+        else:
+            targets = [
+                self._agent_soil_target(item_id)
+                for item_id in self._agent_soil_bed_ids()
+            ]
+
+        payload: dict[str, Any] = {"beds": []}
+        for target_id, name, _is_global in targets:
+            record, source, history = self._agent_effective_soil(target_id)
+            view = _soil_status_from(
+                bed_id=target_id,
+                bed_name=name,
+                record=record,
+                record_source=source,
+                history=history,
+                today=reference,
+                health_level=SoilService.health_level,
+                is_test_overdue=SoilService.is_test_overdue,
+            )
+            payload["beds"].append(view.model_dump())
+        return payload
+
+    def _agent_effective_soil(self, target_id: str) -> tuple[Any, str, Any]:
+        """The service's effective record, provenance and matching history."""
+        return self._soil_service.get_effective_record_with_source(target_id)
+
+    def _agent_soil_bed_ids(self) -> list[str]:
+        """Every soil-capable bed id in the plan, sorted."""
+        from open_garden_planner.core.object_types import is_bed_type
+
+        ids = [
+            str(item.item_id)
+            for item in self.canvas_scene.items()
+            if is_bed_type(getattr(item, "object_type", None))
+        ]
+        return sorted(ids)
+
+    def _agent_recommend_amendments(
+        self,
+        bed_id: str,
+        today: str | None = None,
+    ) -> dict[str, Any]:
+        """Read amendment recommendations for one bed (US-D3.4, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_recommend_amendments(bed_id, today)
+        )
+
+    def _do_agent_recommend_amendments(
+        self,
+        bed_id: str,
+        today: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only ``recommend_amendments`` tool."""
+        from open_garden_planner.agent_api.domain import (
+            recommend_amendments_for_agent,
+        )
+        from open_garden_planner.app.settings import active_language
+
+        reference = self._agent_reference_date(today)
+        target_id, _name, _is_global = self._agent_soil_target(bed_id)
+        record, _source, _history = self._agent_effective_soil(target_id)
+        recs = SoilService.calculate_amendments(
+            record,
+            bed_area_m2=(
+                self._lookup_bed_area_m2(target_id)
+                if target_id != self._agent_global_target_id()
+                else 0.0
+            ),
+        )
+        view = recommend_amendments_for_agent(
+            bed_id=target_id,
+            record=record,
+            today=reference,
+            recommendations=recs,
+            language=active_language(),
+        )
+        return view.model_dump()
+
+    def _agent_get_soil_mismatches(
+        self,
+        bed_id: str | None = None,
+        today: str | None = None,
+    ) -> dict[str, Any]:
+        """Read plant/soil disagreements (US-D3.4, read-only)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_get_soil_mismatches(bed_id, today)
+        )
+
+    def _do_agent_get_soil_mismatches(
+        self,
+        bed_id: str | None,
+        today: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the read-only ``get_soil_mismatches`` tool.
+
+        Builds the per-bed species lists the same way the canvas overlay does
+        (``child.metadata['plant_species']`` -> ``PlantSpeciesData.from_dict``),
+        so the agent's disagreements and the user's red/amber borders come from
+        one set of records rather than two lookups that can drift.
+        """
+        from open_garden_planner.agent_api.domain import (
+            get_soil_mismatches_for_agent,
+        )
+        from open_garden_planner.models.plant_data import PlantSpeciesData
+
+        reference = self._agent_reference_date(today)
+        wanted: set[str] | None = None
+        if bed_id is not None:
+            wanted = {self._agent_soil_target(bed_id)[0]}
+        else:
+            wanted = set(self._agent_soil_bed_ids())
+
+        all_items = list(self.canvas_scene.items())
+        by_bed: dict[str, Any] = {}
+        for item in all_items:
+            target_id = str(getattr(item, "item_id", ""))
+            if target_id not in wanted:
+                continue
+            record, _source, _history = self._agent_effective_soil(target_id)
+            if record is None:
+                by_bed[target_id] = get_soil_mismatches_for_agent(
+                    bed_id=target_id,
+                    today=reference,
+                    details=[],
+                    coverage="no_soil_test",
+                ).model_dump()
+                continue
+            child_ids = {str(c) for c in getattr(item, "_child_item_ids", []) or []}
+            specs: list[Any] = []
+            for child in all_items:
+                if str(getattr(child, "item_id", "")) not in child_ids:
+                    continue
+                ps_dict = (getattr(child, "metadata", None) or {}).get("plant_species")
+                if isinstance(ps_dict, dict) and ps_dict:
+                    with contextlib.suppress(Exception):
+                        specs.append(PlantSpeciesData.from_dict(ps_dict))
+            by_bed[target_id] = get_soil_mismatches_for_agent(
+                bed_id=target_id,
+                today=reference,
+                details=SoilService.get_mismatch_details(record, specs),
+            ).model_dump()
+
+        tested = sum(b["coverage"] == "ok" for b in by_bed.values())
+        coverage = (
+            "no_beds" if not by_bed else
+            "no_soil_test" if not tested else
+            "ok" if tested == len(by_bed) else "partial_soil_tests"
+        )
+        return {
+            "coverage": coverage,
+            "today": reference.isoformat(),
+            "beds": dict(sorted(by_bed.items())),
+        }
+
+    def _agent_record_soil_test(
+        self,
+        bed_id: str | None = None,
+        ph: float | None = None,
+        n_level: int | None = None,
+        p_level: int | None = None,
+        k_level: int | None = None,
+        ca_level: int | None = None,
+        mg_level: int | None = None,
+        s_level: int | None = None,
+        soil_texture: str | None = None,
+        test_date: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a soil test on the Rapitest kit scale (US-D3.4, token-gated write)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_record_soil_test(
+                bed_id, ph, n_level, p_level, k_level, ca_level, mg_level,
+                s_level, soil_texture, test_date, notes,
+            )
+        )
+
+    def _do_agent_record_soil_test(
+        self,
+        bed_id: str | None,
+        ph: float | None,
+        n_level: int | None,
+        p_level: int | None,
+        k_level: int | None,
+        ca_level: int | None,
+        mg_level: int | None,
+        s_level: int | None,
+        soil_texture: str | None,
+        test_date: str | None,
+        notes: str | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of the token-gated ``record_soil_test`` tool.
+
+        Validation runs BEFORE the command is built, so a refused call leaves
+        ``ProjectManager.soil_tests`` and the undo stack untouched — asserted in
+        the tests, not assumed.
+
+        Mirrors the GUI's soil-test orchestration: one ``AddSoilTestCommand``
+        through the shared CommandManager, then the same three refreshes the
+        dialog path performs, so the canvas mismatch borders, the seasonal
+        badges and the dashboard all agree with the new reading.
+        """
+        import datetime
+
+        from open_garden_planner.agent_api.domain import (
+            SoilTestError,
+            build_soil_record_for_agent,
+        )
+        from open_garden_planner.agent_api.schema import WriteResult
+        from open_garden_planner.core.commands import AddSoilTestCommand
+
+        target_id, _name, _is_global = self._agent_soil_target(bed_id)
+        try:
+            record = build_soil_record_for_agent(
+                ph=ph,
+                n_level=n_level,
+                p_level=p_level,
+                k_level=k_level,
+                ca_level=ca_level,
+                mg_level=mg_level,
+                s_level=s_level,
+                soil_texture=soil_texture,
+                test_date=test_date,
+                notes=notes,
+                today=datetime.date.today(),
+            )
+        except SoilTestError as exc:
+            raise ValueError(str(exc)) from exc
+
+        self.canvas_view.command_manager.execute(
+            AddSoilTestCommand(self._project_manager, target_id, record)
+        )
+        self.canvas_view.refresh_soil_mismatches()
+        self.canvas_view.refresh_soil_badges()
+        self.calendar_view.refresh()
+        self.tasks_view.schedule_refresh()
+        return WriteResult(
+            action="record_soil_test",
+            undo_description=self.tr("Remove soil test"),
+        ).model_dump()
+
+    def _agent_known_species_keys(self) -> set[str]:
+        """Every canonical species key this plan accepts: bundled DB + placed plants.
+
+        The write validator needs KEYS, so this derives them directly with the
+        canonical ``species_key()`` (ADR-016) instead of collecting names and
+        re-resolving them.
+
+        That distinction is the whole point for placed plants. A Permapeople or
+        custom species has a ``source_id`` that is its canonical key, and its
+        name resolves to NOTHING in the bundled DB - so an earlier version that
+        pushed placed-plant names back through ``lookup_species`` got None for
+        every one of them. The roster then missed them and ``set_succession_plan``
+        refused a species the app had just shown the agent, while the sibling
+        tool ``set_species`` accepted it. Three agents disagreeing about the same
+        plant is worse than any one of them being wrong.
+        """
+        from open_garden_planner.models.plant_data import species_key
+        from open_garden_planner.services.bundled_species_db import get_species_db
+
+        keys: set[str] = set()
+
+        def _add(record: object) -> None:
+            if not isinstance(record, dict):
+                return
+            key = species_key(record)
+            if key and key != "_unknown":
+                keys.add(key)
+
+        try:
+            for record in get_species_db().values():
+                _add(record)
+        except Exception:  # noqa: BLE001 - a validation aid must never be the thing
+            # that fails a write; without the bundled roster the species check is
+            # skipped rather than turned into a blanket refusal. The placed-plant
+            # pass below still runs.
+            logger.warning("Could not enumerate bundled species for validation")
+
+        try:
+            for item in self.canvas_scene.items():
+                meta = getattr(item, "metadata", None)
+                species = (meta or {}).get("plant_species")
+                _add(species)
+        except Exception:  # noqa: BLE001 - see above
+            logger.warning("Could not enumerate placed plants for validation")
+
+        return keys
+
+    def _agent_linked_roof_ridge(self, item: Any) -> list[Any]:
+        """A HOUSE's linked ``ROOF_RIDGE`` item, if any — mirroring
+        ``CanvasView._delete_selected_items``'s ``ridge_item_id`` expansion so
+        deleting a house doesn't orphan its ridge polyline."""
+        from uuid import UUID
+
+        from open_garden_planner.core.object_types import ObjectType
+        from open_garden_planner.ui.canvas.items import GardenItemMixin
+
+        if not isinstance(item, GardenItemMixin) or item.object_type != ObjectType.HOUSE:
+            return []
+        ridge_id_str = item.metadata.get("ridge_item_id")
+        if not ridge_id_str:
+            return []
+        try:
+            ridge = self.canvas_scene.find_item_by_id(UUID(ridge_id_str))
+        except ValueError:
+            return []
+        return [ridge] if ridge is not None else []
+
+    # --- US-D2.2: resize / rotate ------------------------------------------
+
+    def _agent_require_unconstrained(
+        self,
+        item: Any,
+        item_id: str,
+        tool_name: str,
+    ) -> None:
+        """Refuse a geometry edit on a constrained object — the final D2.6 rule.
+
+        ``CanvasView`` runs a live, iterative solver that may move several
+        connected items. US-D2.6 deliberately does not expose that multi-item
+        mutation to one-shot agent calls: silently skipping it would violate the
+        user's design intent. The agent can call ``get_geometry`` to see the
+        exact constraints, then ask the user to remove or edit them in the app.
+
+        This one helper is the perimeter for every geometry-changing tool:
+        move/set-position, resize/rotate, species assignment when it resizes,
+        and vertex writes.
+        """
+        constraints = sorted(
+            self._agent_item_constraints(item),
+            key=lambda constraint: (
+                constraint.constraint_type.name,
+                str(constraint.constraint_id),
+            ),
+        )
+        if not constraints:
+            return
+        first = constraints[0]
+        extra = f" (+{len(constraints) - 1} more)" if len(constraints) > 1 else ""
+        subject = str(item_id)
+        raise ValueError(
+            f"{subject} participates in geometric constraint "
+            f"{first.constraint_type.name}/{first.constraint_id}{extra}; "
+            f"{tool_name} does not support constrained objects. Call get_geometry "
+            "to inspect the constraints, then remove them or edit the object in "
+            "the app."
+        )
+
+    def _agent_resize_object(
+        self,
+        item_id: str,
+        width: float | None,
+        height: float | None,
+        radius: float | None,
+    ) -> dict[str, Any]:
+        """Resize one object ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_resize_object(item_id, width, height, radius)
+        )
+
+    def _do_agent_resize_object(
+        self,
+        item_id: str,
+        width: float | None,
+        height: float | None,
+        radius: float | None,
+    ) -> dict[str, Any]:
+        """Main-thread body of ``resize_object`` — one undoable step (US-D2.2).
+
+        Goes through ``ui.canvas.geometry_apply``, the canonical apply path the
+        properties panel's numeric-entry branches and each item's drag-release
+        handler now share. That extraction is the load-bearing half of this
+        story: before it, every caller carried its own ``apply_func`` closure
+        and the copies had already drifted (the panel's never re-pinned
+        ``transformOriginPoint``, so a rotated item jumped — see section 11.4).
+        A third copy for the agent would have been a third chance to drift.
+
+        Anchor policy: **the object's scene centre is preserved**, for every
+        type. ``create_object`` and every read tool speak in centres, so it is
+        the only rule an agent can reason about without knowing an item's
+        internal anchor — and it is achieved by passing ``keep_center=True`` to
+        the shared builder, not by a second code path.
+
+        Refuses (raises) rather than guessing: a vertex-backed object
+        (polygon/polyline — US-D2.6's vertex tools own those), a dimension that
+        doesn't fit the shape, a missing dimension, a non-finite/non-positive
+        or implausible extent, and — like every D2 geometry tool — a
+        constrained object. ``_resolve_agent_item`` supplies the shared
+        group-member / journal-pin / locked-layer refusals.
+        """
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.core.commands import ResizeItemCommand
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            apply_rect_like_geometry,
+            build_circle_resize,
+            build_rect_resize,
+            is_resizable_rect_like,
+            is_round_like,
+        )
+
+        item = self._resolve_agent_item(item_id)
+        type_name = self._agent_object_type_name(item)
+        self._agent_require_unconstrained(item, item_id, "resize_object")
+
+        if not is_resizable_rect_like(item):
+            # A polygon/polyline has a different geometry model; a text label or
+            # group has no width/height box at all. Name the applicable path
+            # without implying a tool exists for every non-rect-backed item.
+            raise ValueError(
+                f"{item_id} is a {type_name}, which has no width/height box, so "
+                "resize_object cannot resize it. Polygons and polylines are "
+                "vertex-backed — use get_geometry and set_vertex; a group is "
+                "resized by addressing its members individually."
+            )
+
+        # Same predicate the builders use internally — see is_round_like.
+        is_round = is_round_like(item)
+        current_rect = item.rect()
+        canvas_rect = self.canvas_scene.canvas_rect
+        new_width, new_height = edits.validate_resize_request(
+            object_type=type_name,
+            is_round=is_round,
+            current_width=current_rect.width(),
+            current_height=current_rect.height(),
+            canvas_width_cm=canvas_rect.width(),
+            canvas_height_cm=canvas_rect.height(),
+            width=width,
+            height=height,
+            radius=radius,
+        )
+
+        if is_round:
+            old_geometry, new_geometry = build_circle_resize(
+                item, new_width, keep_center=True
+            )
+        else:
+            old_geometry, new_geometry = build_rect_resize(
+                item, new_width, new_height, keep_center=True
+            )
+
+        cmd = ResizeItemCommand(
+            item, old_geometry, new_geometry, apply_rect_like_geometry
+        )
+        self.canvas_view.command_manager.execute(cmd)
+
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id,
+            "action": "resize",
+            "undo_description": cmd.description,
+            "x": cx,
+            "y": cy,
+            "width": None if is_round else new_width,
+            "height": None if is_round else new_height,
+            "radius": (new_width / 2.0) if is_round else None,
+        }
+
+    def _agent_rotate_object(
+        self, item_id: str, angle: float, relative: bool
+    ) -> dict[str, Any]:
+        """Rotate one object ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_rotate_object(item_id, angle, relative)
+        )
+
+    def _do_agent_rotate_object(
+        self, item_id: str, angle: float, relative: bool
+    ) -> dict[str, Any]:
+        """Main-thread body of ``rotate_object`` — one undoable step (US-D2.2).
+
+        Uses ``geometry_apply.apply_rotation``, which is exactly what every
+        per-item drag-release closure already did: call the item's own
+        ``_apply_rotation``. That matters for ``PolygonItem``, which overrides
+        it to keep an attached roof ridge on the boundary — reimplementing the
+        rotation here would have silently dropped that.
+
+        **Sign convention, measured rather than assumed** (issue #267 is the
+        cautionary tale — a plausible-sounding docstring that sent agents the
+        wrong way): a positive angle rotates the object COUNTER-CLOCKWISE. An
+        object whose long axis points east points north after ``+90``.
+        ``tests/unit/test_agent_api_edits.py`` pins this against a real item's
+        corner positions, so the test fails if the convention ever inverts.
+
+        Refuses a non-finite or implausibly large angle, and — like every D2
+        geometry tool — a constrained object.
+        """
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.core.commands import RotateItemCommand
+        from open_garden_planner.ui.canvas.geometry_apply import apply_rotation
+
+        item = self._resolve_agent_item(item_id)
+        self._agent_require_unconstrained(item, item_id, "rotate_object")
+
+        current_angle = float(getattr(item, "rotation_angle", 0.0))
+        if not hasattr(item, "_apply_rotation"):
+            raise ValueError(
+                f"{item_id} is a "
+                f"{self._agent_object_type_name(item)}, which cannot be "
+                "rotated."
+            )
+        new_angle = edits.validate_rotation(
+            angle, relative=relative, current_angle=current_angle
+        )
+
+        cmd = RotateItemCommand(item, current_angle, new_angle, apply_rotation)
+        self.canvas_view.command_manager.execute(cmd)
+
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id,
+            "action": "rotate",
+            "undo_description": cmd.description,
+            "x": cx,
+            "y": cy,
+            "rotation_deg": new_angle,
+        }
+
+    # --- US-D2.6: low-level geometry escape hatches --------------------------
+
+    def _agent_resolve_vertex_item(self, item_id: str, tool_name: str) -> Any:
+        """Resolve a writable vertex-backed item and clear the D2 geometry gate."""
+        from open_garden_planner.ui.canvas.geometry_apply import is_vertex_editable
+
+        item = self._resolve_agent_item(item_id)
+        self._agent_require_unique_items([item], action=tool_name)
+        self._agent_require_unconstrained(item, item_id, tool_name)
+        if not is_vertex_editable(item):
+            raise ValueError(
+                f"{item_id} is a {self._agent_object_type_name(item)}, which is not "
+                "a vertex-backed shape. set_vertex/add_vertex/delete_vertex only "
+                "edit polygon and polyline items; use resize_object for "
+                "rect-backed shapes."
+            )
+        return item
+
+    def _agent_validate_vertex_point(
+        self, x: float, y: float
+    ) -> tuple[float, float]:
+        from open_garden_planner.agent_api import edits
+
+        canvas = self.canvas_scene.canvas_rect
+        return edits.validate_scene_point(
+            x,
+            y,
+            canvas_width_cm=canvas.width(),
+            canvas_height_cm=canvas.height(),
+        )
+
+    def _agent_set_vertex(
+        self, item_id: str, index: int, x: float, y: float
+    ) -> dict[str, Any]:
+        """Move one polygon/polyline vertex ON the Qt main thread."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_vertex(item_id, index, x, y)
+        )
+
+    def _do_agent_set_vertex(
+        self, item_id: str, index: int, x: float, y: float
+    ) -> dict[str, Any]:
+        from PyQt6.QtCore import QPointF
+
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            build_move_vertex_command,
+            local_vertex_for_scene,
+        )
+
+        item = self._agent_resolve_vertex_item(item_id, "set_vertex")
+        count = int(item._get_vertex_count())
+        edits.validate_vertex_index(index, vertex_count=count, operation="set")
+        target_x, target_y = self._agent_validate_vertex_point(x, y)
+        old_local = QPointF(item._get_vertex_position(index))
+        new_local = local_vertex_for_scene(item, index, target_x, target_y)
+        if new_local == old_local:
+            raise ValueError(
+                f"vertex {index} of {item_id} is already at "
+                f"({target_x:g}, {target_y:g}); nothing to change."
+            )
+        command = build_move_vertex_command(item, index, old_local, new_local)
+        self.canvas_view.command_manager.execute(command)
+        actual = item.mapToScene(item._get_vertex_position(index))
+        return self._agent_vertex_result(
+            item,
+            item_id,
+            action="set_vertex",
+            command=command,
+            index=index,
+            actual=actual,
+        )
+
+    def _agent_add_vertex(
+        self, item_id: str, index: int, x: float, y: float
+    ) -> dict[str, Any]:
+        """Insert one polygon/polyline vertex ON the Qt main thread."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_add_vertex(item_id, index, x, y)
+        )
+
+    def _do_agent_add_vertex(
+        self, item_id: str, index: int, x: float, y: float
+    ) -> dict[str, Any]:
+        from PyQt6.QtCore import QPointF
+
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            build_add_vertex_command,
+        )
+
+        item = self._agent_resolve_vertex_item(item_id, "add_vertex")
+        count = int(item._get_vertex_count())
+        edits.validate_vertex_index(index, vertex_count=count, operation="add")
+        target_x, target_y = self._agent_validate_vertex_point(x, y)
+        local = item.mapFromScene(QPointF(target_x, target_y))
+        command = build_add_vertex_command(item, index, local)
+        self.canvas_view.command_manager.execute(command)
+        actual = item.mapToScene(item._get_vertex_position(index))
+        return self._agent_vertex_result(
+            item,
+            item_id,
+            action="add_vertex",
+            command=command,
+            index=index,
+            actual=actual,
+        )
+
+    def _agent_delete_vertex(self, item_id: str, index: int) -> dict[str, Any]:
+        """Delete one polygon/polyline vertex ON the Qt main thread."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_delete_vertex(item_id, index)
+        )
+
+    def _do_agent_delete_vertex(self, item_id: str, index: int) -> dict[str, Any]:
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            build_delete_vertex_command,
+        )
+
+        item = self._agent_resolve_vertex_item(item_id, "delete_vertex")
+        count = int(item._get_vertex_count())
+        edits.validate_vertex_index(
+            index,
+            vertex_count=count,
+            operation="delete",
+            minimum_count=int(item._get_minimum_vertex_count()),
+        )
+        deleted = item.mapToScene(item._get_vertex_position(index))
+        command = build_delete_vertex_command(item, index)
+        self.canvas_view.command_manager.execute(command)
+        return self._agent_vertex_result(
+            item,
+            item_id,
+            action="delete_vertex",
+            command=command,
+            index=index,
+            actual=deleted,
+        )
+
+    def _agent_vertex_result(
+        self,
+        item: Any,
+        item_id: str,
+        *,
+        action: str,
+        command: Any,
+        index: int,
+        actual: Any,
+    ) -> dict[str, Any]:
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id,
+            "action": action,
+            "undo_description": command.description,
+            "x": cx,
+            "y": cy,
+            "vertex_index": index,
+            "vertex_x_cm": float(actual.x()),
+            "vertex_y_cm": float(actual.y()),
+            "vertex_count": int(item._get_vertex_count()),
+        }
+
+    # --- US-D2.3: species / parent bed --------------------------------------
+
+    def _agent_set_species(
+        self, item_id: str, species: str | None, apply_database_size: bool
+    ) -> dict[str, Any]:
+        """Assign a plant's species ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_species(item_id, species, apply_database_size)
+        )
+
+    def _do_agent_set_species(
+        self, item_id: str, species: str | None, apply_database_size: bool
+    ) -> dict[str, Any]:
+        """Main-thread body of ``set_species`` — one undoable step (US-D2.3).
+
+        Delegates to ``ui.plant_species_assignment.apply_species_to_item``, the
+        helper issue #213 already extracted so the plant-database panel and the
+        Plants-menu species search behave identically. The agent is simply a
+        third caller of it — building an ``ApplySpeciesCommand`` here would
+        have been a fourth definition of "assign a species".
+
+        That helper resizes the drawn footprint so its diameter equals the
+        species' ``max_spread_cm``, silently, unless a manual
+        ``spacing_radius_cm`` override disagrees — in which case the GUI shows
+        a two-button dialog. ``apply_database_size`` is the agent's answer to
+        that dialog: ``True`` applies the database values (clearing the
+        override), ``False`` keeps the user's custom ones. **It is not a
+        general "don't resize" switch** — without a conflicting override the
+        footprint always adopts the database size, exactly as it does in the
+        app.
+
+        Deliberate asymmetry with ``create_object`` (recorded in ADR-036's
+        D2.3 addendum): creation sizes a new plant from the gallery defaults,
+        because ``radius`` is an explicit creation parameter and having a
+        species silently overrule it would make the two arguments fight. An
+        agent that wants a database-sized new plant calls ``create_object``
+        and then ``set_species`` — two documented steps, not a gap.
+
+        Clearing (``species=None``) goes through the same command with
+        ``new_species=None`` and leaves the footprint alone: there is no
+        database size to adopt, and shrinking a plant the user drew because
+        its label was removed would be surprising.
+        """
+        from open_garden_planner.core.commands import ApplySpeciesCommand
+        from open_garden_planner.services.bundled_species_db import (
+            lookup_species,
+            merge_calendar_data,
+        )
+        from open_garden_planner.ui.plant_species_assignment import apply_species_to_item
+
+        item = self._agent_resolve_plant(item_id, "set_species")
+        # Assigning a species RESIZES the footprint (to max_spread_cm), so this
+        # is a geometry mutation and must clear the same gate resize_object
+        # does. Without this an agent refused by resize_object could get the
+        # resize through set_species instead — the perimeter with a door in it
+        # that the US-D2.2 senior review found.
+        if species is not None:
+            self._agent_require_unconstrained(item, item_id, "set_species")
+
+        current = item.metadata.get("plant_species")
+        if species is None:
+            old_species = current
+            if not isinstance(old_species, dict):
+                raise ValueError(
+                    f"{item_id} has no species to clear; nothing to change."
+                )
+            cmd = ApplySpeciesCommand(
+                item,
+                old_species,  # a dict — the guard above raised otherwise
+                None,
+                getattr(item, "spacing_radius_cm", None),
+                getattr(item, "spacing_radius_cm", None),
+            )
+            self.canvas_view.command_manager.execute(cmd)
+            self._agent_refresh_soil_mismatches()
+            resulting_key = None
+            undo_description = cmd.description
+        else:
+            record = lookup_species(species)
+            if record is None:
+                raise ValueError(
+                    f"No species named {species!r} in the bundled database. "
+                    "Read the garden://species resource for the full list "
+                    "(scientific names, common names and aliases all match)."
+                )
+            species_dict = merge_calendar_data(dict(record))
+            # Re-assigning the species a plant already has is a no-op that would
+            # still push an undo step — the same lie set_parent_bed refuses.
+            # Compared on the canonical key, so "Tomato" and its scientific name
+            # are recognised as the same request.
+            resolved = species_dict.get("scientific_name")
+            if (
+                isinstance(current, dict)
+                and resolved
+                and current.get("scientific_name") == resolved
+            ):
+                raise ValueError(
+                    f"{item_id} already has species {resolved!r}; nothing to "
+                    "change."
+                )
+            apply_species_to_item(
+                item, species_dict, confirm=lambda: apply_database_size
+            )
+            resulting_key = species_dict.get("scientific_name") or species
+            # The command's label is a constant; name it directly rather than
+            # reading the undo stack's top (apply_species_to_item applies
+            # without pushing when there is no command manager, and the stack
+            # top would then be an unrelated command the agent would be told
+            # Ctrl+Z reverses) or constructing a throwaway command to ask it.
+            # INVARIANT: this string must equal ApplySpeciesCommand.description;
+            # it is the same label the real command would have produced.
+            undo_description = QCoreApplication.translate(
+                "Commands", "Apply species data"
+            )
+
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id,
+            "action": "set_species",
+            "undo_description": undo_description,
+            "x": cx,
+            "y": cy,
+            "species_key": resulting_key,
+        }
+
+    def _agent_set_parent_bed(self, item_id: str, bed_id: str | None) -> dict[str, Any]:
+        """Link/unlink a plant to a bed ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_parent_bed(item_id, bed_id)
+        )
+
+    def _do_agent_set_parent_bed(
+        self, item_id: str, bed_id: str | None
+    ) -> dict[str, Any]:
+        """Main-thread body of ``set_parent_bed`` — one undoable step (US-D2.3).
+
+        A **link change only** — the plant does not move. ``move_object`` is
+        the implicit path (crossing a boundary reparents); this is the explicit
+        one, and it is the only way to reach a state the GUI can reach but no
+        agent could: a plant already sitting inside a bed that was drawn around
+        it, and therefore never linked.
+
+        **It deliberately does not require the plant to be geometrically inside
+        the bed.** The app's own properties-panel Link action does not either,
+        and refusing would make the tool useless for exactly the case it exists
+        for. ``link_is_geometric`` in the result says whether the link and the
+        geometry agree, so an agent can notice and tell the user.
+
+        ``SetParentBedCommand`` handles the rest of the contract itself: it
+        removes the child id from the old bed, adds it to the new one, raises
+        the plant above its parent, snapshots ``zValue`` so undo restores the
+        user's original elevation rather than a recomputed one, and calls
+        ``trigger_soil_mismatch_refresh`` because parent-link mutations do not
+        fire ``QGraphicsScene.changed`` (#173).
+        """
+        from uuid import UUID
+
+        from open_garden_planner.agent_api import edits
+        from open_garden_planner.core.commands import SetParentBedCommand
+
+        plant = self._agent_resolve_plant(item_id, "set_parent_bed")
+        old_parent_id = plant.parent_bed_id
+
+        new_parent_id: UUID | None = None
+        link_is_geometric: bool | None = None
+        if bed_id is not None:
+            bed = self._resolve_agent_item(bed_id)
+            edits.require_plant_parent_type(
+                self._agent_object_type_name(bed), bed_id
+            )
+            new_parent_id = bed.item_id
+            # Containment uses the same construct CanvasView's own reparent test
+            # does (boundingRect centre), so the agent's link and the GUI's
+            # auto-link agree on the boundary case. Note this is deliberately
+            # NOT _agent_item_center's rect-based centre: that one exists so a
+            # reported x/y matches the read tools, whereas this one exists to
+            # match the GUI's containment decision. The two differ by the
+            # antagonist badge's asymmetric overflow (~0.07 * radius).
+            plant_center = plant.mapToScene(plant.boundingRect().center())
+            link_is_geometric = bool(bed.contains(bed.mapFromScene(plant_center)))
+
+        if new_parent_id == old_parent_id:
+            where = "already unlinked" if bed_id is None else f"already linked to {bed_id}"
+            raise ValueError(f"{item_id} is {where}; nothing to change.")
+
+        cmd = SetParentBedCommand(
+            self.canvas_scene, plant, old_parent_id, new_parent_id
+        )
+        self.canvas_view.command_manager.execute(cmd)
+
+        cx, cy = self._agent_item_center(plant)
+        return {
+            "item_id": item_id,
+            "action": "set_parent_bed",
+            "undo_description": cmd.description,
+            "x": cx,
+            "y": cy,
+            "bed_membership_changed": True,
+            "new_parent_bed_id": str(new_parent_id) if new_parent_id else None,
+            "link_is_geometric": link_is_geometric,
+        }
+
+    # --- issue #338: arrange (stacking order) -------------------------------
+
+    def _agent_arrange_object(self, item_id: str, action: str) -> dict[str, Any]:
+        """Arrange one object within its layer ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_arrange_object(item_id, action)
+        )
+
+    def _do_agent_arrange_object(self, item_id: str, action: str) -> dict[str, Any]:
+        """Main-thread body of ``arrange_object`` — one undoable step (#338).
+
+        Routes through ``ui.canvas.arrange.build_arrange_command`` — the ONE
+        apply seam every arrange surface shares (Edit menu, context menu,
+        Properties panel buttons, and this tool). That seam already carries a
+        bed's contained plants along as one block and clamps a plant so it can
+        never sit below its own bed; duplicating that logic here instead of
+        calling the seam would be exactly the kind of second implementation
+        the seam exists to prevent (see ``ui/canvas/arrange.py``'s docstring).
+
+        ``_resolve_agent_item`` supplies the shared group-member / journal-pin
+        / locked-layer refusals. On top of those, this refuses (raises)
+        whenever the arrange gesture would be a no-op: already at the
+        front/back of the layer, or no overlapping object to step past for
+        bring_forward/send_backward — mirroring the ``set_parent_bed``
+        no-op precedent rather than silently reporting success for nothing.
+        """
+        from open_garden_planner.core.stacking import ArrangeMode, ArrangeOutcome
+        from open_garden_planner.ui.canvas.arrange import build_arrange_command
+
+        try:
+            mode = ArrangeMode(action)
+        except ValueError as exc:
+            allowed = ", ".join(m.value for m in ArrangeMode)
+            raise ValueError(
+                f"{action!r} is not a valid arrange action; must be one of "
+                f"{allowed}."
+            ) from exc
+
+        item = self._resolve_agent_item(item_id)
+
+        cmd, outcome = build_arrange_command(self.canvas_scene, [item], mode)
+        if cmd is None:
+            messages = {
+                ArrangeOutcome.ALREADY_AT_FRONT: (
+                    f"{item_id} is already at the front of its layer; "
+                    "nothing to change."
+                ),
+                ArrangeOutcome.ALREADY_AT_BACK: (
+                    f"{item_id} is already at the back of its layer; "
+                    "nothing to change."
+                ),
+                ArrangeOutcome.NO_OVERLAP_ABOVE: (
+                    f"{item_id} has no overlapping object in front of it in "
+                    "its layer; nothing to change."
+                ),
+                ArrangeOutcome.NO_OVERLAP_BELOW: (
+                    f"{item_id} has no overlapping object behind it in its "
+                    "layer; nothing to change."
+                ),
+                ArrangeOutcome.NOTHING_SELECTED: (
+                    f"{item_id} is not on an arrangeable layer; nothing to "
+                    "change."
+                ),
+            }
+            raise ValueError(messages[outcome])
+
+        self.canvas_view.command_manager.execute(cmd)
+
+        cx, cy = self._agent_item_center(item)
+        # Reuse the EXACT same derivation the read tools (get_object/
+        # list_objects) use for ObjectRef.stack_index, instead of a second,
+        # independent one over the live scene -- the two could otherwise
+        # silently drift apart (issue #338 review round 2, P1-3). See
+        # agent_api.queries.get_object / _stack_indices.
+        from open_garden_planner.agent_api import queries
+
+        snapshot = self._project_manager.snapshot_dict(self.canvas_scene)
+        detail = queries.get_object(snapshot, item_id)
+        stack_index = detail.stack_index if detail is not None else None
+        return {
+            "item_id": item_id,
+            "action": "arrange",
+            "undo_description": cmd.description,
+            "x": cx,
+            "y": cy,
+            "stack_index": stack_index,
+        }
+
+    # --- US-D2.4: layer tools ------------------------------------------------
+    #
+    # The GUI's own layer surfaces (LayersPanel signal handlers below, the
+    # "Move to Layer" context submenu, the properties-panel layer combo) all
+    # build the SAME core/commands.py layer commands invariant #5 requires;
+    # these bodies are the agent-shaped variants: loud refusals instead of the
+    # panel handlers' silent no-op returns, and one command per call.
+    #
+    # Lock policy as of issue #365: the agent MAY change 'locked' in both
+    # directions (that is the reversal of ADR-036's D2.4 addendum), but it may
+    # still never delete a locked layer or move objects onto one, nor edit its
+    # objects while it is locked. Those guards test the layer's CURRENT state,
+    # so "unlock, then edit" is a legitimate two-call sequence.
+
+    def _agent_resolve_layer(self, layer_id: str) -> Any:
+        """Look up a scene layer by UUID string for a write tool, or raise.
+
+        The layer-side counterpart of ``_resolve_agent_item`` — one chokepoint
+        so every layer tool refuses a bad/unknown id with the same wording and
+        cannot drift on whether it checks at all.
+        """
+        from uuid import UUID
+
+        try:
+            uuid = UUID(layer_id)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Not a valid layer id: {layer_id!r}") from exc
+        layer = self.canvas_scene.get_layer_by_id(uuid)
+        if layer is None:
+            raise ValueError(
+                f"No layer with id {layer_id}. Use list_layers to see the "
+                "plan's layer ids."
+            )
+        return layer
+
+    def _agent_set_object_layer(self, item_id: str, layer_id: str) -> dict[str, Any]:
+        """Move one object to another layer ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_object_layer(item_id, layer_id)
+        )
+
+    def _do_agent_set_object_layer(self, item_id: str, layer_id: str) -> dict[str, Any]:
+        """Main-thread body of ``set_object_layer`` — one ``MoveToLayerCommand``.
+
+        Mirrors the GUI's single-selection "Move to Layer" exactly: only the
+        addressed object changes layer — a bed's contained plants keep their
+        own layer, just as they would when the user moves the bed alone (the
+        GUI's layer move works off ``selectedItems()``; plants are not
+        auto-selected with their bed). ``MoveToLayerCommand`` snapshots the
+        item's original ``layer_id`` AND ``stack_order``, so undo restores the
+        object to its exact previous layer position (issue #338 semantics).
+
+        Refuses, via the shared chokepoints: a group member, a journal pin, or
+        an item on a locked layer (``_resolve_agent_item``); an unknown layer,
+        a LOCKED target layer (the creation-side lock policy — the GUI clears
+        interaction flags on locked layers, so nothing can be placed there),
+        or a no-op move onto the layer the object already occupies
+        (``set_parent_bed``'s loud-no-op precedent — a pushed no-op command
+        would pollute the undo stack with a step that changes nothing).
+        """
+        from open_garden_planner.core.commands import MoveToLayerCommand
+
+        item = self._resolve_agent_item(item_id)
+        layer = self._agent_resolve_layer(layer_id)
+        if layer.locked:
+            raise ValueError(
+                f"The target layer {layer.name!r} is locked; objects cannot be "
+                "moved onto a locked layer. Unlock it first with "
+                "set_layer_property(layer_id, locked=False)."
+            )
+        if getattr(item, "layer_id", None) == layer.id:
+            raise ValueError(
+                f"{item_id} is already on layer {layer.name!r}; nothing to do."
+            )
+        cmd = MoveToLayerCommand([item], layer.id, self.canvas_scene, layer.name)
+        self.canvas_view.command_manager.execute(cmd)
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id,
+            "action": "set_object_layer",
+            "undo_description": cmd.description,
+            "x": cx,
+            "y": cy,
+            "layer_id": str(layer.id),
+        }
+
+    def _agent_create_layer(self, name: str) -> dict[str, Any]:
+        """Create a layer ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(lambda: self._do_agent_create_layer(name))
+
+    def _do_agent_create_layer(self, name: str) -> dict[str, Any]:
+        """Main-thread body of ``create_layer`` — one ``AddLayerCommand``.
+
+        Same command the Layers panel's add button runs: the new layer is
+        inserted at the TOP of the stack and becomes the ACTIVE layer, so a
+        subsequent ``create_object`` lands on it — asserted end to end in the
+        integration tests, since that interaction is the point of the tool.
+        """
+        from open_garden_planner.core.commands import AddLayerCommand
+        from open_garden_planner.models.layer import Layer
+
+        clean = self._agent_require_layer_name(name)
+        layer = Layer(name=clean)
+        cmd = AddLayerCommand(self.canvas_scene, layer)
+        self.canvas_view.command_manager.execute(cmd)
+        return {
+            "item_id": None,
+            "action": "create_layer",
+            "undo_description": cmd.description,
+            "layer_id": str(layer.id),
+        }
+
+    def _agent_rename_layer(self, layer_id: str, name: str) -> dict[str, Any]:
+        """Rename a layer ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_rename_layer(layer_id, name)
+        )
+
+    def _do_agent_rename_layer(self, layer_id: str, name: str) -> dict[str, Any]:
+        """Main-thread body of ``rename_layer`` — one ``RenameLayerCommand``.
+
+        Works on a locked layer too: the lock protects the layer's OBJECTS
+        from editing, not the layer's own name — the Layers panel renames a
+        locked layer exactly the same way.
+        """
+        from open_garden_planner.core.commands import RenameLayerCommand
+
+        layer = self._agent_resolve_layer(layer_id)
+        clean = self._agent_require_layer_name(name)
+        if layer.name == clean:
+            raise ValueError(
+                f"Layer {layer.name!r} already has that name; nothing to do."
+            )
+        cmd = RenameLayerCommand(self.canvas_scene, layer, clean)
+        self.canvas_view.command_manager.execute(cmd)
+        return {
+            "item_id": None,
+            "action": "rename_layer",
+            "undo_description": cmd.description,
+            "layer_id": str(layer.id),
+        }
+
+    def _agent_delete_layer(self, layer_id: str) -> dict[str, Any]:
+        """Delete a layer ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_delete_layer(layer_id)
+        )
+
+    def _do_agent_delete_layer(self, layer_id: str) -> dict[str, Any]:
+        """Main-thread body of ``delete_layer`` — one ``DeleteLayerCommand``.
+
+        Deleting a layer NEVER deletes its objects: ``DeleteLayerCommand``'s
+        existing policy (which this tool follows exactly, rather than inventing
+        a second one) moves them to a sibling replacement layer, and the whole
+        thing — layer removal plus every object reassignment — is ONE undo
+        step. ``objects_moved`` reports how many were reassigned.
+
+        Refuses a locked layer (ADR-036 D2.4: the lock is the user's "agent,
+        keep out" signal; deleting the layer out from under that protection
+        would defeat it — an agent-side hardening the ADR records) and refuses
+        to delete the plan's only layer (the command itself requires a
+        replacement to exist).
+        """
+        from open_garden_planner.core.commands import DeleteLayerCommand
+
+        layer = self._agent_resolve_layer(layer_id)
+        if layer.locked:
+            raise ValueError(
+                f"The layer {layer.name!r} is locked, so it cannot be deleted. "
+                "Unlock it first with set_layer_property(layer_id, "
+                "locked=False) and then delete it."
+            )
+        if len(self.canvas_scene.layers) <= 1:
+            raise ValueError(
+                f"Cannot delete {layer.name!r}: it is the plan's only layer. "
+                "A plan always keeps at least one layer."
+            )
+        objects_moved = sum(
+            1
+            for item in self.canvas_scene.items()
+            if getattr(item, "layer_id", None) == layer.id
+        )
+        cmd = DeleteLayerCommand(self.canvas_scene, layer.id)
+        self.canvas_view.command_manager.execute(cmd)
+        return {
+            "item_id": None,
+            "action": "delete_layer",
+            "undo_description": cmd.description,
+            "layer_id": str(layer.id),
+            "objects_moved": objects_moved,
+        }
+
+    def _agent_set_active_layer(self, layer_id: str) -> dict[str, Any]:
+        """Switch the active layer ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_active_layer(layer_id)
+        )
+
+    def _do_agent_set_active_layer(self, layer_id: str) -> dict[str, Any]:
+        """Main-thread body of ``set_active_layer``.
+
+        Deliberately NOT a command: the active layer is session state — it is
+        never persisted to ``.ogp`` and never marks the document dirty, and
+        the GUI switches it the same way (the Layers panel's row click calls
+        ``CanvasScene.set_active_layer`` directly, application.py's
+        ``_on_active_layer_changed``). Wrapping it in a command would push an
+        undo step that changes no document state. The result says so plainly
+        instead of pretending there is something to Ctrl+Z.
+
+        Works on a locked layer: activating changes where NEW objects would
+        land, and creating onto a locked layer is refused separately
+        (``_agent_creation_target_layer``) — the lock stays load-bearing.
+        """
+        layer = self._agent_resolve_layer(layer_id)
+        active = self.canvas_scene.active_layer
+        if active is not None and active.id == layer.id:
+            raise ValueError(
+                f"Layer {layer.name!r} is already the active layer; nothing "
+                "to do."
+            )
+        self.canvas_scene.set_active_layer(layer)
+        return {
+            "item_id": None,
+            "action": "set_active_layer",
+            # Not a command description: there is no undo step for session
+            # state. Agent-facing text is an English API contract (no tr()).
+            "undo_description": (
+                f"Set active layer '{layer.name}' (session state — not an "
+                "undo step; the active layer is not part of the document)"
+            ),
+            "layer_id": str(layer.id),
+        }
+
+    def _agent_set_layer_property(
+        self,
+        layer_id: str,
+        visible: bool | None,
+        opacity: float | None,
+        locked: bool | None,
+    ) -> dict[str, Any]:
+        """Set a layer property ON the Qt main thread (for the server)."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_layer_property(
+                layer_id=layer_id, visible=visible, opacity=opacity, locked=locked
+            )
+        )
+
+    def _do_agent_set_layer_property(
+        self,
+        layer_id: str,
+        visible: bool | None = None,
+        opacity: float | None = None,
+        locked: bool | None = None,
+    ) -> dict[str, Any]:
+        """Main-thread body of ``set_layer_property`` — one command, one property.
+
+        ``locked`` IS changeable in both directions (issue #365, a deliberate
+        policy reversal of ADR-036's D2.4 addendum): the project owner decided
+        agents may lock and unlock layers. It goes through the SAME
+        ``SetLayerPropertyCommand`` the Layers panel's lock toggle runs, so it
+        is one undo step like every other property and there is no second
+        write path.
+
+        What did NOT change: a locked layer's OBJECTS are still protected. The
+        item-level guard in ``_resolve_agent_item`` tests the layer's *current*
+        lock state, so an agent that wants to edit a locked layer unlocks it
+        first and edits second — two calls, two undo steps, both visible to the
+        user. The other locked-layer refusals (create onto a locked layer,
+        deleting a locked layer) stay absolute for the same reason.
+
+        Exactly one of ``visible``/``opacity``/``locked`` may be given per call:
+        each maps to one ``SetLayerPropertyCommand``, and one agent call is one
+        undo step (invariants #4/#13) — two properties would be two steps, so
+        the tool refuses rather than silently over-stepping.
+
+        Changing visibility/opacity of a LOCKED layer is allowed: the lock
+        protects the layer's objects from editing, not the layer's own display
+        properties — same as the Layers panel, which keeps both controls live
+        on a locked layer.
+        """
+        from open_garden_planner.core.commands import SetLayerPropertyCommand
+
+        given = [
+            name
+            for name, value in (
+                ("visible", visible),
+                ("opacity", opacity),
+                ("locked", locked),
+            )
+            if value is not None
+        ]
+        if not given:
+            raise ValueError(
+                "Pass 'visible' (bool), 'opacity' (0.0-1.0) and/or 'locked' "
+                "(bool) — there is nothing to change otherwise."
+            )
+        if len(given) > 1:
+            raise ValueError(
+                f"Pass exactly ONE of 'visible'/'opacity'/'locked' per call: "
+                f"each property change is one undo step, and one call is one "
+                f"undo step. Got {', '.join(given)} — make separate calls."
+            )
+        layer = self._agent_resolve_layer(layer_id)
+        if visible is not None:
+            new_visible = bool(visible)
+            if layer.visible == new_visible:
+                raise ValueError(
+                    f"Layer {layer.name!r} is already "
+                    f"{'visible' if new_visible else 'hidden'}; nothing to do."
+                )
+            cmd = SetLayerPropertyCommand(
+                self.canvas_scene, layer, "visible", layer.visible, new_visible
+            )
+        elif locked is not None:
+            new_locked = bool(locked)
+            if layer.locked == new_locked:
+                raise ValueError(
+                    f"Layer {layer.name!r} is already "
+                    f"{'locked' if new_locked else 'unlocked'}; nothing to do."
+                )
+            cmd = SetLayerPropertyCommand(
+                self.canvas_scene, layer, "locked", layer.locked, new_locked
+            )
+        else:
+            import math
+
+            new_opacity = float(opacity)  # type: ignore[arg-type]
+            if not math.isfinite(new_opacity) or not (0.0 <= new_opacity <= 1.0):
+                raise ValueError(
+                    f"opacity must be a number between 0.0 and 1.0, got "
+                    f"{opacity!r}"
+                )
+            if abs(layer.opacity - new_opacity) < 1e-9:
+                raise ValueError(
+                    f"Layer {layer.name!r} already has opacity "
+                    f"{new_opacity:g}; nothing to do."
+                )
+            cmd = SetLayerPropertyCommand(
+                self.canvas_scene, layer, "opacity", layer.opacity, new_opacity
+            )
+        self.canvas_view.command_manager.execute(cmd)
+        return {
+            "item_id": None,
+            "action": "set_layer_property",
+            "undo_description": cmd.description,
+            "layer_id": str(layer.id),
+        }
+
+    @staticmethod
+    def _agent_require_layer_name(name: str) -> str:
+        """Validate a layer name for create/rename: non-empty after stripping.
+
+        Duplicate names are NOT refused — the GUI's own rename path accepts
+        them (``_on_layer_renamed``), and ids are the canonical address; this
+        must not invent a stricter policy than the surface it mirrors.
+        """
+        clean = name.strip() if isinstance(name, str) else ""
+        if not clean:
+            raise ValueError("A layer name must contain at least one character.")
+        return clean
+
+    def _agent_resolve_plant(self, item_id: str, tool_name: str) -> Any:
+        """``_resolve_agent_item`` plus "and it must be a plant".
+
+        Shared by ``set_species`` and ``set_parent_bed``: both are meaningless
+        on a bed or a shed, and the D2.1 precedent is to say so by name rather
+        than no-op.
+        """
+        from open_garden_planner.core.plant_renderer import is_plant_type
+        from open_garden_planner.ui.canvas.items import GardenItemMixin
+
+        item = self._resolve_agent_item(item_id)
+        if not isinstance(item, GardenItemMixin) or not is_plant_type(
+            item.object_type
+        ):
+            raise ValueError(
+                f"{item_id} is a {self._agent_object_type_name(item)}, not a "
+                f"plant, so {tool_name} does not apply to it. Plants are "
+                "TREE, SHRUB and PERENNIAL objects."
+            )
+        return item
+
+    def _agent_object_type_name(self, item: Any) -> str:
+        """``item``'s ``ObjectType`` name, or a readable stand-in."""
+        object_type = getattr(item, "object_type", None)
+        name = getattr(object_type, "name", None)
+        return str(name) if name else type(item).__name__
+
+    def _agent_refresh_soil_mismatches(self) -> None:
+        """Recompute soil-mismatch borders after a species change.
+
+        ``apply_species_to_item`` does this itself; the clear-species branch
+        builds its command directly and so must do it explicitly, or the
+        FR-SOIL warning border outlives the species that caused it.
+        """
+        for view in self.canvas_scene.views():
+            refresh = getattr(view, "refresh_soil_mismatches", None)
+            if callable(refresh):
+                refresh()
+
+    def _resolve_agent_read_item(self, item_id: str) -> Any:
+        """Resolve a top-level live item for a read that needs Qt geometry.
+
+        Read visibility intentionally differs from write protection: a locked
+        layer or journal pin remains inspectable. Group members are still not
+        independently addressable because the curated read tools expose only
+        the group's top-level id.
+        """
+        from uuid import UUID
+
+        from open_garden_planner.ui.canvas.items.group_item import GroupItem
+
+        try:
+            uuid = UUID(item_id)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Not a valid object id: {item_id!r}") from exc
+        item = self.canvas_scene.find_item_by_id(uuid)
+        if item is None:
+            raise ValueError(f"No object with id {item_id}")
+        if isinstance(item.parentItem(), GroupItem):
+            raise ValueError(
+                f"{item_id} is a member of a group; address the group itself "
+                "rather than an individual member."
+            )
+        return item
+
+    def _resolve_agent_item(self, item_id: str) -> Any:
+        """Look up a scene item by UUID string for a write tool, or raise.
+
+        Raising here surfaces to the agent as a failed tool call (the bridge
+        propagates the exception across the main-thread hop).
+        """
+        from uuid import UUID
+
+        from open_garden_planner.ui.canvas.items.group_item import GroupItem
+        from open_garden_planner.ui.canvas.items.journal_pin_item import JournalPinItem
+
+        try:
+            uuid = UUID(item_id)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Not a valid object id: {item_id!r}") from exc
+        item = self.canvas_scene.find_item_by_id(uuid)
+        if item is None:
+            raise ValueError(f"No object with id {item_id}")
+        if isinstance(item.parentItem(), GroupItem):
+            # A group member isn't a top-level object (list_objects/get_object
+            # skip it; only a raw snapshot exposes its id nested in the group).
+            # The GUI never lets you select a lone member — you move/delete the
+            # whole group — and moveBy on a QGraphicsItemGroup child would
+            # displace it *within* the group. Address the group by its own id.
+            raise ValueError(
+                f"{item_id} is a member of a group; address the group itself "
+                "(its own id) rather than an individual member."
+            )
+        if isinstance(item, JournalPinItem):
+            # Journal pins have their own ProjectData-linked delete path
+            # (DeleteJournalNoteCommand prunes the note dict; a plain
+            # DeleteItemsCommand would remove the pin but silently orphan the
+            # note record). Not supported by move_object/delete_object yet.
+            raise ValueError(
+                f"{item_id} is a journal pin, not a garden object — the write "
+                "tools don't support journal pins yet."
+            )
+        if self._agent_item_is_locked(item):
+            # The GUI enforces layer-lock by clearing ItemIsSelectable/
+            # ItemIsMovable, so a locked-layer item can't be dragged, arrow-
+            # moved, or deleted at all (every GUI edit works off selectedItems()).
+            # The agent resolves by UUID, bypassing selection — so honour the
+            # lock explicitly here, the one chokepoint every write tool shares.
+            raise ValueError(
+                f"{item_id} is on a locked layer. Unlock it with "
+                "set_layer_property(layer_id, locked=False) and then retry — "
+                "each is one undo step."
+            )
+        return item
+
+    def _agent_item_is_locked(self, item: Any) -> bool:
+        """Whether ``item`` sits on a locked layer (which the GUI makes
+        entirely non-interactive)."""
+        layer_id = getattr(item, "layer_id", None)
+        if layer_id is None:
+            return False
+        layer = self.canvas_scene.get_layer_by_id(layer_id)
+        return bool(layer is not None and layer.locked)
+
+    def _agent_item_constraints(self, item: Any) -> list[Any]:
+        """Every constraint (distance/fixed/tangent/…) referencing ``item``."""
+        return self.canvas_scene.constraint_graph.get_item_constraints(item.item_id)
+
+    def _agent_document_items(self) -> list[Any]:
+        """Return every live serialized document item with a UUID.
+
+        This deliberately uses the same predicate as project loading instead
+        of a second ``GardenItemMixin``-only census: Arc/Bezier and other
+        serialized classes can collide with a UUID too, and a delete receipt
+        must not ignore them.
+        """
+        return [
+            item
+            for item in self.canvas_scene.items()
+            if self._project_manager._is_project_document_item(item)
+            and self._agent_item_uuid(item) is not None
+        ]
+
+    @staticmethod
+    def _agent_item_uuid(item: Any) -> Any:
+        """Return a document item's UUID, or ``None`` for non-addressables."""
+        value = getattr(item, "item_id", None)
+        return value if isinstance(value, UUID) else None
+
+    def _agent_require_unique_items(
+        self, items: list[Any], *, action: str = "delete_object"
+    ) -> None:
+        """Refuse an operation if any target UUID occurs more than once live."""
+        from collections import Counter
+
+        target_ids = {self._agent_item_uuid(item) for item in items}
+        if None in target_ids:
+            raise ValueError(f"{action} requires every target to have a UUID.")
+
+        counts: Counter[Any] = Counter()
+        for candidate in self._agent_document_items():
+            candidate_id = self._agent_item_uuid(candidate)
+            if candidate_id in target_ids:
+                counts[candidate_id] += 1
+
+        duplicates = [
+            f"{candidate_id} ({count} live objects)"
+            for candidate_id, count in sorted(counts.items(), key=lambda pair: str(pair[0]))
+            if count > 1
+        ]
+        if duplicates:
+            raise ValueError(
+                f"Cannot {action} because the document contains duplicate live "
+                f"UUIDs: {', '.join(duplicates)}. Resolve the duplicate records "
+                f"before continuing; {action} will not choose one arbitrarily."
+            )
+
+    def _maybe_start_agent_api(self) -> None:
+        """Start the Agent API server iff it is enabled in settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        if get_settings().agent_api_enabled:
+            self._start_agent_api()
+
+    def _start_agent_api(self) -> None:
+        """Start the embedded MCP server, surfacing failures in the status bar."""
+        from open_garden_planner.agent_api import (
+            AgentApiServer,
+            PortInUseError,
+        )
+        from open_garden_planner.app.settings import get_settings
+
+        if self._agent_server is not None and self._agent_server.is_running:
+            return
+        settings = get_settings()
+        port = settings.agent_api_port
+        providers = self._build_agent_providers()
+        writes_enabled = settings.agent_api_writes_enabled
+        # Only read (and thus auto-generate) the token when writes are on, so a
+        # user who never enables editing never has a token sitting in settings.
+        write_token = settings.agent_api_token if writes_enabled else None
+        try:
+            server = AgentApiServer(
+                providers,
+                port=port,
+                write_token=write_token,
+                writes_enabled=writes_enabled,
+            )
+            server.start()
+        except PortInUseError:
+            self._agent_server = None
+            self.statusBar().showMessage(
+                self.tr("Agent API: port {port} is already in use").format(port=port),
+                8000,
+            )
+            return
+        except Exception:
+            self._agent_server = None
+            logger.exception("Agent API failed to start")
+            self.statusBar().showMessage(
+                self.tr("Agent API failed to start (see log)"), 8000
+            )
+            return
+        self._agent_server = server
+        self.statusBar().showMessage(
+            self.tr("Agent API running at {url}").format(url=server.url), 5000
+        )
+
+    def _build_agent_providers(self) -> Any:
+        """Build the one production provider graph used by the embedded MCP server.
+
+        Keeping construction separate from server lifecycle gives integration
+        tests a way to drive the exact application wiring over MCP without
+        duplicating the write orchestration in a test-only provider bundle.
+        """
+        from open_garden_planner.agent_api import AgentProviders
+
+        return AgentProviders(
+            snapshot=self._agent_snapshot,
+            diagnostics=self._agent_diagnostics,
+            render=self._agent_render,
+            save_plan=self._agent_save_plan,
+            new_plan=self._agent_new_plan,
+            open_plan=self._agent_open_plan,
+            export_pdf=self._agent_export_pdf,
+            export_dxf=self._agent_export_dxf,
+            export_csv=self._agent_export_csv,
+            create_object=self._agent_create_object,
+            get_geometry=self._agent_get_geometry,
+            move_object=self._agent_move_object,
+            set_object_position=self._agent_set_object_position,
+            delete_object=self._agent_delete_object,
+            resize_object=self._agent_resize_object,
+            rotate_object=self._agent_rotate_object,
+            set_vertex=self._agent_set_vertex,
+            add_vertex=self._agent_add_vertex,
+            delete_vertex=self._agent_delete_vertex,
+            set_species=self._agent_set_species,
+            set_parent_bed=self._agent_set_parent_bed,
+            arrange_object=self._agent_arrange_object,
+            set_object_layer=self._agent_set_object_layer,
+            create_layer=self._agent_create_layer,
+            rename_layer=self._agent_rename_layer,
+            delete_layer=self._agent_delete_layer,
+            set_active_layer=self._agent_set_active_layer,
+            set_layer_property=self._agent_set_layer_property,
+            undo=self._agent_undo,
+            redo=self._agent_redo,
+            get_history=self._agent_get_history,
+            suggest_companions=self._agent_suggest_companions,
+            find_compatible_sets=self._agent_find_compatible_sets,
+            find_sets_for_bed=self._agent_find_sets_for_bed,
+            check_placement=self._agent_check_placement,
+            get_succession_plan=self._agent_get_succession_plan,
+            find_succession_gaps=self._agent_find_succession_gaps,
+            suggest_succession=self._agent_suggest_succession,
+            set_succession_plan=self._agent_set_succession_plan,
+            get_tasks=self._agent_get_tasks,
+            get_task_calendar=self._agent_get_task_calendar,
+            add_manual_task=self._agent_add_manual_task,
+            edit_manual_task=self._agent_edit_manual_task,
+            delete_manual_task=self._agent_delete_manual_task,
+            get_soil_status=self._agent_get_soil_status,
+            recommend_amendments=self._agent_recommend_amendments,
+            get_soil_mismatches=self._agent_get_soil_mismatches,
+            record_soil_test=self._agent_record_soil_test,
+        )
+
+    def _stop_agent_api(self) -> None:
+        """Stop the embedded MCP server if it is running."""
+        if self._agent_server is not None:
+            # Abort any in-flight main-thread hops first so the server thread's
+            # tool handler returns at once — otherwise stop()'s join could wait
+            # on a queued call the (now tearing-down) main thread won't service.
+            self._agent_bridge.abort_pending()
+            self._agent_server.stop()
+            self._agent_server = None
+
+    def _set_action_icon(self, action: QAction, icon_name: str) -> None:
+        """Assign a themed menu icon and track it for theme-switch refresh."""
+        icon = get_icon(icon_name)
+        if icon is not None:
+            action.setIcon(icon)
+        self._icon_actions.append((action, icon_name))
+
+    def _make_icon_label(self, icon_name: str, size: int = 14, tooltip: str = "") -> QLabel:
+        """A pixmap-only QLabel for chrome that has no ``setIcon`` (status bar
+        segments), tracked for theme-switch refresh (#310)."""
+        label = QLabel()
+        label.setFixedSize(size + 2, size + 2)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if tooltip:
+            label.setToolTip(tooltip)
+        pixmap = get_pixmap(icon_name, size)
+        if pixmap is not None:
+            label.setPixmap(pixmap)
+        self._icon_labels.append((label, icon_name, size))
+        return label
+
+    def _set_tab_icon(self, widget: QWidget, icon_name: str) -> None:
+        """Themed dashboard-tab icon, tracked for theme-switch refresh (#310)."""
+        index = self._tab_widget.indexOf(widget)
+        icon = get_icon(icon_name)
+        if index >= 0 and icon is not None:
+            self._tab_widget.setTabIcon(index, icon)
+        self._tab_icons.append((widget, icon_name))
+
+    def eventFilter(self, obj: Any, event: QEvent) -> bool:  # noqa: N802 — Qt override
+        """The status-bar sun icon follows the transient sun hint's visibility
+        (the hint is shown/hidden from the sun-sim controller; #310)."""
+        if obj is getattr(self, "_sun_hint_label", None) and event.type() in (
+            QEvent.Type.Show, QEvent.Type.Hide, QEvent.Type.ShowToParent, QEvent.Type.HideToParent
+        ):
+            self._sun_hint_icon.setVisible(not self._sun_hint_label.isHidden())
+        return super().eventFilter(obj, event)
+
+    def refresh_theme_icons(self) -> None:
+        """Replay every tracked chrome icon after a theme switch (§8.21):
+        menu actions, status-bar pixmap labels, dashboard tab icons and the
+        frost badge (#310).
+
+        getattr fallback: safe even if a future call ordering themes the
+        window before _setup_menu_bar has created the tracking lists.
+        """
+        for action, icon_name in getattr(self, "_icon_actions", []):
+            icon = get_icon(icon_name)
+            if icon is not None:
+                action.setIcon(icon)
+        for label, icon_name, size in getattr(self, "_icon_labels", []):
+            pixmap = get_pixmap(icon_name, size)
+            if pixmap is not None:
+                label.setPixmap(pixmap)
+        tab_widget = getattr(self, "_tab_widget", None)
+        if tab_widget is not None:
+            for widget, icon_name in getattr(self, "_tab_icons", []):
+                index = tab_widget.indexOf(widget)
+                icon = get_icon(icon_name)
+                if index >= 0 and icon is not None:
+                    tab_widget.setTabIcon(index, icon)
+        if getattr(self, "_frost_badge_state", None) is not None:
+            self._on_frost_alert_ready(*self._frost_badge_state)
+
+    def _setup_menu_bar(self) -> None:
+        """Set up the menu bar with File, Edit, View, Help menus."""
+        menubar = self.menuBar()
+        self._icon_actions: list[tuple[QAction, str]] = []
+        self._icon_labels: list[tuple[QLabel, str, int]] = []
+        self._tab_icons: list[tuple[QWidget, str]] = []
+        self._frost_badge_state: tuple[int, str] | None = None
+
+        # File menu
+        file_menu = menubar.addMenu(self.tr("&File"))
+        self._setup_file_menu(file_menu)
+
+        # Edit menu
+        edit_menu = menubar.addMenu(self.tr("&Edit"))
+        self._setup_edit_menu(edit_menu)
+
+        # View menu
+        view_menu = menubar.addMenu(self.tr("&View"))
+        self._setup_view_menu(view_menu)
+
+        # Plants menu
+        plants_menu = menubar.addMenu(self.tr("&Plants"))
+        self._setup_plants_menu(plants_menu)
+
+        # Garden menu (US-12.10a — soil tests; expanded in 12.10b–e)
+        garden_menu = menubar.addMenu(self.tr("&Garden"))
+        self._setup_garden_menu(garden_menu)
+
+        # Help menu
+        help_menu = menubar.addMenu(self.tr("&Help"))
+        self._setup_help_menu(help_menu)
+
+    def _setup_file_menu(self, menu: QMenu) -> None:
+        """Set up the File menu actions."""
+        # New Project
+        new_action = QAction(self.tr("&New Project"), self)
+        new_action.setShortcut(QKeySequence("Ctrl+N"))
+        new_action.setStatusTip(self.tr("Create a new garden project"))
+        new_action.triggered.connect(self._on_new_project)
+        self._set_action_icon(new_action, "file_new")
+        menu.addAction(new_action)
+
+        # Open Project
+        open_action = QAction(self.tr("&Open..."), self)
+        open_action.setShortcut(QKeySequence("Ctrl+O"))
+        open_action.setStatusTip(self.tr("Open an existing project"))
+        open_action.triggered.connect(self._on_open_project)
+        self._set_action_icon(open_action, "file_open")
+        menu.addAction(open_action)
+
+        # Open Recent submenu
+        self._recent_menu = menu.addMenu(self.tr("Open &Recent"))
+        self._set_action_icon(self._recent_menu.menuAction(), "recent")
+        self._recent_menu.aboutToShow.connect(self._populate_recent_menu)
+
+        menu.addSeparator()
+
+        # Save
+        save_action = QAction(self.tr("&Save"), self)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_action.setStatusTip(self.tr("Save the current project"))
+        save_action.triggered.connect(self._on_save)
+        self._set_action_icon(save_action, "file_save")
+        menu.addAction(save_action)
+
+        # Save As
+        save_as_action = QAction(self.tr("Save &As..."), self)
+        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        save_as_action.setStatusTip(self.tr("Save the project with a new name"))
+        save_as_action.triggered.connect(self._on_save_as)
+        self._set_action_icon(save_as_action, "file_save_as")
+        menu.addAction(save_as_action)
+
+        menu.addSeparator()
+
+        # Manage Seasons (US-10.7)
+        seasons_action = QAction(self.tr("&Manage Seasons..."), self)
+        seasons_action.setStatusTip(self.tr("Create a new season or switch between seasons"))
+        seasons_action.triggered.connect(self._on_manage_seasons)
+        self._set_action_icon(seasons_action, "seasons")
+        menu.addAction(seasons_action)
+
+        menu.addSeparator()
+
+        # Import Background Image
+        import_image_action = QAction(self.tr("&Import Background Image..."), self)
+        import_image_action.setStatusTip(self.tr("Import a background image (satellite photo, etc.)"))
+        import_image_action.triggered.connect(self._on_import_background_image)
+        self._set_action_icon(import_image_action, "background_image")
+        menu.addAction(import_image_action)
+
+        # Load Satellite Background (via embedded Google Maps picker)
+        load_satellite_action = QAction(self.tr("Load Sa&tellite Background..."), self)
+        load_satellite_action.triggered.connect(self._on_load_satellite_background)
+        self._load_satellite_action = load_satellite_action
+        # QMenu does not show action tooltips by default; enable them so the
+        # missing-key guidance is visible without opening the Preferences.
+        menu.setToolTipsVisible(True)
+        self._set_action_icon(load_satellite_action, "satellite")
+        menu.addAction(load_satellite_action)
+        self._update_satellite_menu_state()
+
+        # Import DXF
+        import_dxf_action = QAction(self.tr("Import &DXF..."), self)
+        import_dxf_action.setStatusTip(self.tr("Import a DXF CAD file onto the canvas"))
+        import_dxf_action.triggered.connect(self._on_import_dxf)
+        self._set_action_icon(import_dxf_action, "file_import")
+        menu.addAction(import_dxf_action)
+
+        # Set Garden Location
+        location_action = QAction(self.tr("Set Garden &Location..."), self)
+        location_action.setStatusTip(self.tr("Set GPS coordinates and frost dates for planting calendar"))
+        location_action.triggered.connect(self._on_set_location)
+        self._set_action_icon(location_action, "location")
+        menu.addAction(location_action)
+
+        menu.addSeparator()
+
+        # Export submenu
+        export_menu = menu.addMenu(self.tr("&Export"))
+        self._set_action_icon(export_menu.menuAction(), "file_export")
+
+        export_png = QAction(self.tr("Export as &PNG..."), self)
+        export_png.setStatusTip(self.tr("Export the plan as a PNG image"))
+        export_png.triggered.connect(self._on_export_png)
+        self._set_action_icon(export_png, "export_png")
+        export_menu.addAction(export_png)
+
+        export_svg = QAction(self.tr("Export as &SVG..."), self)
+        export_svg.setStatusTip(self.tr("Export the plan as an SVG vector file"))
+        export_svg.triggered.connect(self._on_export_svg)
+        self._set_action_icon(export_svg, "export_svg")
+        export_menu.addAction(export_svg)
+
+        export_csv = QAction(self.tr("Export Plant List as &CSV..."), self)
+        export_csv.setStatusTip(self.tr("Export all plants to a CSV spreadsheet"))
+        export_csv.triggered.connect(self._on_export_plant_csv)
+        self._set_action_icon(export_csv, "export_csv")
+        export_menu.addAction(export_csv)
+
+        export_dxf = QAction(self.tr("Export as D&XF..."), self)
+        export_dxf.setStatusTip(self.tr("Export the plan as a DXF file for CAD software"))
+        export_dxf.triggered.connect(self._on_export_dxf)
+        self._set_action_icon(export_dxf, "export_dxf")
+        export_menu.addAction(export_dxf)
+
+        export_pdf_report = QAction(self.tr("Export PDF &Report..."), self)
+        export_pdf_report.setStatusTip(self.tr("Generate a multi-page PDF report of the garden plan"))
+        export_pdf_report.triggered.connect(self._on_export_pdf_report)
+        self._set_action_icon(export_pdf_report, "export_pdf")
+        export_menu.addAction(export_pdf_report)
+
+        menu.addSeparator()
+
+        # Print
+        print_action = QAction(self.tr("&Print..."), self)
+        print_action.setShortcut(QKeySequence("Ctrl+P"))
+        print_action.setStatusTip(self.tr("Print the garden plan"))
+        print_action.triggered.connect(self._on_print)
+        self._set_action_icon(print_action, "print")
+        menu.addAction(print_action)
+
+        menu.addSeparator()
+
+        # Exit
+        exit_action = QAction(self.tr("E&xit"), self)
+        exit_action.setShortcut(QKeySequence("Alt+F4"))
+        exit_action.setStatusTip(self.tr("Exit the application"))
+        exit_action.triggered.connect(self.close)
+        self._set_action_icon(exit_action, "exit")
+        menu.addAction(exit_action)
+
+    def _setup_edit_menu(self, menu: QMenu) -> None:
+        """Set up the Edit menu actions."""
+        # Undo
+        self._undo_action = QAction(self.tr("&Undo"), self)
+        self._undo_action.setShortcut(QKeySequence("Ctrl+Z"))
+        self._undo_action.setStatusTip(self.tr("Undo the last action"))
+        self._undo_action.setEnabled(False)  # Disabled until there's something to undo
+        self._undo_action.triggered.connect(self._on_undo)
+        self._set_action_icon(self._undo_action, "undo")
+        menu.addAction(self._undo_action)
+
+        # Redo
+        self._redo_action = QAction(self.tr("&Redo"), self)
+        self._redo_action.setShortcut(QKeySequence("Ctrl+Y"))
+        self._redo_action.setStatusTip(self.tr("Redo the last undone action"))
+        self._redo_action.setEnabled(False)  # Disabled until there's something to redo
+        self._redo_action.triggered.connect(self._on_redo)
+        self._set_action_icon(self._redo_action, "redo")
+        menu.addAction(self._redo_action)
+
+        menu.addSeparator()
+
+        # Cut
+        cut_action = QAction(self.tr("Cu&t"), self)
+        cut_action.setShortcut(QKeySequence("Ctrl+X"))
+        cut_action.setStatusTip(self.tr("Cut selected objects"))
+        cut_action.triggered.connect(self._on_cut)
+        self._set_action_icon(cut_action, "cut")
+        menu.addAction(cut_action)
+
+        # Copy
+        copy_action = QAction(self.tr("&Copy"), self)
+        copy_action.setShortcut(QKeySequence("Ctrl+C"))
+        copy_action.setStatusTip(self.tr("Copy selected objects"))
+        copy_action.triggered.connect(self._on_copy)
+        self._set_action_icon(copy_action, "copy")
+        menu.addAction(copy_action)
+
+        # Paste
+        paste_action = QAction(self.tr("&Paste"), self)
+        paste_action.setShortcut(QKeySequence("Ctrl+V"))
+        paste_action.setStatusTip(self.tr("Paste objects from clipboard"))
+        paste_action.triggered.connect(self._on_paste)
+        self._set_action_icon(paste_action, "paste")
+        menu.addAction(paste_action)
+
+        # Duplicate
+        duplicate_action = QAction(self.tr("Dupl&icate"), self)
+        duplicate_action.setShortcut(QKeySequence("Ctrl+D"))
+        duplicate_action.setStatusTip(self.tr("Duplicate selected objects"))
+        duplicate_action.triggered.connect(self._on_duplicate)
+        self._set_action_icon(duplicate_action, "duplicate")
+        menu.addAction(duplicate_action)
+
+        # Delete
+        self._delete_action = QAction(self.tr("&Delete"), self)
+        self._delete_action.setShortcut(QKeySequence("Delete"))
+        self._delete_action.setStatusTip(self.tr("Delete selected objects"))
+        self._set_action_icon(self._delete_action, "delete")
+        menu.addAction(self._delete_action)
+
+        menu.addSeparator()
+
+        # Select All
+        select_all_action = QAction(self.tr("Select &All"), self)
+        select_all_action.setShortcut(QKeySequence("Ctrl+A"))
+        select_all_action.setStatusTip(self.tr("Select all objects"))
+        select_all_action.triggered.connect(self._on_select_all)
+        self._set_action_icon(select_all_action, "select_all")
+        menu.addAction(select_all_action)
+
+        # Find & Replace
+        find_replace_action = QAction(self.tr("&Find && Replace…"), self)
+        find_replace_action.setShortcut(QKeySequence.StandardKey.Find)
+        find_replace_action.setStatusTip(self.tr("Find and replace objects by name, type, layer or species"))
+        find_replace_action.triggered.connect(self._on_toggle_find_replace)
+        self._set_action_icon(find_replace_action, "find_replace")
+        menu.addAction(find_replace_action)
+
+        menu.addSeparator()
+
+        # Align submenu
+        align_menu = menu.addMenu(self.tr("Ali&gn && Distribute"))
+        self._set_action_icon(align_menu.menuAction(), "align")
+
+        align_left = QAction(self.tr("Align &Left"), self)
+        align_left.setStatusTip(self.tr("Align selected objects to the left edge"))
+        align_left.triggered.connect(self._on_align_left)
+        self._set_action_icon(align_left, "align_left")
+        align_menu.addAction(align_left)
+
+        align_right = QAction(self.tr("Align &Right"), self)
+        align_right.setStatusTip(self.tr("Align selected objects to the right edge"))
+        align_right.triggered.connect(self._on_align_right)
+        self._set_action_icon(align_right, "align_right")
+        align_menu.addAction(align_right)
+
+        align_top = QAction(self.tr("Align &Top"), self)
+        align_top.setStatusTip(self.tr("Align selected objects to the top edge"))
+        align_top.triggered.connect(self._on_align_top)
+        self._set_action_icon(align_top, "align_top")
+        align_menu.addAction(align_top)
+
+        align_bottom = QAction(self.tr("Align &Bottom"), self)
+        align_bottom.setStatusTip(self.tr("Align selected objects to the bottom edge"))
+        align_bottom.triggered.connect(self._on_align_bottom)
+        self._set_action_icon(align_bottom, "align_bottom")
+        align_menu.addAction(align_bottom)
+
+        align_center_h = QAction(self.tr("Align Center &Horizontally"), self)
+        align_center_h.setStatusTip(self.tr("Align selected objects to horizontal center"))
+        align_center_h.triggered.connect(self._on_align_center_h)
+        self._set_action_icon(align_center_h, "align_center_h")
+        align_menu.addAction(align_center_h)
+
+        align_center_v = QAction(self.tr("Align Center &Vertically"), self)
+        align_center_v.setStatusTip(self.tr("Align selected objects to vertical center"))
+        align_center_v.triggered.connect(self._on_align_center_v)
+        self._set_action_icon(align_center_v, "align_center_v")
+        align_menu.addAction(align_center_v)
+
+        align_menu.addSeparator()
+
+        dist_h = QAction(self.tr("&Distribute Horizontal"), self)
+        dist_h.setStatusTip(self.tr("Distribute selected objects with equal horizontal spacing"))
+        dist_h.triggered.connect(self._on_distribute_horizontal)
+        self._set_action_icon(dist_h, "distribute_h")
+        align_menu.addAction(dist_h)
+
+        dist_v = QAction(self.tr("D&istribute Vertical"), self)
+        dist_v.setStatusTip(self.tr("Distribute selected objects with equal vertical spacing"))
+        dist_v.triggered.connect(self._on_distribute_vertical)
+        self._set_action_icon(dist_v, "distribute_v")
+        align_menu.addAction(dist_v)
+
+        # Arrange submenu (#338) — stacking order within a layer
+        arrange_menu = menu.addMenu(self.tr("Arra&nge"))
+        self._set_action_icon(arrange_menu.menuAction(), "arrange")
+
+        self._arrange_front_action = QAction(self.tr("Bring to &Front"), self)
+        self._arrange_front_action.setShortcuts(
+            [QKeySequence("Ctrl+Shift+]"), QKeySequence("Ctrl+Shift+Up")]
+        )
+        self._arrange_front_action.setStatusTip(
+            self.tr("Bring the selected objects to the front of their layer")
+        )
+        self._arrange_front_action.triggered.connect(self._on_arrange_front)
+        self._set_action_icon(self._arrange_front_action, "arrange_front")
+        arrange_menu.addAction(self._arrange_front_action)
+
+        self._arrange_forward_action = QAction(self.tr("Bring F&orward"), self)
+        self._arrange_forward_action.setShortcuts(
+            [QKeySequence("Ctrl+]"), QKeySequence("Ctrl+Up")]
+        )
+        self._arrange_forward_action.setStatusTip(
+            self.tr("Bring the selected objects one step forward")
+        )
+        self._arrange_forward_action.triggered.connect(self._on_arrange_forward)
+        self._set_action_icon(self._arrange_forward_action, "arrange_forward")
+        arrange_menu.addAction(self._arrange_forward_action)
+
+        self._arrange_backward_action = QAction(self.tr("Send Back&ward"), self)
+        self._arrange_backward_action.setShortcuts(
+            [QKeySequence("Ctrl+["), QKeySequence("Ctrl+Down")]
+        )
+        self._arrange_backward_action.setStatusTip(
+            self.tr("Send the selected objects one step backward")
+        )
+        self._arrange_backward_action.triggered.connect(self._on_arrange_backward)
+        self._set_action_icon(self._arrange_backward_action, "arrange_backward")
+        arrange_menu.addAction(self._arrange_backward_action)
+
+        self._arrange_back_action = QAction(self.tr("Send to &Back"), self)
+        self._arrange_back_action.setShortcuts(
+            [QKeySequence("Ctrl+Shift+["), QKeySequence("Ctrl+Shift+Down")]
+        )
+        self._arrange_back_action.setStatusTip(
+            self.tr("Send the selected objects to the back of their layer")
+        )
+        self._arrange_back_action.triggered.connect(self._on_arrange_back)
+        self._set_action_icon(self._arrange_back_action, "arrange_back")
+        arrange_menu.addAction(self._arrange_back_action)
+
+        menu.addSeparator()
+
+        # Canvas Size
+        canvas_size_action = QAction(self.tr("Canvas Si&ze..."), self)
+        canvas_size_action.setStatusTip(self.tr("Resize the canvas dimensions"))
+        canvas_size_action.triggered.connect(self._on_canvas_size)
+        self._set_action_icon(canvas_size_action, "canvas_size")
+        menu.addAction(canvas_size_action)
+
+        menu.addSeparator()
+
+        # Auto-Save submenu
+        autosave_menu = menu.addMenu(self.tr("Auto-&Save"))
+        self._set_action_icon(autosave_menu.menuAction(), "autosave")
+
+        # Toggle auto-save
+        self._autosave_action = QAction(self.tr("&Enable Auto-Save"), self)
+        self._autosave_action.setCheckable(True)
+        self._autosave_action.setStatusTip(self.tr("Enable or disable automatic saving"))
+        self._autosave_action.triggered.connect(self._on_toggle_autosave)
+        self._set_action_icon(self._autosave_action, "autosave")
+        autosave_menu.addAction(self._autosave_action)
+
+        autosave_menu.addSeparator()
+
+        # Auto-save interval options
+        self._autosave_interval_actions: list[QAction] = []
+        intervals = [1, 2, 5, 10, 15, 30]
+        for minutes in intervals:
+            label = self.tr("{n} minute(s)").format(n=minutes)
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(minutes)
+            action.triggered.connect(lambda _checked, m=minutes: self._on_set_autosave_interval(m))
+            autosave_menu.addAction(action)
+            self._autosave_interval_actions.append(action)
+
+        # Initialize menu state from settings
+        QTimer.singleShot(0, self._update_autosave_menu_state)
+
+        menu.addSeparator()
+
+        # Preferences
+        preferences_action = QAction(self.tr("Pr&eferences..."), self)
+        preferences_action.setStatusTip(self.tr("Configure application settings and API keys"))
+        preferences_action.triggered.connect(self._on_preferences)
+        self._set_action_icon(preferences_action, "preferences")
+        menu.addAction(preferences_action)
+
+    def _setup_view_menu(self, menu: QMenu) -> None:
+        """Set up the View menu actions."""
+        # Zoom In
+        zoom_in_action = QAction(self.tr("Zoom &In"), self)
+        zoom_in_action.setShortcut(QKeySequence("Ctrl++"))
+        zoom_in_action.setStatusTip(self.tr("Zoom in on the canvas"))
+        zoom_in_action.triggered.connect(self._on_zoom_in)
+        self._set_action_icon(zoom_in_action, "zoom_in")
+        menu.addAction(zoom_in_action)
+
+        # Zoom Out
+        zoom_out_action = QAction(self.tr("Zoom &Out"), self)
+        zoom_out_action.setShortcut(QKeySequence("Ctrl+-"))
+        zoom_out_action.setStatusTip(self.tr("Zoom out on the canvas"))
+        zoom_out_action.triggered.connect(self._on_zoom_out)
+        self._set_action_icon(zoom_out_action, "zoom_out")
+        menu.addAction(zoom_out_action)
+
+        # Fit to Window
+        fit_action = QAction(self.tr("&Fit to Window"), self)
+        fit_action.setShortcut(QKeySequence("Ctrl+0"))
+        fit_action.setStatusTip(self.tr("Fit the entire canvas in the window"))
+        fit_action.triggered.connect(self._on_fit_to_window)
+        self._set_action_icon(fit_action, "zoom_fit")
+        menu.addAction(fit_action)
+
+        menu.addSeparator()
+
+        # Grouped submenus (#310, owner decision 2026-08-17): the flat list of
+        # 22 toggles was hard to scan. Zoom | Snapping ▸ | Overlays ▸ | Sun & 3D ▸
+        # | Panels (Fullscreen Preview) | Theme ▸ | Language ▸. Action attribute
+        # names are unchanged — only the container moved.
+        snap_menu = menu.addMenu(self.tr("&Snapping"))
+        self._set_action_icon(snap_menu.menuAction(), "snapping")
+        overlays_menu = menu.addMenu(self.tr("O&verlays"))
+        self._set_action_icon(overlays_menu.menuAction(), "overlays")
+        sun_menu = menu.addMenu(self.tr("S&un && 3D"))
+        self._set_action_icon(sun_menu.menuAction(), "sun")
+
+        # Toggle Grid
+        self.grid_action = QAction(self.tr("Show &Grid"), self)
+        self.grid_action.setShortcut(QKeySequence("G"))
+        self.grid_action.setCheckable(True)
+        self.grid_action.setChecked(False)
+        self.grid_action.setStatusTip(self.tr("Toggle grid visibility"))
+        self._set_action_icon(self.grid_action, "grid")
+        snap_menu.addAction(self.grid_action)
+
+        # Toggle Snap
+        self.snap_action = QAction(self.tr("&Snap to Grid"), self)
+        self.snap_action.setShortcut(QKeySequence("S"))
+        self.snap_action.setCheckable(True)
+        self.snap_action.setChecked(True)
+        self.snap_action.setStatusTip(self.tr("Toggle snap to grid"))
+        self._set_action_icon(self.snap_action, "snap_grid")
+        snap_menu.addAction(self.snap_action)
+
+        # Toggle Object Snap
+        self._object_snap_action = QAction(self.tr("Snap to &Objects"), self)
+        self._object_snap_action.setCheckable(True)
+        self._object_snap_action.setChecked(True)
+        self._object_snap_action.setStatusTip(self.tr("Toggle snap to object edges and centers"))
+        self._object_snap_action.triggered.connect(self._on_toggle_object_snap)
+        self._set_action_icon(self._object_snap_action, "snap_objects")
+        snap_menu.addAction(self._object_snap_action)
+
+        # Toggle Midpoint Snap (Package A - US-A3)
+        self._midpoint_snap_action = QAction(self.tr("Snap to &Midpoints"), self)
+        self._midpoint_snap_action.setCheckable(True)
+        self._midpoint_snap_action.setChecked(True)
+        self._midpoint_snap_action.setStatusTip(
+            self.tr("Toggle snap to the midpoint of any straight edge")
+        )
+        self._midpoint_snap_action.triggered.connect(self._on_toggle_midpoint_snap)
+        self._set_action_icon(self._midpoint_snap_action, "snap_midpoints")
+        snap_menu.addAction(self._midpoint_snap_action)
+
+        # Toggle Intersection Snap (Package A - US-A3)
+        self._intersection_snap_action = QAction(
+            self.tr("Snap to &Intersections"), self
+        )
+        self._intersection_snap_action.setCheckable(True)
+        self._intersection_snap_action.setChecked(True)
+        self._intersection_snap_action.setStatusTip(
+            self.tr("Toggle snap to intersections of straight edges")
+        )
+        self._intersection_snap_action.triggered.connect(
+            self._on_toggle_intersection_snap
+        )
+        self._set_action_icon(self._intersection_snap_action, "snap_intersections")
+        snap_menu.addAction(self._intersection_snap_action)
+
+        # Toggle Nearest Snap (Package B — US-B4). Fallback below the
+        # other snap kinds; off by default so it doesn't surprise users.
+        self._nearest_snap_action = QAction(self.tr("Snap to &Nearest Point"), self)
+        self._nearest_snap_action.setCheckable(True)
+        self._nearest_snap_action.setChecked(False)
+        self._nearest_snap_action.setStatusTip(
+            self.tr("Toggle snap to the closest point on any visible edge or curve")
+        )
+        self._nearest_snap_action.triggered.connect(self._on_toggle_nearest_snap)
+        self._set_action_icon(self._nearest_snap_action, "snap_nearest")
+        snap_menu.addAction(self._nearest_snap_action)
+
+        # Toggle Perpendicular Snap (Package B — US-B5). Drops the
+        # perpendicular foot from the active tool's anchor onto a
+        # hovered edge; off by default.
+        self._perpendicular_snap_action = QAction(
+            self.tr("Snap &Perpendicular"), self
+        )
+        self._perpendicular_snap_action.setCheckable(True)
+        self._perpendicular_snap_action.setChecked(False)
+        self._perpendicular_snap_action.setStatusTip(
+            self.tr(
+                "Toggle snap to the perpendicular foot from the last "
+                "drawn point onto the nearest edge"
+            )
+        )
+        self._perpendicular_snap_action.triggered.connect(
+            self._on_toggle_perpendicular_snap
+        )
+        self._set_action_icon(self._perpendicular_snap_action, "constraint_perpendicular")
+        snap_menu.addAction(self._perpendicular_snap_action)
+
+        # Toggle Tangent Snap (Package B — US-B6). Snaps to the tangent
+        # point on a circle / arc from the active tool's anchor.
+        self._tangent_snap_action = QAction(self.tr("Snap &Tangent"), self)
+        self._tangent_snap_action.setCheckable(True)
+        self._tangent_snap_action.setChecked(False)
+        self._tangent_snap_action.setStatusTip(
+            self.tr(
+                "Toggle snap to the tangent point on a circle or arc from "
+                "the last drawn point"
+            )
+        )
+        self._tangent_snap_action.triggered.connect(self._on_toggle_tangent_snap)
+        self._set_action_icon(self._tangent_snap_action, "snap_tangent")
+        snap_menu.addAction(self._tangent_snap_action)
+
+        # Toggle Dynamic Input (Package A - US-A4)
+        self._dynamic_input_action = QAction(self.tr("Enable &Dynamic Input"), self)
+        self._dynamic_input_action.setCheckable(True)
+        self._dynamic_input_action.setChecked(True)
+        self._dynamic_input_action.setStatusTip(
+            self.tr(
+                "Toggle typed distance/angle input next to the cursor and in "
+                "the status bar"
+            )
+        )
+        self._dynamic_input_action.triggered.connect(self._on_toggle_dynamic_input)
+        self._set_action_icon(self._dynamic_input_action, "dynamic_input")
+        snap_menu.addAction(self._dynamic_input_action)
+
+
+        # Toggle Shadows
+        self._shadows_action = QAction(self.tr("Show &Shadows"), self)
+        self._shadows_action.setCheckable(True)
+        self._shadows_action.setChecked(True)  # Updated from settings in _setup_central_widget
+        self._shadows_action.setStatusTip(self.tr("Toggle drop shadows on objects"))
+        self._shadows_action.triggered.connect(self._on_toggle_shadows)
+        self._set_action_icon(self._shadows_action, "shadows")
+        sun_menu.addAction(self._shadows_action)
+
+        # Sun & shade simulation (US-E3) — deliberately named distinctly from
+        # the cosmetic per-item drop shadows above; different machinery.
+        self._sun_sim_action = QAction(self.tr("S&un && Shade Simulation"), self)
+        self._sun_sim_action.setCheckable(True)
+        self._sun_sim_action.setChecked(False)  # always starts off (runtime-only)
+        self._sun_sim_action.setStatusTip(
+            self.tr("Simulate solar shadows for a chosen date and time of day")
+        )
+        self._sun_sim_action.triggered.connect(self._on_toggle_sun_sim)
+        self._set_action_icon(self._sun_sim_action, "sun_sim")
+        sun_menu.addAction(self._sun_sim_action)
+
+        # 3D view (US-E6) — viewer window, engine per ADR-038 (PyQt6-3D).
+        self._view3d_action = QAction(self.tr("&3D View…"), self)
+        self._view3d_action.setStatusTip(
+            self.tr("Open a 3D view of the plan with solar lighting")
+        )
+        self._view3d_action.triggered.connect(self._on_open_3d_view)
+        self._set_action_icon(self._view3d_action, "view3d")
+        sun_menu.addAction(self._view3d_action)
+
+        # Toggle Scale Bar
+        self._scale_bar_action = QAction(self.tr("Show Scale &Bar"), self)
+        self._scale_bar_action.setCheckable(True)
+        self._scale_bar_action.setChecked(True)  # Updated from settings in _setup_central_widget
+        self._scale_bar_action.setStatusTip(self.tr("Toggle the scale bar overlay on the canvas"))
+        self._scale_bar_action.triggered.connect(self._on_toggle_scale_bar)
+        self._set_action_icon(self._scale_bar_action, "scale_bar")
+        overlays_menu.addAction(self._scale_bar_action)
+
+        # Toggle Labels
+        self._labels_action = QAction(self.tr("Show &Labels"), self)
+        self._labels_action.setCheckable(True)
+        self._labels_action.setChecked(True)  # Updated from settings in _setup_central_widget
+        self._labels_action.setStatusTip(self.tr("Toggle object labels on the canvas"))
+        self._labels_action.triggered.connect(self._on_toggle_labels)
+        self._set_action_icon(self._labels_action, "labels")
+        overlays_menu.addAction(self._labels_action)
+
+        # Toggle Constraints
+        self._constraints_action = QAction(self.tr("Show &Constraints"), self)
+        self._constraints_action.setCheckable(True)
+        self._constraints_action.setChecked(True)  # Updated from settings in _setup_central_widget
+        self._constraints_action.setStatusTip(self.tr("Toggle constraint dimension lines on the canvas"))
+        self._constraints_action.triggered.connect(self._on_toggle_constraints)
+        self._set_action_icon(self._constraints_action, "constraints_overlay")
+        overlays_menu.addAction(self._constraints_action)
+
+        # Toggle Construction Geometry
+        self._construction_action = QAction(self.tr("Show C&onstruction Geometry"), self)
+        self._construction_action.setCheckable(True)
+        self._construction_action.setChecked(True)
+        self._construction_action.setStatusTip(self.tr("Toggle construction geometry visibility (excluded from exports)"))
+        self._construction_action.triggered.connect(self._on_toggle_construction)
+        self._set_action_icon(self._construction_action, "construction_line")
+        overlays_menu.addAction(self._construction_action)
+
+        # Toggle Guide Lines
+        self._guides_action = QAction(self.tr("Show &Guide Lines"), self)
+        self._guides_action.setShortcut(QKeySequence(";"))
+        self._guides_action.setCheckable(True)
+        self._guides_action.setChecked(True)
+        self._guides_action.setStatusTip(self.tr("Toggle ruler and guide lines (drag from ruler to create)"))
+        self._guides_action.triggered.connect(self._on_toggle_guides)
+        self._set_action_icon(self._guides_action, "guides")
+        overlays_menu.addAction(self._guides_action)
+
+        # Toggle Companion Planting Warnings
+        self._companion_warnings_action = QAction(self.tr("Show Companion &Warnings"), self)
+        self._companion_warnings_action.setCheckable(True)
+        self._companion_warnings_action.setChecked(True)
+        self._companion_warnings_action.setStatusTip(
+            self.tr("Highlight compatible and incompatible plants near the selected plant")
+        )
+        self._companion_warnings_action.triggered.connect(self._on_toggle_companion_warnings)
+        self._set_action_icon(self._companion_warnings_action, "companion_warnings")
+        overlays_menu.addAction(self._companion_warnings_action)
+
+        # Toggle Spacing Circles (US-11.2)
+        self._spacing_circles_action = QAction(self.tr("Show S&pacing Circles"), self)
+        self._spacing_circles_action.setCheckable(True)
+        self._spacing_circles_action.setChecked(True)
+        self._spacing_circles_action.setStatusTip(
+            self.tr("Show recommended spacing zones around plants")
+        )
+        self._spacing_circles_action.triggered.connect(self._on_toggle_spacing_circles)
+        self._set_action_icon(self._spacing_circles_action, "spacing_circles")
+        overlays_menu.addAction(self._spacing_circles_action)
+
+        # Toggle Soil Health Overlay (US-12.10b)
+        self._soil_overlay_action = QAction(self.tr("Soil &Health Overlay"), self)
+        self._soil_overlay_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
+        self._soil_overlay_action.setCheckable(True)
+        self._soil_overlay_action.setChecked(False)
+        self._soil_overlay_action.setStatusTip(
+            self.tr("Tint beds by soil-health rating (excluded from exports)")
+        )
+        self._soil_overlay_action.triggered.connect(self._on_toggle_soil_overlay)
+        self._set_action_icon(self._soil_overlay_action, "soil_overlay")
+        overlays_menu.addAction(self._soil_overlay_action)
+
+        # Toggle Minimap (US-11.7)
+        self._minimap_action = QAction(self.tr("Show &Minimap"), self)
+        self._minimap_action.setCheckable(True)
+        self._minimap_action.setChecked(True)
+        self._minimap_action.setStatusTip(
+            self.tr("Show a minimap overview for quick navigation")
+        )
+        self._minimap_action.triggered.connect(self._on_toggle_minimap)
+        self._set_action_icon(self._minimap_action, "minimap")
+        overlays_menu.addAction(self._minimap_action)
+
+        # Toggle previous-season compare overlay (US-10.7)
+        self._compare_overlay_action = QAction(self.tr("Show P&revious Season Overlay"), self)
+        self._compare_overlay_action.setCheckable(True)
+        self._compare_overlay_action.setChecked(False)
+        self._compare_overlay_action.setEnabled(False)  # Enabled when overlay data is loaded
+        self._compare_overlay_action.setStatusTip(
+            self.tr("Overlay ghosted plant positions from the previous season")
+        )
+        self._compare_overlay_action.triggered.connect(self._on_toggle_compare_overlay)
+        self._set_action_icon(self._compare_overlay_action, "compare_overlay")
+        overlays_menu.addAction(self._compare_overlay_action)
+
+        menu.addSeparator()
+
+        # Fullscreen Preview
+        self._preview_action = QAction(self.tr("Fullscreen &Preview"), self)
+        self._preview_action.setShortcut(QKeySequence("F11"))
+        self._preview_action.setCheckable(True)
+        self._preview_action.setChecked(False)
+        self._preview_action.setStatusTip(self.tr("Toggle fullscreen preview mode (hides all UI)"))
+        self._preview_action.triggered.connect(self._on_toggle_preview_mode)
+        self._set_action_icon(self._preview_action, "fullscreen")
+        menu.addAction(self._preview_action)
+
+        menu.addSeparator()
+
+        # Theme submenu
+        theme_menu = menu.addMenu(self.tr("&Theme"))
+        # menuAction() carries the submenu's icon — one registration path.
+        self._set_action_icon(theme_menu.menuAction(), "theme")
+
+        # Light theme
+        self._light_theme_action = QAction(self.tr("&Light"), self)
+        self._light_theme_action.setCheckable(True)
+        self._light_theme_action.setStatusTip(self.tr("Use light color scheme"))
+        self._light_theme_action.triggered.connect(lambda: self._on_theme_changed(ThemeMode.LIGHT))
+        theme_menu.addAction(self._light_theme_action)
+
+        # Dark theme
+        self._dark_theme_action = QAction(self.tr("&Dark"), self)
+        self._dark_theme_action.setCheckable(True)
+        self._dark_theme_action.setStatusTip(self.tr("Use dark color scheme"))
+        self._dark_theme_action.triggered.connect(lambda: self._on_theme_changed(ThemeMode.DARK))
+        theme_menu.addAction(self._dark_theme_action)
+
+        # System theme
+        self._system_theme_action = QAction(self.tr("&System"), self)
+        self._system_theme_action.setCheckable(True)
+        self._system_theme_action.setStatusTip(self.tr("Follow system color scheme preference"))
+        self._system_theme_action.triggered.connect(lambda: self._on_theme_changed(ThemeMode.SYSTEM))
+        theme_menu.addAction(self._system_theme_action)
+
+        # Initialize menu state from settings
+        QTimer.singleShot(0, self._update_theme_menu_state)
+
+        # Language submenu
+        language_menu = menu.addMenu(self.tr("&Language"))
+        self._set_action_icon(language_menu.menuAction(), "language")
+        self._language_actions: dict[str, QAction] = {}
+
+        from open_garden_planner.core.i18n import SUPPORTED_LANGUAGES
+
+        for lang_code, native_name in SUPPORTED_LANGUAGES.items():
+            action = QAction(native_name, self)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda _checked, lc=lang_code: self._on_language_changed(lc)
+            )
+            language_menu.addAction(action)
+            self._language_actions[lang_code] = action
+
+        # Initialize language menu state from settings
+        QTimer.singleShot(0, self._update_language_menu_state)
+
+    def _setup_plants_menu(self, menu: QMenu) -> None:
+        """Set up the Plants menu actions."""
+        # Search Plant Database
+        search_action = QAction(self.tr("&Search Plant Database"), self)
+        search_action.setShortcut(QKeySequence("Ctrl+K"))
+        search_action.setStatusTip(self.tr("Search for plant species in online databases"))
+        search_action.triggered.connect(self._on_search_plant_database)
+        self._set_action_icon(search_action, "plant_search")
+        menu.addAction(search_action)
+
+        menu.addSeparator()
+
+        # Manage Custom Plants
+        manage_custom_action = QAction(self.tr("&Manage Custom Plants..."), self)
+        manage_custom_action.setStatusTip(self.tr("View, edit, and delete your custom plant species"))
+        manage_custom_action.triggered.connect(self._on_manage_custom_plants)
+        self._set_action_icon(manage_custom_action, "plant_manage")
+        menu.addAction(manage_custom_action)
+
+        menu.addSeparator()
+
+        # Check Companion Planting
+        check_companion_action = QAction(self.tr("Check &Companion Planting..."), self)
+        check_companion_action.setStatusTip(self.tr("Analyse the whole plan for companion planting compatibility"))
+        check_companion_action.triggered.connect(self._on_check_companion_planting)
+        self._set_action_icon(check_companion_action, "companion")
+        menu.addAction(check_companion_action)
+
+    def _setup_garden_menu(self, menu: QMenu) -> None:
+        """Set up the Garden menu actions (US-12.10a — soil)."""
+        # Set default soil test (project-wide fallback when a bed has no own test)
+        default_soil_action = QAction(self.tr("&Set default soil test…"), self)
+        default_soil_action.setStatusTip(
+            self.tr("Set a project-wide soil test used when individual beds have none")
+        )
+        default_soil_action.triggered.connect(self._on_set_default_soil_test)
+        self._set_action_icon(default_soil_action, "soil_test")
+        menu.addAction(default_soil_action)
+
+        # Amendment plan (US-12.10c) — aggregated cross-bed shopping list.
+        menu.addSeparator()
+        amendment_plan_action = QAction(self.tr("&Amendment Plan…"), self)
+        amendment_plan_action.setStatusTip(
+            self.tr("View amendment recommendations for deficient beds")
+        )
+        amendment_plan_action.triggered.connect(self._on_amendment_plan)
+        self._set_action_icon(amendment_plan_action, "amendment")
+        menu.addAction(amendment_plan_action)
+
+        # Shopping list (US-12.6)
+        shopping_list_action = QAction(self.tr("S&hopping List…"), self)
+        shopping_list_action.setStatusTip(
+            self.tr("Generate a shopping list of plants, seeds, and materials")
+        )
+        shopping_list_action.triggered.connect(self._on_shopping_list)
+        self._set_action_icon(shopping_list_action, "shopping_list")
+        menu.addAction(shopping_list_action)
+
+    def _setup_help_menu(self, menu: QMenu) -> None:
+        """Set up the Help menu actions."""
+        # Keyboard Shortcuts
+        shortcuts_action = QAction(self.tr("&Keyboard Shortcuts"), self)
+        shortcuts_action.setShortcut(QKeySequence("F1"))
+        shortcuts_action.setStatusTip(self.tr("Show keyboard shortcuts reference"))
+        shortcuts_action.triggered.connect(self._on_keyboard_shortcuts)
+        self._set_action_icon(shortcuts_action, "shortcuts")
+        menu.addAction(shortcuts_action)
+
+        # Connect AI Assistant (US-D1.6)
+        connect_ai_action = QAction(self.tr("Connect AI Assistant…"), self)
+        connect_ai_action.setStatusTip(
+            self.tr("Register this plan's MCP server with your AI assistant")
+        )
+        connect_ai_action.triggered.connect(self._on_connect_ai_assistant)
+        self._set_action_icon(connect_ai_action, "connect_ai")
+        menu.addAction(connect_ai_action)
+
+        menu.addSeparator()
+
+        # About
+        about_action = QAction(self.tr("&About Open Garden Planner"), self)
+        about_action.setStatusTip(self.tr("About this application"))
+        about_action.triggered.connect(self._on_about)
+        self._set_action_icon(about_action, "about")
+        menu.addAction(about_action)
+
+        # About Qt
+        about_qt_action = QAction(self.tr("About &Qt"), self)
+        about_qt_action.triggered.connect(QApplication.aboutQt)
+        self._set_action_icon(about_qt_action, "about_qt")
+        menu.addAction(about_qt_action)
+
+
+    def _setup_status_bar(self) -> None:
+        """Set up the status bar with coordinate and zoom display."""
+        from open_garden_planner.ui.widgets.coordinate_input_field import (
+            CoordinateInputField,
+        )
+
+        status_bar = self.statusBar()
+
+        # Coordinate label (left side, permanent). Every segment carries a
+        # small themed icon (#310) so the bar scans as a row of instruments.
+        status_bar.addPermanentWidget(self._make_icon_label("status_coords", tooltip=self.tr("Cursor position")))
+        self.coord_label = QLabel(self.tr("X: 0.00 cm  Y: 0.00 cm"))
+        self.coord_label.setMinimumWidth(200)
+        status_bar.addPermanentWidget(self.coord_label)
+
+        # Typed coordinate input (Package A US-A1/A2). Wired up after
+        # _setup_central_widget runs (which creates canvas_view).
+        self.coordinate_input_field: CoordinateInputField | None = None
+
+        # Zoom label
+        status_bar.addPermanentWidget(self._make_icon_label("status_zoom", tooltip=self.tr("Zoom level")))
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setMinimumWidth(60)
+        status_bar.addPermanentWidget(self.zoom_label)
+
+        # Selection info label
+        status_bar.addPermanentWidget(self._make_icon_label("select", tooltip=self.tr("Selection")))
+        self.selection_label = QLabel(self.tr("No selection"))
+        self.selection_label.setMinimumWidth(150)
+        status_bar.addPermanentWidget(self.selection_label)
+
+        # Tool label
+        status_bar.addPermanentWidget(self._make_icon_label("status_tool", tooltip=self.tr("Active tool")))
+        self.tool_label = QLabel(self.tr("Select"))
+        self.tool_label.setMinimumWidth(80)
+        status_bar.addPermanentWidget(self.tool_label)
+
+        # Location label
+        status_bar.addPermanentWidget(self._make_icon_label("location", tooltip=self.tr("Garden location")))
+        self.location_label = QLabel(self.tr("No location set"))
+        self.location_label.setMinimumWidth(160)
+        self.location_label.setToolTip(self.tr("Garden GPS location — use File > Set Garden Location to configure"))
+        status_bar.addPermanentWidget(self.location_label)
+
+        # Season label (US-10.7)
+        status_bar.addPermanentWidget(self._make_icon_label("season", tooltip=self.tr("Season")))
+        self.season_label = QLabel(self.tr("Season: —"))
+        self.season_label.setMinimumWidth(100)
+        self.season_label.setToolTip(self.tr("Current season year — use File > Manage Seasons to configure"))
+        status_bar.addPermanentWidget(self.season_label)
+
+        # Sun & shade simulation hint (US-E3/E4) — night / no-location notes.
+        # Lives here, NOT on the sun toolbar: a variable-width label in the
+        # toolbar's flow reflowed Qt's overflow popup and bumped the Animate
+        # button to another row when the night text toggled (2026-07 fix).
+        self._sun_hint_icon = self._make_icon_label("sun", tooltip=self.tr("Sun & shade simulation"))
+        self._sun_hint_icon.setVisible(False)
+        status_bar.addPermanentWidget(self._sun_hint_icon)
+        self._sun_hint_label = QLabel("")
+        set_text_role(self._sun_hint_label, color_role="caution")
+        self._sun_hint_label.setStyleSheet("font-style: italic;")
+        self._sun_hint_label.setVisible(False)
+        # the icon follows the transient hint's visibility (Show/Hide events)
+        self._sun_hint_label.installEventFilter(self)
+        status_bar.addPermanentWidget(self._sun_hint_label)
+
+        # Show ready message
+        status_bar.showMessage(self.tr("Ready"))
+
+    def _setup_central_widget(self) -> None:
+        """Set up the central widget area with canvas and sidebar panels."""
+        from open_garden_planner.ui.widgets.coordinate_input_field import (
+            CoordinateInputField,
+        )
+
+        # Create canvas scene and view
+        self.canvas_scene = CanvasScene(width_cm=5000, height_cm=3000)
+        self.canvas_view = CanvasView(self.canvas_scene)
+
+        # Status-bar typed coordinate input (Package A US-A1/A2). Created
+        # here so it can attach to the canvas_view's shared input buffer.
+        self.coordinate_input_field = CoordinateInputField(
+            self.canvas_view.coordinate_input_buffer, self
+        )
+        self.coordinate_input_field.commit_requested.connect(
+            self.canvas_view.commit_typed_coordinate
+        )
+        # Insert between the coordinate label and the zoom label.
+        status_bar = self.statusBar()
+        # index 2/3: after the coordinate icon (0) and label (1) — #310 added
+        # a pixmap label in front of every status segment
+        status_bar.insertPermanentWidget(2, self._make_icon_label("status_input", tooltip=self.tr("Typed coordinate input")))
+        status_bar.insertPermanentWidget(3, self.coordinate_input_field)
+
+        # Three top toolbars on the same row, left → right:
+        #   MainToolbar (core tools)
+        #   ConstraintToolbar (CAD constraints)
+        #   CategoryToolbar (object categories + global search)
+        self.main_toolbar = MainToolbar(self)
+        self.addToolBar(self.main_toolbar)
+
+        self.constraint_toolbar = ConstraintToolbar(self)
+        self.addToolBar(self.constraint_toolbar)
+
+        self.category_toolbar = CategoryToolbar(self)
+        self.addToolBar(self.category_toolbar)
+
+        # ── Companion planting service (shared by sidebar panel and highlights) ─
+        self._companion_service = CompanionPlantingService()
+        self._companion_warnings_enabled = True
+        self._companion_radius_cm = 200.0  # 2 m default
+
+        # ── Soil service (US-12.10a/b/d) — long-lived, shared by overlay & dialog ──
+        self._soil_service = SoilService(self._project_manager)
+        self.canvas_view.set_soil_service(self._soil_service)
+
+        # Soil overlay parameter toolbar (US-12.10b) — hidden until overlay on.
+        self._setup_soil_overlay_toolbar()
+
+        # ── Crop rotation service (US-10.6) ──────────────────────────────────
+        from open_garden_planner.services.crop_rotation_service import CropRotationService
+
+        self._crop_rotation_service = CropRotationService()
+
+        # Create sidebar panels
+        self._setup_sidebar()
+
+        # Create splitter for canvas and sidebar
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.addWidget(self.canvas_view)
+        # Route CanvasView's status messages to the window's status bar. This is
+        # a signal connection rather than a parent lookup because the canvas's
+        # parent is this QSplitter, which has no statusBar() — so the old
+        # `self.parent().statusBar()` route resolved to nothing and every
+        # set_status_message caller was silently dropped. #415 surfaced it.
+        self.canvas_view.status_message.connect(self._show_status_message)
+        self._main_splitter.addWidget(self.sidebar)
+        self._main_splitter.setStretchFactor(0, 1)  # Canvas takes most space
+        self._main_splitter.setStretchFactor(1, 0)  # Sidebar fixed width
+        self._main_splitter.setHandleWidth(1)  # Minimal splitter handle
+        # Set initial sizes: give sidebar 450px, canvas gets the rest
+        self._main_splitter.setSizes([1000, 450])
+        splitter = self._main_splitter
+
+        # Connect canvas signals to status bar updates
+        self.canvas_view.coordinates_changed.connect(self.update_coordinates)
+        self.canvas_view.zoom_changed.connect(self.update_zoom)
+
+        # Connect view menu actions to canvas
+        self.grid_action.triggered.connect(self._on_toggle_grid)
+        self.snap_action.triggered.connect(self._on_toggle_snap)
+
+        # Connect toolbars to canvas view: core tools, constraints, and the
+        # category dropdowns + global search live on three separate toolbars.
+        self.main_toolbar.tool_selected.connect(self._on_tool_selected)
+        self.constraint_toolbar.tool_selected.connect(self._on_tool_selected)
+        self.category_toolbar.tool_selected.connect(self._on_tool_selected)
+        self.category_toolbar.item_selected.connect(self._on_gallery_item_selected)
+        self.canvas_view.tool_changed.connect(self.update_tool)
+        self.canvas_view.tool_type_changed.connect(self._sync_toolbar_state_by_type)
+        self.canvas_view.import_background_image_requested.connect(
+            self._on_import_background_image
+        )
+        # US-12.10a: bed → "Add soil test…" routes through CanvasView
+        self.canvas_view.soil_test_requested.connect(self._on_soil_test_requested)
+        # US-12.10e: bed top-right reminder badge → open dialog for that bed
+        self.canvas_view.soil_test_badge_clicked.connect(
+            self._on_soil_test_badge_clicked
+        )
+        # US-12.7: bed/plant → "Log Pest/Disease…" routes through CanvasView
+        self.canvas_view.pest_log_requested.connect(self._on_pest_log_requested)
+        self._project_manager.pest_logs_changed.connect(
+            self._on_pest_logs_changed
+        )
+        # US-C1: bed/plant → "Log Harvest…" routes through CanvasView
+        self.canvas_view.harvest_log_requested.connect(self._on_harvest_log_requested)
+        # US-12.8: bed → "Plan Succession…" routes through CanvasView
+        self.canvas_view.succession_plan_requested.connect(
+            self._on_succession_plan_requested
+        )
+        self._project_manager.succession_plans_changed.connect(
+            self._on_succession_plans_changed
+        )
+        # US-12.9: Journal Pin tool + pin double-click / delete
+        self.canvas_view.journal_note_requested.connect(
+            self._on_journal_note_placement
+        )
+        self.canvas_view.journal_note_edit_requested.connect(
+            self._on_journal_note_edit
+        )
+        self.canvas_view.journal_note_delete_requested.connect(
+            self._on_journal_note_delete
+        )
+        self.canvas_view.journal_notes_batch_delete_requested.connect(
+            self._on_journal_notes_batch_delete
+        )
+        self._project_manager.garden_journal_notes_changed.connect(
+            self._on_garden_journal_notes_changed
+        )
+
+        # Connect scene selection changes to status bar and panels
+        self.canvas_scene.selectionChanged.connect(self._on_selection_changed)
+        self.canvas_scene.selectionChanged.connect(self._update_properties_panel)
+        self.canvas_scene.selectionChanged.connect(self._update_plant_database_panel)
+        self.canvas_scene.selectionChanged.connect(self._update_companion_panel)
+        self.canvas_scene.selectionChanged.connect(self._update_crop_rotation_panel)
+
+        # ── Companion planting highlights (US-10.2) ──────────────────────────
+        # Debounce timer for drag updates (avoids re-querying on every pixel move)
+        self._companion_update_timer = QTimer(self)
+        self._companion_update_timer.setSingleShot(True)
+        self._companion_update_timer.setInterval(60)
+        self._companion_update_timer.timeout.connect(self._update_companion_highlights)
+        self._companion_update_timer.timeout.connect(self._update_companion_panel)
+        self.canvas_scene.selectionChanged.connect(self._update_companion_highlights)
+        self.canvas_scene.changed.connect(self._on_scene_changed_for_companion)
+
+        # ── Spacing circle overlap detection (US-11.2) ───────────────────────
+        self._spacing_circles_enabled = True
+        self._spacing_update_timer = QTimer(self)
+        self._spacing_update_timer.setSingleShot(True)
+        self._spacing_update_timer.setInterval(150)
+        self._spacing_update_timer.timeout.connect(self._update_spacing_overlaps)
+        self.canvas_scene.selectionChanged.connect(self._update_spacing_overlaps)
+        self.canvas_scene.changed.connect(self._on_scene_changed_for_spacing)
+
+        # ── Minimap overlay (US-11.7) ────────────────────────────────────────
+        from open_garden_planner.ui.widgets.minimap_widget import MinimapWidget
+
+        self._minimap = MinimapWidget(self.canvas_view, self.canvas_scene)
+
+        # ── Sun & shade simulation (US-E3) ─────────────────────────────
+        from open_garden_planner.ui.canvas.sun_shadow_controller import (
+            SunShadowController,
+        )
+        from open_garden_planner.ui.widgets.sun_sim_toolbar import SunSimToolbar
+
+        self._sun_controller = SunShadowController(
+            self.canvas_scene, lambda: self._project_manager.location, self
+        )
+        self._sun_controller.state_changed.connect(self._on_sun_state_changed)
+        self._sun_toolbar = SunSimToolbar(self)
+        self.addToolBarBreak()
+        self.addToolBar(self._sun_toolbar)
+        self._sun_toolbar.setVisible(False)
+        self._sun_toolbar.datetime_changed.connect(self._on_sun_sim_datetime)
+        # Keep the menu action + controller in sync with any visibility change
+        # that does not come from the action itself — today that is
+        # _enforce_toolbar_visibility() at startup. (It used to be Qt's built-in
+        # toolbar context menu, which #283 suppressed via createPopupMenu.)
+        self._sun_toolbar.visibilityChanged.connect(self._on_sun_toolbar_visibility)
+        # The sim instant is deliberately NOT persisted: it defaults to the
+        # current date/time on every app start (the toolbar seeds "now" in its
+        # constructor), so a fresh simulation always reflects today.
+        self._project_manager.location_changed.connect(
+            self._on_location_changed_for_sun
+        )
+
+        # ── Hours-of-sun heatmap (US-E4) — recompute on demand only ────────
+        from open_garden_planner.ui.canvas.sun_heatmap import SunHeatmapController
+
+        self._sun_heatmap = SunHeatmapController(
+            self.canvas_scene, lambda: self._project_manager.location, self
+        )
+        self._sun_heatmap.finished.connect(self._on_heatmap_finished)
+        self._sun_toolbar.heatmap_requested.connect(self._on_heatmap_requested)
+        self._sun_toolbar.heatmap_cleared.connect(self._sun_heatmap.clear)
+
+        # ── 3D view (US-E6) — created lazily on first menu use ────────────
+        self._view3d_window = None  # the currently-OPEN viewer, or None
+        self._view3d_window_retiring = None  # closed, awaiting safe teardown
+
+        # ── Find & Replace panel (US-11.24) ──────────────────────────────────
+        from open_garden_planner.ui.panels.find_replace_panel import FindReplacePanel
+
+        self._find_panel = FindReplacePanel(self.canvas_view, parent=self)
+
+        # Connect delete action to canvas
+        self._delete_action.triggered.connect(self.canvas_view._delete_selected_items)
+
+        # Connect undo/redo action enable state to command manager
+        cmd_mgr = self.canvas_view.command_manager
+        cmd_mgr.can_undo_changed.connect(self._undo_action.setEnabled)
+        cmd_mgr.can_redo_changed.connect(self._redo_action.setEnabled)
+
+        # Mark project dirty on any stack mutation — execute AND undo/redo.
+        # command_executed only fires on execute, so wiring mark_dirty there left
+        # undo/redo silently "clean" (issue #209). stack_changed covers all three.
+        cmd_mgr.stack_changed.connect(self._project_manager.mark_dirty)
+
+        # Refresh dependent panels after any stack mutation (add/remove/edit/
+        # undo/redo). stack_changed fires exactly once per execute/register_applied
+        # /undo/redo — unlike command_executed (which misses undo/redo) and the
+        # can_undo/redo_changed booleans (which fire redundantly and exist only to
+        # drive the toolbar Undo/Redo actions, wired at 1086-1087). A single
+        # stack_changed wiring collapses the former three-signal fan-out to one
+        # refresh per command and gives correct undo/redo coverage.
+        cmd_mgr.stack_changed.connect(self.constraints_panel.refresh)
+
+        # Sun shadow overlay: metadata-only edits (e.g. an object-height change)
+        # repaint nothing, so scene.changed alone would miss them — stack_changed
+        # closes that gap; the controller's snapshot key makes duplicates free.
+        cmd_mgr.stack_changed.connect(self._sun_controller.schedule_recompute)
+
+        # Properties panel: defer via QTimer.singleShot to avoid rebuilding mid
+        # spin-box interaction. The panel itself only rebuilds when the selection
+        # changes; an unchanged selection refreshes values in place (#206/#222).
+        cmd_mgr.stack_changed.connect(
+            lambda: QTimer.singleShot(0, self._update_properties_panel)
+        )
+
+        # Plant database panel: refresh on undo/redo too — e.g. undoing a species
+        # assignment while the plant stays selected. Without this it was wired
+        # only to selectionChanged/object_type_changed, so an undo/redo left the
+        # species details stale until reselection. set_selected_items uses an
+        # incremental toggle-visibility update, so this is cheap.
+        cmd_mgr.stack_changed.connect(
+            lambda: QTimer.singleShot(0, self._update_plant_database_panel)
+        )
+
+        # Companion + crop-rotation panels reflect command-mutated state (species,
+        # reparent, nearby plants) — refresh on undo/redo too, not just on
+        # selectionChanged (#225). Cheap list rebuilds, no editable fields.
+        cmd_mgr.stack_changed.connect(self._update_companion_panel)
+        cmd_mgr.stack_changed.connect(self._update_crop_rotation_panel)
+
+        # ── Tab-based main window (US-8.7) ──────────────────────────────────────
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setDocumentMode(True)
+
+        # Tab 0: Garden Plan (existing canvas + sidebar)
+        self._tab_widget.addTab(splitter, self.tr("Garden Plan"))
+        self._set_tab_icon(splitter, "tab_plan")
+
+        # Tab 1: Planting Calendar (US-8.5)
+        self.calendar_view = PlantingCalendarView(self.canvas_scene, self._project_manager)
+        # The planting-calendar tab carries its own status messages (a refused
+        # propagation date, #415). It shares the canvas's scene, but a tab
+        # message should come from the tab rather than from the canvas view.
+        self.calendar_view.status_message.connect(self._show_status_message)
+        self.calendar_view.set_soil_service(self._soil_service)
+        self._tab_widget.addTab(self.calendar_view, self.tr("Planting Calendar"))
+        self._set_tab_icon(self.calendar_view, "tab_calendar")
+
+        # Tab 2: Seed Inventory (US-9.4)
+        self.seed_inventory_view = SeedInventoryView()
+        self.seed_inventory_view.set_canvas_scene(self.canvas_scene)  # US-9.6: bidirectional links
+        self._tab_widget.addTab(self.seed_inventory_view, self.tr("Seed Inventory"))
+        self._set_tab_icon(self.seed_inventory_view, "seedling")
+
+        # Tab: Tasks (US-C2, #188) — appended last (keeps existing tab indices,
+        # the frost-badge setCurrentIndex(1), and Ctrl+1..4 valid).
+        self.tasks_view = TasksView(
+            self.canvas_scene, self._project_manager, cmd_mgr
+        )
+        self.tasks_view.set_soil_service(self._soil_service)
+        self._tab_widget.addTab(self.tasks_view, self.tr("Tasks"))
+        self._set_tab_icon(self.tasks_view, "tab_tasks")
+
+        # Tab: Harvest (US-C1, #188) — appended last (keeps existing tab indices
+        # and the frost-badge setCurrentIndex(1) valid).
+        self.harvest_view = HarvestView(self.canvas_scene, self._project_manager)
+        self._tab_widget.addTab(self.harvest_view, self.tr("Harvest"))
+        self._set_tab_icon(self.harvest_view, "tab_harvest")
+
+        # Keyboard shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3 to switch tabs.
+        # (The "Layout / Paper Space" tab was dropped — `pdf_report_service`
+        # already produces multi-page PDFs at chosen paper sizes, so a
+        # second-space CAD-style print workflow added no value on top.)
+        tab0_shortcut = QAction(self)
+        tab0_shortcut.setShortcut(QKeySequence("Ctrl+1"))
+        tab0_shortcut.triggered.connect(lambda: self._tab_widget.setCurrentIndex(0))
+        self.addAction(tab0_shortcut)
+        tab1_shortcut = QAction(self)
+        tab1_shortcut.setShortcut(QKeySequence("Ctrl+2"))
+        tab1_shortcut.triggered.connect(lambda: self._tab_widget.setCurrentIndex(1))
+        self.addAction(tab1_shortcut)
+        tab2_shortcut = QAction(self)
+        tab2_shortcut.setShortcut(QKeySequence("Ctrl+3"))
+        tab2_shortcut.triggered.connect(lambda: self._tab_widget.setCurrentIndex(2))
+        self.addAction(tab2_shortcut)
+
+        # Refresh calendar on tab switch and on canvas/location/status changes.
+        # The calendar now uses a debounced schedule_refresh() that skips work
+        # while its tab is hidden, so it can be wired to stack_changed (covers
+        # undo/redo) without the heavyweight churn #210 flagged — fixes #225.
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
+        self._project_manager.location_changed.connect(
+            lambda _: self.calendar_view.schedule_refresh()
+        )
+        self._project_manager.task_states_changed.connect(
+            lambda _: self.calendar_view.schedule_refresh()
+        )
+        cmd_mgr.stack_changed.connect(lambda: self.calendar_view.schedule_refresh())
+
+        # Highlight plant on canvas when user clicks a dashboard task (US-8.6)
+        self.calendar_view.highlight_species.connect(self._on_highlight_species)
+
+        # Frost alert badge in the tab-bar corner (US-12.2)
+        self._frost_badge = QPushButton(self._tab_widget)
+        self._frost_badge.setFlat(True)
+        self._frost_badge.setFixedHeight(24)
+        self._frost_badge.setToolTip(self.tr("Frost alert — click to view details in Planting Calendar"))
+        self._frost_badge.clicked.connect(lambda: self._tab_widget.setCurrentIndex(1))
+        self._frost_badge.hide()
+        self._tab_widget.setCornerWidget(self._frost_badge, Qt.Corner.TopRightCorner)
+        self.calendar_view.frost_alert_ready.connect(self._on_frost_alert_ready)
+
+        # ── Tasks tab wiring (US-C2, #188) ───────────────────────────────────
+        # Ctrl shortcut for the Tasks tab — resolve its index (don't hardcode).
+        tasks_shortcut = QAction(self)
+        tasks_shortcut.setShortcut(QKeySequence("Ctrl+4"))  # contiguous 1–5 (#310)
+        tasks_shortcut.triggered.connect(
+            lambda: self._tab_widget.setCurrentIndex(
+                self._tab_widget.indexOf(self.tasks_view)
+            )
+        )
+        self.addAction(tasks_shortcut)
+        # Reuse the calendar's single weather fetch for frost tasks.
+        self.calendar_view.frost_alerts_ready.connect(self.tasks_view.set_frost_alerts)
+        # ...and keep an application-owned copy for the agent's PlanState build
+        # (US-D3.3). Reading `tasks_view._frost_alerts` from here would couple
+        # the agent path to a private attribute of a widget; this is the same
+        # signal, fanned out to both consumers.
+        self.calendar_view.frost_alerts_ready.connect(self._agent_set_frost_alerts)
+        # Regenerate (debounced inside the view) on relevant project changes.
+        self._project_manager.location_changed.connect(
+            lambda _: self.tasks_view.schedule_refresh()
+        )
+        self._project_manager.task_states_changed.connect(
+            lambda _: self.tasks_view.schedule_refresh()
+        )
+        self._project_manager.manual_tasks_changed.connect(
+            lambda _: self.tasks_view.schedule_refresh()
+        )
+        self._project_manager.succession_plans_changed.connect(
+            lambda _: self.tasks_view.schedule_refresh()
+        )
+        cmd_mgr.command_executed.connect(lambda _: self.tasks_view.schedule_refresh())
+        # Task → canvas navigation.
+        self.tasks_view.navigate_to_bed.connect(self._on_navigate_to_bed)
+        self.tasks_view.navigate_to_species.connect(self._on_highlight_species)
+        self.tasks_view.navigate_to_items.connect(self._on_navigate_to_items)
+
+        # ── Harvest tab wiring (US-C1, #188) ─────────────────────────────────
+        harvest_shortcut = QAction(self)
+        harvest_shortcut.setShortcut(QKeySequence("Ctrl+5"))  # contiguous 1–5 (#310)
+        harvest_shortcut.triggered.connect(
+            lambda: self._tab_widget.setCurrentIndex(
+                self._tab_widget.indexOf(self.harvest_view)
+            )
+        )
+        self.addAction(harvest_shortcut)
+        # Regenerate (debounced inside the view) when harvest logs change or on
+        # undo/redo (stack_changed); skipped while the tab is hidden.
+        self._project_manager.harvest_logs_changed.connect(
+            lambda _: self.harvest_view.schedule_refresh()
+        )
+        cmd_mgr.stack_changed.connect(lambda: self.harvest_view.schedule_refresh())
+        self.harvest_view.navigate_to_species.connect(self._on_highlight_species)
+
+        # Wrap tab widget + update/reminder bars in a container
+        self._update_bar = UpdateBar(self)
+        self._update_bar.skip_version_requested.connect(self._on_skip_version)
+        # Overdue-task reminder bar (US-C2, #188) — persistent, dismissible.
+        self._task_reminder_bar = TaskReminderBar(self)
+        self._task_reminder_bar.show_tasks_requested.connect(
+            lambda: self._tab_widget.setCurrentIndex(
+                self._tab_widget.indexOf(self.tasks_view)
+            )
+        )
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(self._update_bar)
+        container_layout.addWidget(self._task_reminder_bar)
+        container_layout.addWidget(self._tab_widget)
+        self.setCentralWidget(container)
+
+        # Initial zoom display
+        self.update_zoom(self.canvas_view.zoom_percent)
+
+        # Initial tool display
+        self.update_tool("Select")
+
+        # Initial selection display
+        self.update_selection(0, [])
+
+        # Initialize shadow, scale bar, labels, constraints, and object snap state from settings
+        QTimer.singleShot(0, self._init_shadows_from_settings)
+        QTimer.singleShot(0, self._init_scale_bar_from_settings)
+        QTimer.singleShot(0, self._init_labels_from_settings)
+        QTimer.singleShot(0, self._init_constraints_from_settings)
+        QTimer.singleShot(0, self._init_object_snap_from_settings)
+        QTimer.singleShot(0, self._init_spacing_circles_from_settings)
+
+    def _show_status_message(self, message: str, duration_ms: int = 0) -> None:
+        """Show ``message`` in the window's status bar (CanvasView's route).
+
+        The single sink for both ``CanvasView.status_message`` and
+        ``PlantingCalendarView.status_message``. Kept as a method rather than
+        connecting straight to ``statusBar().showMessage`` so there is one place
+        to stub or instrument it.
+
+        ``tests/integration/test_status_message_route.py`` asserts the delivery
+        chain end to end; it does not stub THIS method, so the earlier claim that
+        it did was wrong.
+
+        Args:
+            message: The text to display.
+            duration_ms: How long to show it; 0 leaves it until replaced.
+        """
+        self.statusBar().showMessage(message, duration_ms)
+
+    def _setup_sidebar(self) -> None:
+        """Set up the right sidebar with collapsible panels."""
+        # Create sidebar container
+        self.sidebar = QWidget()
+        sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(4)
+
+        # Properties Panel (collapsible) - first in the sidebar since the
+        # Object Gallery moved into the top toolbar (category dropdowns).
+        self.properties_panel = PropertiesPanel(
+            command_manager=self.canvas_view.command_manager
+        )
+        # Re-evaluate all three contextual panels when the selected item's type
+        # changes (e.g. tree → house): each may need to show or hide. Companion is
+        # included explicitly so its visibility does not rely on the incidental
+        # stack_changed signal alone.
+        self.properties_panel.object_type_changed.connect(self._update_plant_database_panel)
+        self.properties_panel.object_type_changed.connect(self._update_companion_panel)
+        self.properties_panel.object_type_changed.connect(self._update_crop_rotation_panel)
+        props_panel = CollapsiblePanel(self.tr("Properties"), self.properties_panel, expanded=True)
+        sidebar_layout.addWidget(props_panel)
+
+        # 3. Layers Panel (collapsible)
+        self.layers_panel = LayersPanel()
+        self.layers_panel.set_layers(self.canvas_scene.layers)
+
+        # Connect layers panel signals. All layer mutations are routed through
+        # undoable commands created here; the panel itself never mutates layers.
+        self.layers_panel.active_layer_changed.connect(self._on_active_layer_changed)
+        self.layers_panel.layer_visibility_changed.connect(self._on_layer_visibility_change_requested)
+        self.layers_panel.layer_lock_changed.connect(self._on_layer_lock_change_requested)
+        # Live slider preview is non-undoable; the drag commits once on release.
+        self.layers_panel.layer_opacity_changed.connect(self.canvas_scene.preview_layer_opacity)
+        self.layers_panel.layer_opacity_committed.connect(self._on_layer_opacity_committed)
+        self.layers_panel.layers_reordered.connect(self._on_layers_reordered)
+        self.layers_panel.layer_renamed.connect(self._on_layer_renamed)
+        self.layers_panel.layer_deleted.connect(self._on_layer_deleted)
+        self.layers_panel.layer_add_requested.connect(self._on_layer_add_requested)
+
+        # Connect scene layer changes to panel
+        self.canvas_scene.layers_changed.connect(lambda: self.layers_panel.set_layers(self.canvas_scene.layers))
+        self.canvas_scene.layer_auto_unhidden.connect(self._on_layer_auto_unhidden)
+        # Keep the panel selection in sync when the active layer changes from
+        # outside the panel (e.g. undo/redo of layer commands).
+        self.canvas_scene.active_layer_changed.connect(self._on_scene_active_layer_changed)
+
+        layers_panel = CollapsiblePanel(self.tr("Layers"), self.layers_panel, expanded=True)
+        sidebar_layout.addWidget(layers_panel)
+
+        # 4. Constraints Panel (collapsible) - manage distance constraints
+        self.constraints_panel = ConstraintsPanel()
+        self.constraints_panel.set_scene(self.canvas_scene)
+        self.constraints_panel.constraint_selected.connect(
+            self._on_constraint_selected
+        )
+        self.constraints_panel.constraint_edit_requested.connect(
+            self._on_constraint_edit_requested
+        )
+        self.constraints_panel.constraint_delete_requested.connect(
+            self._on_constraint_delete_requested
+        )
+        constraints_collapsible = CollapsiblePanel(
+            self.tr("Constraints"), self.constraints_panel, expanded=False
+        )
+        # Delete-all button lives in the header, aligned with individual row × buttons
+        from PyQt6.QtWidgets import QToolButton
+        delete_all_btn = QToolButton()
+        delete_all_btn.setText("\u00d7")
+        delete_all_btn.setFixedSize(20, 20)
+        delete_all_btn.setToolTip(self.tr("Delete all constraints"))
+        delete_all_btn.setObjectName("constraintsDeleteAllBtn")
+        delete_all_btn.clicked.connect(self.constraints_panel.delete_all)
+        constraints_collapsible.add_header_widget(delete_all_btn)
+        sidebar_layout.addWidget(constraints_collapsible)
+
+        # 5. Plant Search Panel (collapsible) - for finding plants in the project
+        self.plant_search_panel = PlantSearchPanel()
+        self.plant_search_panel.set_canvas_scene(self.canvas_scene)
+
+        # Debounce timer so the very chatty QGraphicsScene.changed signal does not
+        # rebuild the whole list on every repaint (which tore down rows mid-click and
+        # made selection flaky - issue #212).
+        self._plant_search_refresh_timer = QTimer(self)
+        self._plant_search_refresh_timer.setSingleShot(True)
+        self._plant_search_refresh_timer.setInterval(150)
+        self._plant_search_refresh_timer.timeout.connect(self._refresh_plant_search_panel)
+
+        # Connect scene changes to (debounced) refresh of the plant list
+        self.canvas_scene.changed.connect(self._on_scene_changed_for_plant_search)
+
+        plant_search_collapsible = CollapsiblePanel(self.tr("Find Plants"), self.plant_search_panel, expanded=False)
+        sidebar_layout.addWidget(plant_search_collapsible)
+
+        # 6. Plant Details Panel (collapsible) - only shown when a plant is selected
+        self.plant_database_panel = PlantDatabasePanel()
+        self.plant_database_panel.search_button.clicked.connect(self._on_search_plant_database)
+        self.plant_details_collapsible = CollapsiblePanel(self.tr("Plant Details"), self.plant_database_panel, expanded=True)
+        sidebar_layout.addWidget(self.plant_details_collapsible)
+
+        # 7. Companion Planting Panel (collapsible, US-10.3) — only shown for plant selection
+        self.companion_panel = CompanionPanel(self._companion_service)
+        self.companion_panel.set_canvas_scene(self.canvas_scene)
+        self.companion_panel.set_radius_cm(self._companion_radius_cm)
+        self.companion_panel.highlight_species_requested.connect(
+            self._on_companion_highlight_species
+        )
+        self.companion_collapsible = CollapsiblePanel(
+            self.tr("Companion Planting"), self.companion_panel, expanded=True
+        )
+        sidebar_layout.addWidget(self.companion_collapsible)
+
+        # 8. Crop Rotation Panel (collapsible, US-10.6) — only shown for bed selection
+        self.crop_rotation_panel = CropRotationPanel(self._crop_rotation_service)
+        self.crop_rotation_panel.set_project_manager(self._project_manager)
+        self.crop_rotation_collapsible = CollapsiblePanel(
+            self.tr("Crop Rotation"), self.crop_rotation_panel, expanded=True
+        )
+        sidebar_layout.addWidget(self.crop_rotation_collapsible)
+
+        # 9. Active Pest/Disease overview (US-12.7)
+        self.pest_overview_panel = PestOverviewPanel()
+        self.pest_overview_panel.item_activated.connect(
+            self._on_pest_log_requested
+        )
+        self.pest_overview_collapsible = CollapsiblePanel(
+            self.tr("Active Pest/Disease Issues"),
+            self.pest_overview_panel,
+            expanded=True,
+        )
+        sidebar_layout.addWidget(self.pest_overview_collapsible)
+
+        # 10. Garden journal (US-12.9) — map-linked notes browser
+        self.journal_panel = JournalPanel()
+        self.journal_panel.note_activated.connect(self._on_journal_note_activated)
+        self.journal_collapsible = CollapsiblePanel(
+            self.tr("Garden Journal"),
+            self.journal_panel,
+            expanded=False,
+        )
+        sidebar_layout.addWidget(self.journal_collapsible)
+
+        # 11. Smart Symbols library (US-C4) — parametric blocks
+        self.smart_symbols_panel = SmartSymbolsPanel()
+        self.smart_symbols_panel.symbol_selected.connect(self._on_smart_symbol_selected)
+        self.smart_symbols_collapsible = CollapsiblePanel(
+            self.tr("Smart Symbols"),
+            self.smart_symbols_panel,
+            expanded=False,
+        )
+        sidebar_layout.addWidget(self.smart_symbols_collapsible)
+
+        # Route every panel through the SidebarController (US-226 accordion):
+        # all bars start collapsed; hover peeks them open in place, a title click
+        # toggles them open/closed. Panels keep a fixed canonical order (they are
+        # never reparented) and grow to their content height when open, the
+        # sidebar scrolling on overflow. add_panel call order defines the order —
+        # selection-related panels sit directly under Properties, then plan
+        # tools, then garden state. The controller owns all layout/state; no
+        # per-panel expand persistence (always collapsed at startup). See
+        # ADR-030 / arc42 §8.17.
+        canonical_panels: list[tuple[str, CollapsiblePanel]] = [
+            ("properties", props_panel),
+            ("plant_details", self.plant_details_collapsible),
+            ("companion", self.companion_collapsible),
+            ("crop_rotation", self.crop_rotation_collapsible),
+            ("layers", layers_panel),
+            ("constraints", constraints_collapsible),
+            ("pest_overview", self.pest_overview_collapsible),
+            ("plant_search", plant_search_collapsible),
+            ("journal", self.journal_collapsible),
+            ("smart_symbols", self.smart_symbols_collapsible),
+        ]
+        # Detach each panel from the scratch build layout before handing it to the
+        # controller (panels were addWidget'd above purely to set their parent).
+        for _key, panel in canonical_panels:
+            sidebar_layout.removeWidget(panel)
+
+        self._sidebar_controller = SidebarController()
+        for key, panel in canonical_panels:
+            self._sidebar_controller.add_panel(key, panel)  # registers COLLAPSED
+        # The selection-driven panels have nothing to show until a matching item
+        # is selected — hide their bars entirely until then (restored pre-US-226
+        # behaviour; the selection updaters re-show them on a relevant selection).
+        for key in ("plant_details", "companion", "crop_rotation"):
+            self._sidebar_controller.set_panel_visible(key, False)
+        # US-C4: the Smart Symbols engine, persistence, and DXF export ship, but
+        # the sidebar panel is deferred from the UI for now. It stays registered
+        # (so order/wiring are untouched) but its bar is permanently hidden —
+        # nothing re-shows it. Re-enable by deleting this one line.
+        self._sidebar_controller.set_panel_visible("smart_symbols", False)
+
+        sidebar_layout.addWidget(self._sidebar_controller)
+
+    def _startup_sequence(self) -> None:
+        """Handle startup sequence: recovery check, then welcome dialog."""
+        # First check for recovery files
+        recovery_handled = self._check_recovery_files()
+
+        # Then show welcome dialog if enabled and no recovery was handled
+        if not recovery_handled:
+            self._show_welcome_dialog()
+        # Deferred so it runs after the modal Welcome dialog is gone and the
+        # event queue has drained — a bar shown behind a modal dialog is unseen.
+        QTimer.singleShot(0, self._check_overdue_tasks)
+
+    def _check_overdue_tasks(self) -> None:
+        """Show (or hide) the overdue-MANUAL-task reminder bar (US-C2).
+
+        Scoped to manual tasks deliberately: auto-generated tasks depend on the
+        scene + an async weather fetch that aren't guaranteed ready this early.
+        Uses a persistent, dismissible bar rather than a status-bar message —
+        the latter is invisible behind the modal Welcome dialog and is easily
+        clobbered by other status writes (see §11.4). Gated by a Preferences
+        toggle (default ON). Idempotent: safe to call from multiple deferred
+        startup/open paths.
+        """
+        from datetime import date  # noqa: PLC0415
+
+        from open_garden_planner.app.settings import get_settings  # noqa: PLC0415
+
+        if not get_settings().notify_overdue_tasks_on_startup:
+            self._task_reminder_bar.hide()
+            return
+        today_iso = date.today().isoformat()
+        states = self._project_manager.task_states
+        overdue = 0
+        for tid, raw in self._project_manager.manual_tasks.items():
+            due = raw.get("date", "")
+            if not due or due >= today_iso:
+                continue
+            st = states.get(tid, {})
+            if st.get("status") in ("done", "dismissed"):
+                continue
+            snooze = st.get("snooze_until")
+            if snooze and snooze >= today_iso:
+                continue
+            overdue += 1
+        # show_reminder() hides the bar when the count is 0.
+        self._task_reminder_bar.show_reminder(overdue)
+
+    def _show_welcome_dialog(self) -> None:
+        """Show the welcome dialog if enabled in settings."""
+        from open_garden_planner.app.settings import get_settings
+        from open_garden_planner.ui.dialogs import WelcomeDialog
+
+        if not get_settings().show_welcome_on_startup:
+            return
+
+        dialog = WelcomeDialog(self)
+
+        # Connect signals
+        dialog.new_project_requested.connect(self._on_new_project)
+        dialog.open_project_requested.connect(self._on_open_project)
+        dialog.recent_project_selected.connect(self._open_project_file)
+
+        dialog.exec()
+
+    def _start_update_check(self) -> None:
+        """Launch the background update checker thread (installed .exe only)."""
+        import sys
+
+        if not getattr(sys, "frozen", False):
+            return  # Only check for updates when running from the installed .exe
+
+        from open_garden_planner.services.update_checker import UpdateChecker
+
+        self._update_checker = UpdateChecker(self)
+        self._update_checker.update_available.connect(self._on_update_available)
+        self._update_checker.start()
+
+    def _on_update_available(self, tag_name: str, body: str, download_url: str, html_url: str) -> None:
+        """Show the update bar if the user has not skipped this version."""
+        from open_garden_planner.app.settings import get_settings
+
+        if get_settings().skipped_version == tag_name:
+            return
+        self._update_bar.show_update(tag_name, body, download_url, html_url)
+
+    def _on_skip_version(self, tag_name: str) -> None:
+        """Persist the skipped version to settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        get_settings().skipped_version = tag_name
+
+    def _setup_autosave(self) -> None:
+        """Set up the auto-save manager."""
+        from open_garden_planner.services import AutoSaveManager
+
+        self._autosave_manager = AutoSaveManager(self)
+        self._autosave_manager.set_scene(self.canvas_scene)
+
+        # Connect dirty state changes
+        self._project_manager.dirty_changed.connect(self._autosave_manager.set_dirty)
+
+        # Connect project path changes
+        self._project_manager.project_changed.connect(self._on_project_changed_for_autosave)
+
+        # Connect auto-save events for status bar feedback
+        self._autosave_manager.autosave_performed.connect(self._on_autosave_performed)
+        self._autosave_manager.autosave_failed.connect(self._on_autosave_failed)
+
+        # Start auto-save
+        self._autosave_manager.start()
+
+    def _on_project_changed_for_autosave(self, path: str | None) -> None:
+        """Handle project path change for auto-save manager.
+
+        Args:
+            path: New project file path or None
+        """
+        self._autosave_manager.set_project_path(Path(path) if path else None)
+
+    def _on_autosave_performed(self, _path: str) -> None:
+        """Handle successful auto-save.
+
+        Args:
+            _path: Path where auto-save was written (unused)
+        """
+        self.statusBar().showMessage(self.tr("Auto-saved"), 2000)
+
+    def _on_autosave_failed(self, error: str) -> None:
+        """Handle failed auto-save.
+
+        Args:
+            error: Error message
+        """
+        logger.error("Auto-save failed: %s", error)
+        self.statusBar().showMessage(self.tr("Auto-save failed: {error}").format(error=error), 5000)
+
+    def _check_recovery_files(self) -> bool:
+        """Check for recovery files on startup and offer to restore.
+
+        Returns:
+            True if user chose to recover a file, False otherwise
+        """
+        from open_garden_planner.services import AutoSaveManager
+
+        recovery_files = AutoSaveManager.find_recovery_files()
+        if not recovery_files:
+            return False
+
+        recovered = False
+        # Found recovery file(s) - ask user what to do
+        for autosave_path, metadata in recovery_files:
+            timestamp = metadata.get("timestamp", "unknown time")
+            original_file = metadata.get("original_file")
+
+            if original_file:
+                message = self.tr(
+                    "A recovery file was found from {timestamp}.\n\n"
+                    "Original project: {original_file}\n\n"
+                    "Would you like to recover this file?"
+                ).format(timestamp=timestamp, original_file=original_file)
+            else:
+                message = self.tr(
+                    "A recovery file for an unsaved project was found from {timestamp}.\n\n"
+                    "Would you like to recover this file?"
+                ).format(timestamp=timestamp)
+
+            result = QMessageBox.question(
+                self,
+                self.tr("Recover Auto-Save"),
+                message,
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Discard,
+                QMessageBox.StandardButton.Yes,
+            )
+
+            if result == QMessageBox.StandardButton.Yes:
+                # Load the recovery file
+                self._load_recovery_file(autosave_path)
+                recovered = True
+            elif result == QMessageBox.StandardButton.Discard:
+                # Delete the recovery file
+                AutoSaveManager.delete_recovery_file(autosave_path)
+            # If No, just leave it for next time
+
+        return recovered
+
+    def _load_recovery_file(self, recovery_path: Path) -> None:
+        """Load a recovery file.
+
+        Args:
+            recovery_path: Path to the recovery file
+        """
+        try:
+            self._project_manager.load(self.canvas_scene, recovery_path)
+            self.canvas_view.command_manager.clear()
+            self.canvas_view.fit_in_view()
+            self.canvas_scene.update_dimension_lines()
+            self.constraints_panel.refresh()
+
+            # Mark as dirty since this is a recovery (not a normal saved project)
+            self._project_manager.mark_dirty()
+
+            # Reset the project path to None (since this is a recovery)
+            self._project_manager._current_file = None
+            self._project_manager.project_changed.emit(None)
+
+            self.statusBar().showMessage(self.tr("Recovered from auto-save. Remember to save your work!"))
+            QMessageBox.information(
+                self,
+                self.tr("Recovery Complete"),
+                self.tr(
+                    "Your work has been recovered from the auto-save file.\n\n"
+                    "Please save your project to a permanent location."
+                ),
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                self.tr("Recovery Failed"),
+                self.tr("Failed to recover from auto-save:\n{error}").format(error=e),
+            )
+
+    def _update_properties_panel(self) -> None:
+        """Update properties panel with current selection."""
+        try:
+            selected_items = self.canvas_scene.selectedItems()
+            self.properties_panel.set_selected_items(selected_items)
+        except RuntimeError:
+            # Canvas scene has been deleted (happens during app shutdown)
+            pass
+
+    def _update_plant_database_panel(self) -> None:
+        """Update plant database panel with current selection."""
+        from open_garden_planner.core.object_types import ObjectType
+
+        try:
+            selected_items = self.canvas_scene.selectedItems()
+
+            # Check if exactly one plant item is selected
+            show_panel = False
+            if len(selected_items) == 1:
+                item = selected_items[0]
+                if hasattr(item, "object_type") and item.object_type in (
+                    ObjectType.TREE,
+                    ObjectType.SHRUB,
+                    ObjectType.PERENNIAL,
+                ):
+                    show_panel = True
+
+            # Update content BEFORE auto-pinning so the open animation tweens to
+            # the real content height (else it grows to the stale height, then
+            # snaps when the clamp releases — US-226). The bar is hidden entirely
+            # when no plant is selected (no empty placeholder bar).
+            self.plant_database_panel.set_selected_items(selected_items)
+            self._sidebar_controller.set_panel_visible("plant_details", show_panel)
+            self._sidebar_controller.set_selection_pinned("plant_details", show_panel)
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _update_companion_panel(self) -> None:
+        """Update the companion planting panel for the current plant selection (US-10.3)."""
+        try:
+            selected_items = self.canvas_scene.selectedItems()
+            show_panel = False
+            plant_item = None
+            if len(selected_items) == 1 and self._is_canvas_plant(selected_items[0]):
+                plant_item = selected_items[0]
+                show_panel = bool(self._companion_species_name(plant_item))
+
+            # Content before pin so the open animation tweens to the real height;
+            # the bar is hidden when there is no companion data to show.
+            self.companion_panel.update_for_plant(plant_item)
+            self._sidebar_controller.set_panel_visible("companion", show_panel)
+            self._sidebar_controller.set_selection_pinned("companion", show_panel)
+        except RuntimeError:
+            pass
+
+    def _update_crop_rotation_panel(self) -> None:
+        """Update the crop rotation panel for the current bed selection (US-10.6)."""
+        try:
+            selected_items = self.canvas_scene.selectedItems()
+            show_panel = False
+            bed_item = None
+            area_id = None
+            if len(selected_items) == 1:
+                item = selected_items[0]
+                if self._is_bed_item(item):
+                    bed_item = item
+                    area_id = str(item.item_id)
+                    show_panel = True
+
+            # Content before pin so the open animation tweens to the real height;
+            # the bar is hidden when no bed is selected.
+            self.crop_rotation_panel.update_for_bed(bed_item, area_id)
+            self._sidebar_controller.set_panel_visible("crop_rotation", show_panel)
+            self._sidebar_controller.set_selection_pinned("crop_rotation", show_panel)
+        except RuntimeError:
+            pass
+
+    @staticmethod
+    def _is_bed_item(item: object) -> bool:
+        """Check if a canvas item is a bed/area suitable for crop rotation."""
+        from open_garden_planner.core.object_types import ObjectType
+
+        ot = getattr(item, "object_type", None)
+        return ot in (
+            ObjectType.GARDEN_BED,
+            ObjectType.RAISED_BED,
+            ObjectType.GREENHOUSE,
+            ObjectType.COLD_FRAME,
+        )
+
+    def _on_companion_highlight_species(self, species: str) -> None:
+        """Select canvas plants matching *species* when user clicks a companion entry.
+
+        Selection is deferred via QTimer to avoid conflicts with the list widget's
+        itemClicked processing (which triggers selectionChanged → panel clear mid-click).
+        """
+        def _do_select() -> None:
+            self._tab_widget.setCurrentIndex(0)
+            self.canvas_scene.clearSelection()
+            matched: list = []
+            for item in self.canvas_scene.items():
+                if not self._is_canvas_plant(item):
+                    continue
+                item_species = self._companion_species_name(item)
+                if item_species and self._companion_service.resolve_name(item_species) == self._companion_service.resolve_name(species):
+                    item.setSelected(True)
+                    matched.append(item)
+            # Scroll canvas to the first matched item so the user can see it
+            if matched:
+                self.canvas_view.ensureVisible(matched[0])
+
+        QTimer.singleShot(0, _do_select)
+
+    # Slot methods for menu actions
+
+    def _on_new_project(self) -> None:
+        """Handle New Project action."""
+        if not self._confirm_discard_changes():
+            return
+
+        from open_garden_planner.ui.dialogs import NewProjectDialog
+
+        dialog = NewProjectDialog(self)
+        # Pre-fill with current canvas dimensions
+        dialog.set_dimensions_cm(
+            self.canvas_scene.width_cm,
+            self.canvas_scene.height_cm
+        )
+
+        if dialog.exec():
+            # User clicked OK - create new project with specified dimensions
+            self._new_project_document(
+                width_cm=dialog.width_cm,
+                height_cm=dialog.height_cm,
+                garden_year=dialog.garden_year,
+            )
+
+    def _new_project_document(
+        self,
+        *,
+        width_cm: float,
+        height_cm: float,
+        garden_year: int | None = None,
+    ) -> None:
+        """Replace the open document with a fresh, empty plan.
+
+        THE one new-document path (issue #365). ``_on_new_project`` and the
+        agent's ``new_plan`` tool both call this, so there is no second
+        implementation to drift — the same discipline
+        ``ui/canvas/geometry_apply.py`` applies to resize/rotate.
+
+        Extractable out of the menu slot because the slot's only extra job is
+        the modal dialog: asking the user for dimensions. An agent cannot
+        raise a modal, so it supplies the same three values directly and the
+        caller is responsible for the unsaved-changes guard (the GUI's
+        ``_confirm_discard_changes``, the agent's ``force`` flag).
+
+        Deliberately NOT an undo step: a new document resets the undo stack
+        (see ``CommandManager.clear``, which does not emit ``stack_changed`` so
+        the new plan starts clean and not dirty), exactly as the GUI path did.
+        """
+        # Reset constraints and dimension lines BEFORE scene.clear() to
+        # avoid RuntimeError from accessing deleted C++ graphics objects
+        self.canvas_scene.reset_constraints()
+
+        # Clear existing objects from scene. CanvasScene.clear() also
+        # drops _compare_items so no dangling wrapper can outlive this
+        # call (#337).
+        self.canvas_scene.clear()
+
+        # Resize the canvas
+        self.canvas_scene.resize_canvas(width_cm, height_cm)
+
+        # Reset layers to default
+        from open_garden_planner.models.layer import create_default_layers
+        self.canvas_scene.set_layers(create_default_layers())
+        self.layers_panel.set_layers(self.canvas_scene.layers)
+
+        # Fit the new canvas in view
+        self.canvas_view.fit_in_view()
+
+        # Clear undo history and reset project state
+        self.canvas_view.command_manager.clear()
+        self.constraints_panel.refresh()
+        self._project_manager.new_project()
+
+        # Apply optional garden year chosen in dialog
+        if garden_year is not None:
+            self._project_manager.set_season(garden_year)
+
+        # Clear any existing auto-save
+        self._autosave_manager.clear_autosave()
+        self._autosave_manager.set_project_path(None)
+
+        # Reset compare overlay UI state (US-10.7) — items already
+        # dropped by scene.clear() above.
+        self._compare_overlay_action.setEnabled(False)
+        self._compare_overlay_action.setChecked(False)
+
+        # A fresh project has no overdue tasks — clear any stale reminder.
+        self._task_reminder_bar.hide()
+
+        # Update status bar
+        width_m = width_cm / 100.0
+        height_m = height_cm / 100.0
+        status_bar = self.statusBar()
+        if status_bar:
+            status_bar.showMessage(
+                self.tr("New project created: {width}m x {height}m").format(
+                    width=f"{width_m:.1f}", height=f"{height_m:.1f}"
+                )
+            )
+
+    def _on_canvas_size(self) -> None:
+        """Handle Canvas Size action — resize the current canvas."""
+        from open_garden_planner.ui.dialogs import NewProjectDialog
+
+        dialog = NewProjectDialog(self)
+        dialog.setWindowTitle(self.tr("Canvas Size"))
+        dialog.set_dimensions_cm(
+            self.canvas_scene.width_cm,
+            self.canvas_scene.height_cm,
+        )
+
+        if dialog.exec():
+            width_cm = dialog.width_cm
+            height_cm = dialog.height_cm
+            self.canvas_scene.resize_canvas(width_cm, height_cm)
+            self.canvas_view.fit_in_view()
+
+            width_m = width_cm / 100.0
+            height_m = height_cm / 100.0
+            status_bar = self.statusBar()
+            if status_bar:
+                status_bar.showMessage(
+                    self.tr("Canvas resized to {width}m x {height}m").format(
+                        width=f"{width_m:.1f}", height=f"{height_m:.1f}"
+                    )
+                )
+
+    def _default_dialog_dir(self) -> Path:
+        """Resolve the directory file dialogs should open in (issue #199).
+
+        Delegates to the shared chokepoint, anchoring on the currently open
+        project's folder when there is one. Never resolves to the install
+        directory, where user files get wiped on upgrade.
+        """
+        return default_dialog_dir(self._project_manager.current_file)
+
+    def _default_save_path(self, filename: str) -> str:
+        """Build a full default path (dir + filename) for a save dialog."""
+        return default_save_path(filename, self._project_manager.current_file)
+
+    def _on_open_project(self) -> None:
+        """Handle Open Project action."""
+        if not self._confirm_discard_changes():
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Open Project"),
+            str(self._default_dialog_dir()),
+            self.tr("Open Garden Planner (*.ogp);;All Files (*)"),
+        )
+        if file_path:
+            self._open_project_file(file_path)
+
+    def _open_project_file(self, file_path: str) -> None:
+        """Open a project file, reporting any failure in a modal dialog.
+
+        The GUI's entry point (File > Open, the Recent-files menu, the Welcome
+        dialog). The actual work is in :meth:`_load_project_file`, which RAISES
+        — an agent caller must never have a modal ``QMessageBox`` appear on its
+        behalf, so the dialog belongs in this wrapper and not in the shared path
+        (issue #365).
+
+        Args:
+            file_path: Path to the project file to open
+        """
+        try:
+            self._load_project_file(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to open file:\n{error}").format(error=e))
+
+    def _load_project_file(self, file_path: str) -> None:
+        """THE one open-a-plan path: load and rewire the UI, or raise.
+
+        Shared by ``_open_project_file`` (the GUI, which catches and shows a
+        dialog) and the agent's ``open_plan`` (issue #365, which lets the
+        exception reach the tool's error path). One implementation, so the two
+        surfaces cannot drift.
+
+        That is also why the #337 recovery lives HERE and not in the GUI
+        wrapper: a load failure can leave the compare-overlay action state stale
+        relative to the scene (``ProjectManager._deserialize_to_scene`` clears
+        the overlay *before* the calls that can throw), and the agent's caller
+        has no wrapper to do it. A recovery that only the GUI ran would have
+        been a #337-class bug waiting on the caller the extraction created.
+        """
+        try:
+            self._project_manager.load(self.canvas_scene, Path(file_path))
+        except Exception:
+            self._reset_compare_overlay_after_failed_load()
+            if hasattr(self, "_update_window_title"):
+                self._update_window_title()
+            raise
+
+        # Clear any existing auto-save only after the new project loads successfully (AUD-040, TD-017)
+        self._autosave_manager.clear_autosave()
+        self.canvas_view.command_manager.clear()
+        self.canvas_view.fit_in_view()
+        self.layers_panel.set_layers(self.canvas_scene.layers)
+        self.canvas_scene.update_dimension_lines()
+        self.constraints_panel.refresh()
+        skipped = self._project_manager.last_load_skipped_items_count
+        if skipped > 0:
+            self.statusBar().showMessage(
+                self.tr(
+                    "Warning: {count} unrecognized item(s) could not be loaded and were skipped."
+                ).format(count=skipped),
+                8000,
+            )
+        else:
+            self.statusBar().showMessage(self.tr("Opened: {path}").format(path=file_path))
+        # Load compare overlay if previous seasons are linked (US-10.7)
+        self._load_compare_overlay_from_previous_season()
+        self.tasks_view.refresh()
+        # Deferred: when opened from the modal Welcome dialog, a bar shown
+        # now would sit behind it. singleShot(0) runs after it closes.
+        QTimer.singleShot(0, self._check_overdue_tasks)
+
+    def _reset_compare_overlay_after_failed_load(self) -> None:
+        """#337: a failed load can leave the compare-overlay action state
+        disagreeing with the scene — the overlay is cleared early in
+        deserialization, so anything that throws after that point leaves the
+        action still enabled over an empty overlay. Reset rather than risk it.
+        Shared by both callers of the one open path."""
+        self._compare_overlay_action.setEnabled(False)
+        self._compare_overlay_action.setChecked(False)
+        self.canvas_scene.clear_compare_overlay()
+
+    def _populate_recent_menu(self) -> None:
+        """Populate the Open Recent submenu with recent files."""
+        from open_garden_planner.app.settings import get_settings
+
+        self._recent_menu.clear()
+
+        recent_files = get_settings().recent_files
+        if not recent_files:
+            no_recent = QAction(self.tr("No recent projects"), self)
+            no_recent.setEnabled(False)
+            self._recent_menu.addAction(no_recent)
+            return
+
+        for file_path in recent_files:
+            path = Path(file_path)
+            if path.exists():
+                action = QAction(path.stem, self)
+                action.setToolTip(str(path))
+                action.setData(str(path))
+                action.triggered.connect(
+                    lambda _checked, fp=str(path): self._on_open_recent_file(fp)
+                )
+                self._recent_menu.addAction(action)
+            else:
+                # Show missing files with indicator (grayed out)
+                action = QAction(self.tr("{name} (not found)").format(name=path.stem), self)
+                action.setToolTip(self.tr("File not found: {path}").format(path=path))
+                action.setEnabled(False)
+                self._recent_menu.addAction(action)
+
+        self._recent_menu.addSeparator()
+
+        # Clear recent files action
+        clear_action = QAction(self.tr("Clear Recent Projects"), self)
+        clear_action.triggered.connect(self._on_clear_recent_files)
+        self._recent_menu.addAction(clear_action)
+
+    def _on_open_recent_file(self, file_path: str) -> None:
+        """Handle opening a recent file.
+
+        Args:
+            file_path: Path to the file to open
+        """
+        if not self._confirm_discard_changes():
+            return
+        self._open_project_file(file_path)
+
+    def _on_clear_recent_files(self) -> None:
+        """Handle clearing recent files list."""
+        from open_garden_planner.app.settings import get_settings
+
+        get_settings().clear_recent_files()
+        self.statusBar().showMessage(self.tr("Recent projects list cleared"), 2000)
+
+    def _on_save(self) -> None:
+        """Handle Save action."""
+        if self._project_manager.current_file:
+            self._save_to_file(self._project_manager.current_file)
+        else:
+            self._on_save_as()
+
+    def _on_save_as(self) -> None:
+        """Handle Save As action."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Save Project As"),
+            self._default_save_path(self._project_manager.project_name + ".ogp"),
+            self.tr("Open Garden Planner (*.ogp);;All Files (*)"),
+        )
+        if file_path:
+            self._save_to_file(Path(file_path))
+
+    def _save_to_file(self, file_path: Path) -> None:
+        """Save the project to a specific file."""
+        try:
+            # Prune orphan shopping-list price entries before writing (issue #178)
+            from open_garden_planner.services.shopping_list_service import (
+                ShoppingListService,  # noqa: PLC0415
+            )
+            ShoppingListService(
+                scene=self.canvas_scene,
+                soil_service=self._soil_service,
+                project_manager=self._project_manager,
+            ).prune_stale_prices()
+            self._project_manager.save(self.canvas_scene, file_path)
+            # Clear the auto-save file since we've saved manually
+            self._autosave_manager.clear_autosave()
+            self.statusBar().showMessage(self.tr("Saved: {path}").format(path=file_path))
+        except Exception as e:
+            QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to save file:\n{error}").format(error=e))
+
+    def _on_export_png(self) -> None:
+        """Handle Export as PNG action."""
+        from open_garden_planner.ui.dialogs.export_dialog import ExportPngDialog
+
+        # Show export dialog
+        dialog = ExportPngDialog(
+            self.canvas_scene.width_cm,
+            self.canvas_scene.height_cm,
+            self,
+        )
+
+        if dialog.exec() != ExportPngDialog.DialogCode.Accepted:
+            return
+
+        # Get file path
+        default_name = self._default_save_path(self._project_manager.project_name + ".png")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export as PNG"),
+            default_name,
+            self.tr("PNG Image (*.png);;All Files (*)"),
+        )
+
+        if not file_path:
+            return
+
+        # Ensure .png extension
+        file_path = Path(file_path)
+        if file_path.suffix.lower() != ".png":
+            file_path = file_path.with_suffix(".png")
+
+        try:
+            ExportService.export_to_png(
+                self.canvas_scene,
+                file_path,
+                dpi=dialog.selected_dpi,
+                output_width_cm=dialog.selected_output_width_cm,
+            )
+            self.statusBar().showMessage(self.tr("Exported: {path}").format(path=file_path))
+        except Exception as e:
+            QMessageBox.critical(self, self.tr("Export Error"), self.tr("Failed to export PNG:\n{error}").format(error=e))
+
+    def _on_export_svg(self) -> None:
+        """Handle Export as SVG action."""
+        # Get file path
+        default_name = self._default_save_path(self._project_manager.project_name + ".svg")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export as SVG"),
+            default_name,
+            self.tr("SVG Vector (*.svg);;All Files (*)"),
+        )
+
+        if not file_path:
+            return
+
+        # Ensure .svg extension
+        file_path = Path(file_path)
+        if file_path.suffix.lower() != ".svg":
+            file_path = file_path.with_suffix(".svg")
+
+        try:
+            ExportService.export_to_svg(
+                self.canvas_scene,
+                file_path,
+                output_width_cm=ExportService.PAPER_A4_LANDSCAPE_WIDTH_CM,
+                title=self._project_manager.project_name,
+                description="Created with Open Garden Planner",
+            )
+            self.statusBar().showMessage(self.tr("Exported: {path}").format(path=file_path))
+        except Exception as e:
+            QMessageBox.critical(self, self.tr("Export Error"), self.tr("Failed to export SVG:\n{error}").format(error=e))
+
+    def _on_export_plant_csv(self) -> None:
+        """Handle Export Plant List as CSV action."""
+        # Get file path
+        default_name = self._default_save_path(self._project_manager.project_name + "_plants.csv")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export Plant List as CSV"),
+            default_name,
+            self.tr("CSV Spreadsheet (*.csv);;All Files (*)"),
+        )
+
+        if not file_path:
+            return
+
+        # Ensure .csv extension
+        file_path = Path(file_path)
+        if file_path.suffix.lower() != ".csv":
+            file_path = file_path.with_suffix(".csv")
+
+        try:
+            count = ExportService.export_plant_list_to_csv(
+                self.canvas_scene,
+                file_path,
+                include_species_data=True,
+            )
+            if count == 0:
+                QMessageBox.information(
+                    self,
+                    self.tr("No Plants Found"),
+                    self.tr("No plants found in the project. The CSV file will be empty."),
+                )
+            self.statusBar().showMessage(
+                self.tr("Exported {count} plant(s) to: {path}").format(count=count, path=file_path)
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, self.tr("Export Error"), self.tr("Failed to export plant list:\n{error}").format(error=e)
+            )
+
+    def _on_print(self) -> None:
+        """Handle Print action - show options dialog then print preview."""
+        from open_garden_planner.ui.dialogs import GardenPrintManager, PrintOptionsDialog
+
+        # Show options dialog
+        options = PrintOptionsDialog(
+            self.canvas_scene.width_cm,
+            self.canvas_scene.height_cm,
+            grid_visible=self.canvas_view.grid_visible,
+            labels_visible=self.canvas_scene.labels_enabled,
+            parent=self,
+        )
+
+        if options.exec() != PrintOptionsDialog.DialogCode.Accepted:
+            return
+
+        # Create print manager and configure
+        print_mgr = GardenPrintManager(
+            self.canvas_scene,
+            project_name=self._project_manager.project_name,
+        )
+        print_mgr.configure(
+            scale_denominator=options.scale_denominator,
+            include_grid=options.include_grid,
+            include_labels=options.include_labels,
+            include_legend=options.include_legend,
+        )
+
+        # Show print preview (which allows printing)
+        print_mgr.print_preview(parent=self)
+
+    def _on_import_dxf(self) -> None:
+        """Handle Import DXF action."""
+        from open_garden_planner.core.commands import CreateItemsCommand
+        from open_garden_planner.services.dxf_service import DxfImportService
+        from open_garden_planner.ui.dialogs.dxf_import_dialog import DxfImportDialog
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Import DXF"),
+            str(self._default_dialog_dir()),
+            self.tr("DXF Files (*.dxf);;All Files (*)"),
+        )
+        if not file_path:
+            return
+
+        dialog = DxfImportDialog(file_path, parent=self)
+        if dialog.exec() != DxfImportDialog.DialogCode.Accepted:
+            return
+
+        try:
+            result = DxfImportService.import_file(
+                self.canvas_scene,
+                file_path,
+                scale_factor=dialog.scale_factor,
+                selected_layers=dialog.selected_layers,
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, self.tr("Import Error"), self.tr("Failed to import DXF:\n{error}").format(error=e)
+            )
+            return
+
+        if not result.items:
+            QMessageBox.information(
+                self,
+                self.tr("Nothing Imported"),
+                self.tr("No supported entities found in the selected layers."),
+            )
+            return
+
+        cmd = CreateItemsCommand(self.canvas_scene, result.items, "DXF import")
+        self.canvas_view.command_manager.execute(cmd)
+
+        msg = self.tr("Imported {n} item(s) from DXF.").format(n=len(result.items))
+        if result.skipped_count:
+            types = ", ".join(result.skipped_types)
+            msg += " " + self.tr("Skipped {k} unsupported entity/entities ({types}).").format(
+                k=result.skipped_count, types=types
+            )
+        self.statusBar().showMessage(msg)
+
+    def _on_export_dxf(self) -> None:
+        """Handle Export as DXF action."""
+        from open_garden_planner.services.dxf_service import DxfExportService
+
+        default_name = self._default_save_path(self._project_manager.project_name + ".dxf")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export as DXF"),
+            default_name,
+            self.tr("DXF Files (*.dxf);;All Files (*)"),
+        )
+        if not file_path:
+            return
+
+        file_path_obj = Path(file_path)
+        if file_path_obj.suffix.lower() != ".dxf":
+            file_path_obj = file_path_obj.with_suffix(".dxf")
+
+        try:
+            DxfExportService.export(self.canvas_scene, file_path_obj)
+            self.statusBar().showMessage(self.tr("Exported: {path}").format(path=file_path_obj))
+        except Exception as e:
+            QMessageBox.critical(
+                self, self.tr("Export Error"), self.tr("Failed to export DXF:\n{error}").format(error=e)
+            )
+
+    def _on_export_pdf_report(self) -> None:
+        """Handle Export PDF Report action."""
+        from PyQt6.QtWidgets import QProgressDialog
+
+        from open_garden_planner.services.pdf_report_service import (
+            PdfReportOptions,
+            PdfReportService,
+        )
+        from open_garden_planner.ui.dialogs.pdf_report_dialog import PdfReportDialog
+
+        dialog = PdfReportDialog(
+            project_name=self._project_manager.project_name,
+            parent=self,
+        )
+        if dialog.exec() != PdfReportDialog.DialogCode.Accepted:
+            return
+
+        default_name = self._default_save_path(self._project_manager.project_name + ".pdf")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export PDF Report"),
+            default_name,
+            self.tr("PDF Files (*.pdf);;All Files (*)"),
+        )
+        if not file_path:
+            return
+
+        file_path_obj = Path(file_path)
+        if file_path_obj.suffix.lower() != ".pdf":
+            file_path_obj = file_path_obj.with_suffix(".pdf")
+
+        opts = PdfReportOptions(
+            paper_size=dialog.paper_size,
+            orientation=dialog.orientation,
+            include_cover=dialog.include_cover,
+            include_overview=dialog.include_overview,
+            include_bed_details=dialog.include_bed_details,
+            include_plant_list=dialog.include_plant_list,
+            include_garden_notes=dialog.include_garden_notes,
+            garden_journal_notes=(
+                self._project_manager.garden_journal_notes
+                if dialog.include_garden_notes
+                else None
+            ),
+            include_harvest_summary=dialog.include_harvest_summary,
+            harvest_logs=(
+                self._project_manager.harvest_logs
+                if dialog.include_harvest_summary
+                else None
+            ),
+            include_legend=dialog.include_legend,
+            project_name=dialog.project_name,
+            author=dialog.author,
+        )
+
+        progress = QProgressDialog(
+            self.tr("Generating PDF…"), self.tr("Cancel"), 0, 100, self
+        )
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(500)
+
+        def on_progress(current: int, total: int) -> None:
+            if total > 0:
+                progress.setValue(int(current / total * 100))
+
+        try:
+            PdfReportService.generate(self.canvas_scene, opts, file_path_obj, on_progress)
+            progress.setValue(100)
+            self.statusBar().showMessage(self.tr("Exported: {path}").format(path=file_path_obj))
+        except Exception as e:
+            progress.cancel()
+            QMessageBox.critical(
+                self,
+                self.tr("Export Error"),
+                self.tr("Failed to export PDF report:\n{error}").format(error=e),
+            )
+
+    def _confirm_discard_changes(self) -> bool:
+        """Ask user to save if there are unsaved changes.
+
+        Returns:
+            True if it's OK to proceed (saved or discarded), False to cancel.
+        """
+        if not self._project_manager.is_dirty:
+            return True
+
+        result = QMessageBox.question(
+            self,
+            self.tr("Unsaved Changes"),
+            self.tr("Do you want to save changes before proceeding?"),
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+
+        if result == QMessageBox.StandardButton.Save:
+            self._on_save()
+            return not self._project_manager.is_dirty  # True if save succeeded
+        return result == QMessageBox.StandardButton.Discard
+
+    def _update_window_title(self, _: object = None) -> None:
+        """Update the window title with project name and dirty indicator."""
+        name = self._project_manager.project_name
+        dirty = "*" if self._project_manager.is_dirty else ""
+        self.setWindowTitle(f"{name}{dirty} - Open Garden Planner")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Handle window close - prompt to save if dirty."""
+        if self._active_satellite_picker is not None:
+            self._app_close_pending = True
+            self._active_satellite_picker.close()
+            event.ignore()
+            return
+        if self._confirm_discard_changes():
+            # Stop the Agent API server first, while the scene/bridge still exist.
+            self._stop_agent_api()
+            # Join a running heatmap worker — a QThread destroyed while
+            # running aborts the process (the #230 class).
+            self._sun_heatmap.shutdown()
+            # Close any open/pending 3D viewer so the app can actually quit —
+            # a visible parentless top-level Qt3DWindow keeps the process alive
+            # under Qt's default quitOnLastWindowClosed. Hide (not delete): the
+            # exiting process reclaims it without racing the Qt3D render thread.
+            for _w in (self._view3d_window, self._view3d_window_retiring):
+                if _w is not None:
+                    _w.hide()
+            self._view3d_window = None
+            self._view3d_window_retiring = None
+            # Persist window/splitter/panel state before tearing down.
+            self._save_ui_state()
+            # Stop auto-save timer
+            self._autosave_manager.stop()
+            # Clear auto-save file (user chose to save or discard)
+            self._autosave_manager.clear_autosave()
+            self._app_close_pending = False
+            event.accept()
+        else:
+            self._app_close_pending = False
+            event.ignore()
+
+    def _restore_ui_state(self) -> None:
+        """Restore persisted window geometry and the main splitter sizes.
+
+        Sets ``self._geometry_restored`` so the caller can decide whether to
+        fall back to ``showMaximized()`` on a fresh install. Per-panel state is
+        deliberately NOT restored — the sidebar accordion always starts fully
+        collapsed every session (US-226, ADR-030).
+        """
+        self._geometry_restored = self._ui_state.restore_geometry(self)
+        self._ui_state.restore_splitter("main", self._main_splitter)
+        self._enforce_toolbar_visibility()
+
+    def _enforce_toolbar_visibility(self) -> None:
+        """Toolbar visibility is owned by the app, never by the restored state.
+
+        ``QMainWindow.restoreState()`` replays whatever visibility a past
+        session happened to save. That is wrong in both directions here:
+
+        * The three core toolbars are not optional chrome — a user left
+          without the drawing tools, across restarts, has no way back now
+          that the built-in toolbar context menu is suppressed
+          (``createPopupMenu``). Force them on, which also heals any state
+          already saved with one of them hidden.
+        * The two feature toolbars belong to runtime-only features that
+          always start OFF, so a stale "visible" would show a toolbar whose
+          menu action is unchecked and whose overlay is not running (#286).
+        """
+        for toolbar in (
+            self.main_toolbar,
+            self.constraint_toolbar,
+            self.category_toolbar,
+        ):
+            toolbar.setVisible(True)
+        self._sun_toolbar.setVisible(False)
+        self.soil_overlay_toolbar.setVisible(False)
+
+    def createPopupMenu(self) -> QMenu | None:  # type: ignore[override]
+        """Suppress QMainWindow's built-in toolbar context menu.
+
+        It offers a checkbox per toolbar, so a stray right-click could hide
+        the drawing tools — persistently, since the layout is saved on exit
+        (#283) — and the only way back was that same easily-missed menu.
+        None of this app's toolbars are user-optional: the three core ones are
+        always on, and the sun-sim and soil-overlay ones follow their own View
+        menu actions.
+        """
+        return None
+
+    def _save_ui_state(self) -> None:
+        """Persist current window geometry and the main splitter sizes.
+
+        Pin/peek state is intentionally not persisted (US-226, ADR-030).
+        """
+        self._ui_state.save_geometry(self)
+        self._ui_state.save_splitter("main", self._main_splitter)
+
+    def _on_undo(self) -> None:
+        """Handle Undo action."""
+        cmd_mgr = self.canvas_view.command_manager
+        if cmd_mgr.can_undo:
+            desc = cmd_mgr.undo_description
+            cmd_mgr.undo()
+            self.statusBar().showMessage(self.tr("Undo: {desc}").format(desc=desc))
+        else:
+            self.statusBar().showMessage(self.tr("Nothing to undo"))
+
+    def _on_redo(self) -> None:
+        """Handle Redo action."""
+        cmd_mgr = self.canvas_view.command_manager
+        if cmd_mgr.can_redo:
+            desc = cmd_mgr.redo_description
+            cmd_mgr.redo()
+            self.statusBar().showMessage(self.tr("Redo: {desc}").format(desc=desc))
+        else:
+            self.statusBar().showMessage(self.tr("Nothing to redo"))
+
+    def _on_copy(self) -> None:
+        """Handle Copy action."""
+        self.canvas_view.copy_selected()
+
+    def _on_cut(self) -> None:
+        """Handle Cut action."""
+        self.canvas_view.cut_selected()
+
+    def _on_paste(self) -> None:
+        """Handle Paste action."""
+        self.canvas_view.paste()
+
+    def _on_duplicate(self) -> None:
+        """Handle Duplicate action."""
+        self.canvas_view.duplicate_selected()
+
+    def _on_select_all(self) -> None:
+        """Handle Select All action."""
+        try:
+            for item in self.canvas_scene.items():
+                # Only select items that are selectable (not background, grid, etc.)
+                if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
+                    item.setSelected(True)
+            count = len(self.canvas_scene.selectedItems())
+            self.statusBar().showMessage(self.tr("Selected {count} object(s)").format(count=count))
+        except RuntimeError:
+            pass
+
+    def _update_autosave_menu_state(self) -> None:
+        """Update auto-save menu state from settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+
+        # Update enabled checkbox
+        self._autosave_action.setChecked(settings.autosave_enabled)
+
+        # Update interval radio buttons
+        current_interval = settings.autosave_interval_minutes
+        for action in self._autosave_interval_actions:
+            action.setChecked(action.data() == current_interval)
+
+    def _on_toggle_autosave(self, enabled: bool) -> None:
+        """Handle toggle auto-save action.
+
+        Args:
+            enabled: Whether auto-save should be enabled
+        """
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        settings.autosave_enabled = enabled
+
+        if enabled:
+            self._autosave_manager.start()
+            self.statusBar().showMessage(self.tr("Auto-save enabled"), 2000)
+        else:
+            self._autosave_manager.stop()
+            self.statusBar().showMessage(self.tr("Auto-save disabled"), 2000)
+
+    def _on_set_autosave_interval(self, minutes: int) -> None:
+        """Handle setting auto-save interval.
+
+        Args:
+            minutes: Interval in minutes
+        """
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        settings.autosave_interval_minutes = minutes
+
+        # Update menu checkmarks
+        for action in self._autosave_interval_actions:
+            action.setChecked(action.data() == minutes)
+
+        # Restart timer with new interval
+        self._autosave_manager.restart()
+
+        self.statusBar().showMessage(
+            self.tr("Auto-save interval set to {n} minute(s)").format(n=minutes),
+            2000,
+        )
+
+    def _init_shadows_from_settings(self) -> None:
+        """Initialize shadow state from persisted settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        enabled = get_settings().show_shadows
+        self._shadows_action.setChecked(enabled)
+        self.canvas_scene.set_shadows_enabled(enabled)
+
+    def _on_toggle_shadows(self, checked: bool) -> None:
+        """Handle toggle shadows action."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_scene.set_shadows_enabled(checked)
+        get_settings().show_shadows = checked
+
+    def _on_toggle_sun_sim(self, checked: bool) -> None:
+        """Toggle the sun & shade simulation overlay + its time toolbar (US-E3)."""
+        self._sun_toolbar.setVisible(checked)
+        if checked:
+            self._sun_controller.set_sim_datetime(
+                self._sun_toolbar.current_datetime_local()
+            )
+            self._sun_controller.set_enabled(True)
+            if self._view3d_window is not None:
+                self._apply_sun_to_3d()  # refresh 3D light on sim enable (US-E6)
+        else:
+            self._sun_toolbar.stop_animation()
+            self._sun_controller.set_enabled(False)
+            self._sun_heatmap.clear()
+            self._sun_toolbar.set_heatmap_active(False)
+
+    def _on_sun_sim_datetime(self, dt) -> None:
+        """A new sim instant from the toolbar — recompute the overlay."""
+        previous_date = self._sun_controller.sim_datetime_utc.date()
+        self._sun_controller.set_sim_datetime(dt)
+        # A daily heatmap goes stale when the DATE changes; a time-of-day
+        # change leaves it valid (it aggregates the whole day).
+        if (
+            self._sun_heatmap.heatmap_visible()
+            and self._sun_heatmap.computed_day != dt.date()
+        ):
+            self._sun_heatmap.clear()
+            self._sun_toolbar.set_heatmap_active(False)
+        if self._view3d_window is not None:
+            # US-E8: growth is keyed on the DATE, so rebuild the 3D geometry
+            # only when the day actually changes — the toolbar scrubs through
+            # times of day and a full scene rebuild per tick would be wasteful.
+            if self._sun_controller.sim_datetime_utc.date() != previous_date:
+                self._refresh_3d_view()
+            self._apply_sun_to_3d()  # 3D light follows the sim time (US-E6)
+
+    def _on_heatmap_requested(self) -> None:
+        """Heatmap button checked — compute the shown date's hours of sun."""
+        day = self._sun_toolbar.current_datetime_local().date()
+        if self._sun_heatmap.run_for_day(day):
+            self._sun_toolbar.set_heatmap_busy(True)
+            return
+        # Refused: already running, or no garden location.
+        self._sun_toolbar.set_heatmap_active(False)
+        if not self._sun_heatmap.is_running:
+            self._set_sun_hint(
+                self.tr("Set garden location first: File → Set Garden Location…")
+            )
+
+    def _on_heatmap_finished(self, success: bool) -> None:
+        """Worker done — clear busy state, sync the button."""
+        self._sun_toolbar.set_heatmap_busy(False)
+        self._sun_toolbar.set_heatmap_active(
+            success and self._sun_heatmap.heatmap_visible()
+        )
+
+    def _on_sun_toolbar_visibility(self, visible: bool) -> None:
+        """Sync menu action + controller when the toolbar's visibility changes
+        without going through our action — e.g. the startup enforcement in
+        ``_enforce_toolbar_visibility()``. (Qt's built-in toolbar context menu
+        was the original such path; #283 suppressed it.)"""
+        if visible == self._sun_controller.enabled:
+            return
+        self._sun_sim_action.setChecked(visible)
+        if visible:
+            self._sun_controller.set_sim_datetime(
+                self._sun_toolbar.current_datetime_local()
+            )
+            self._sun_controller.set_enabled(True)
+            if self._view3d_window is not None:
+                self._apply_sun_to_3d()  # refresh 3D light on sim enable (US-E6)
+        else:
+            self._sun_toolbar.stop_animation()
+            self._sun_controller.set_enabled(False)
+            self._sun_heatmap.clear()
+            self._sun_toolbar.set_heatmap_active(False)
+
+    def _on_sun_state_changed(self, state: str) -> None:
+        """Surface the simulation's empty states as a toolbar hint."""
+        from open_garden_planner.ui.canvas.sun_shadow_controller import (
+            STATE_NIGHT,
+            STATE_NO_LOCATION,
+        )
+
+        if state == STATE_NO_LOCATION:
+            self._set_sun_hint(
+                self.tr("Set garden location first: File → Set Garden Location…")
+            )
+        elif state == STATE_NIGHT:
+            self._set_sun_hint(
+                self.tr("Night — the sun is below the horizon")
+            )
+        else:
+            self._set_sun_hint("")
+
+    def _set_sun_hint(self, text: str) -> None:
+        """Show/clear the sun-sim hint on the STATUS BAR (empty text hides it).
+
+        Deliberately not a sun-toolbar widget: a variable-width label in the
+        toolbar's flow reflowed Qt's overflow popup and bumped the Animate
+        button to another row when the night text toggled on/off (2026-07).
+        """
+        self._sun_hint_label.setText(text)
+        self._sun_hint_label.setVisible(bool(text))
+
+    def _on_location_changed_for_sun(self, _location: object) -> None:
+        """Location edits re-solve the sun position immediately (no debounce)."""
+        self._sun_controller.recompute_now()
+        if self._view3d_window is not None:
+            self._apply_sun_to_3d()
+
+    # ── 3D view (US-E6) ──────────────────────────────────────────
+
+    def _on_open_3d_view(self) -> None:
+        """Open the 3D viewer; snapshot the plan on open.
+
+        A window that is still open is refreshed and raised (its RHI swapchain
+        is live). A window that was closed is retired and a FRESH one built —
+        a reused hidden→re-shown Qt3DWindow paints white because Qt3D never
+        rebuilds its swapchain for the re-exposed surface. Lazy import keeps
+        PyQt6.Qt3D* off startup (ADR-038 boundary).
+        """
+        if self._view3d_window is not None:
+            self._refresh_3d_view()
+            self._apply_sun_to_3d()
+            self._view3d_window.raise_()
+            self._view3d_window.activateWindow()
+            return
+
+        try:
+            from open_garden_planner.ui.view3d.view3d_window import View3DWindow
+        except ImportError as exc:
+            # The Qt3D bindings load lazily (ADR-038 import boundary). A frozen
+            # build whose core Qt micro drifted from the Qt3D wheels (issue
+            # #277) fails HERE with a DLL-load ImportError. Show a recoverable
+            # dialog instead of letting the unhandled error abort the process
+            # and lose unsaved work.
+            QMessageBox.critical(
+                self,
+                self.tr("3D View Unavailable"),
+                self.tr(
+                    "The 3D view could not be loaded: the 3D graphics "
+                    "components are missing or incompatible. The rest of the "
+                    "application is unaffected.\n\nDetails: {error}"
+                ).format(error=exc),
+            )
+            return
+
+        # Retire the previously-closed window HERE: it has been hidden since
+        # its close so its render thread is idle — deleteLater in closeEvent
+        # would race the LIVE thread and segfault (the reason reuse was first
+        # chosen). A fresh window gets a fresh RHI surface.
+        self._retire_closed_3d_window()
+
+        window = View3DWindow(None)  # top-level sibling window
+        window.refresh_requested.connect(self._refresh_3d_view)
+        window.closed.connect(self._on_3d_view_closed)
+        self._view3d_window = window
+        self._refresh_3d_view()
+        self._apply_sun_to_3d()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _on_3d_view_closed(self) -> None:
+        """The user closed the 3D viewer. Null the open reference so sun/
+        refresh updates stop targeting it and the ``is not None`` guards read
+        true open-state; keep the hidden window for retirement at the next
+        open (deleting it now would race its still-live render thread)."""
+        self._retire_closed_3d_window()
+        self._view3d_window_retiring = self._view3d_window
+        self._view3d_window = None
+
+    def _retire_closed_3d_window(self) -> None:
+        """deleteLater a 3D window closed on an earlier cycle — safe because it
+        has been hidden since its close, so its Qt3D render thread is idle."""
+        win = self._view3d_window_retiring
+        self._view3d_window_retiring = None
+        if win is not None:
+            win.deleteLater()
+
+    def _refresh_3d_view(self) -> None:
+        if self._view3d_window is None:
+            return
+        from open_garden_planner.ui.view3d.snapshot import collect_scene3d_records
+
+        # US-E8: the 3D view shares the sim growth timeline.
+        records = collect_scene3d_records(
+            self.canvas_scene,
+            at_date=self._sun_controller.sim_datetime_utc.date(),
+        )
+        self._view3d_window.rebuild(
+            records, self.canvas_scene.width_cm, self.canvas_scene.height_cm
+        )
+
+    def _apply_sun_to_3d(self) -> None:
+        """Drive the 3D light from the sim instant + project location.
+
+        Without a location there is no solar position — a pleasant fixed
+        default (elev 50°, az 180° ≈ southern midday sun) keeps the view
+        usable; documented in FR-SUN-06."""
+        if self._view3d_window is None:
+            return
+        from open_garden_planner.core.solar import solar_position
+
+        location = self._project_manager.location
+        latitude = location.get("latitude") if isinstance(location, dict) else None
+        longitude = location.get("longitude") if isinstance(location, dict) else None
+        if latitude is None or longitude is None:
+            self._view3d_window.set_sun(50.0, 180.0)
+            return
+        position = solar_position(
+            latitude, longitude, self._sun_controller.sim_datetime_utc
+        )
+        self._view3d_window.set_sun(
+            position.elevation_deg, position.azimuth_deg
+        )
+
+    # 3D window lifecycle: see _on_open_3d_view / _on_3d_view_closed /
+    # _retire_closed_3d_window. Recreated per open (Qt3D can't reuse its RHI
+    # swapchain after a hide), retired only once hidden/idle (deleteLater on a
+    # live window races the render thread and segfaults, #230-class).
+
+    def _init_scale_bar_from_settings(self) -> None:
+        """Initialize scale bar state from persisted settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        enabled = get_settings().show_scale_bar
+        self._scale_bar_action.setChecked(enabled)
+        self.canvas_view.set_scale_bar_visible(enabled)
+
+    def _on_toggle_scale_bar(self, checked: bool) -> None:
+        """Handle toggle scale bar action."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_scale_bar_visible(checked)
+        get_settings().show_scale_bar = checked
+
+    def _init_labels_from_settings(self) -> None:
+        """Initialize labels state from persisted settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        enabled = get_settings().show_labels
+        self._labels_action.setChecked(enabled)
+        self.canvas_scene.set_labels_visible(enabled)
+
+    def _on_toggle_labels(self, checked: bool) -> None:
+        """Handle toggle labels action."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_scene.set_labels_visible(checked)
+        get_settings().show_labels = checked
+
+    def _init_constraints_from_settings(self) -> None:
+        """Initialize constraints visibility from persisted settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        enabled = get_settings().show_constraints
+        self._constraints_action.setChecked(enabled)
+        self.canvas_view.set_constraints_visible(enabled)
+
+    def _on_toggle_constraints(self, checked: bool) -> None:
+        """Handle toggle constraints action."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_constraints_visible(checked)
+        get_settings().show_constraints = checked
+
+    def _on_toggle_construction(self, checked: bool) -> None:
+        """Handle toggle construction geometry visibility action."""
+        self.canvas_scene.set_construction_visible(checked)
+
+    def _on_toggle_guides(self, checked: bool) -> None:
+        """Handle toggle guide lines and rulers visibility action."""
+        self.canvas_view.set_guides_visible(checked)
+
+    def _on_toggle_companion_warnings(self, checked: bool) -> None:
+        """Handle toggle companion planting warnings."""
+        self._companion_warnings_enabled = checked
+        if not checked:
+            self._clear_companion_highlights()
+        else:
+            self._update_companion_highlights()
+
+    def _init_spacing_circles_from_settings(self) -> None:
+        """Initialize spacing circles state from persisted settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        enabled = get_settings().show_spacing_circles
+        self._spacing_circles_action.setChecked(enabled)
+        self.canvas_scene.set_spacing_circles_visible(enabled)
+        self._spacing_circles_enabled = enabled
+        if enabled:
+            self._update_spacing_overlaps()
+
+    def _on_toggle_spacing_circles(self, checked: bool) -> None:
+        """Handle toggle spacing circles action."""
+        from open_garden_planner.app.settings import get_settings
+
+        self._spacing_circles_enabled = checked
+        self.canvas_scene.set_spacing_circles_visible(checked)
+        get_settings().show_spacing_circles = checked
+        if checked:
+            self._update_spacing_overlaps()
+        else:
+            self._clear_spacing_overlaps()
+
+    def _on_toggle_minimap(self, checked: bool) -> None:
+        """Handle toggle minimap action."""
+        self._minimap.set_visible(checked)
+
+    def _setup_soil_overlay_toolbar(self) -> None:
+        """Build the parameter-picker toolbar for the soil overlay (US-12.10b).
+
+        The toolbar is visible only while the overlay is active so it doesn't
+        clutter the UI for users who don't track soil tests.
+        """
+        self.soil_overlay_toolbar = QToolBar(self.tr("Soil Overlay"), self)
+        self.soil_overlay_toolbar.setObjectName("soil_overlay_toolbar")
+        self.soil_overlay_toolbar.setMovable(False)
+        self.soil_overlay_toolbar.addWidget(self._make_icon_label("soil_overlay", size=16, tooltip=self.tr("Soil Health Overlay")))
+        self.soil_overlay_toolbar.addWidget(QLabel(self.tr("Soil parameter:") + " "))
+        self._soil_param_combo = QComboBox(self.soil_overlay_toolbar)
+        # (display label, parameter key) — labels translated via self.tr.
+        for key, label in (
+            (PARAM_OVERALL, self.tr("Overall")),
+            (PARAM_PH, self.tr("pH")),
+            (PARAM_N, self.tr("Nitrogen (N)")),
+            (PARAM_P, self.tr("Phosphorus (P)")),
+            (PARAM_K, self.tr("Potassium (K)")),
+        ):
+            self._soil_param_combo.addItem(label, key)
+        self._soil_param_combo.currentIndexChanged.connect(
+            self._on_soil_overlay_param_changed
+        )
+        self.soil_overlay_toolbar.addWidget(self._soil_param_combo)
+        self.addToolBar(self.soil_overlay_toolbar)
+        self.soil_overlay_toolbar.setVisible(False)
+
+    def _on_toggle_soil_overlay(self, checked: bool) -> None:
+        """Show/hide the soil-health overlay and its parameter toolbar."""
+        self.canvas_view.set_soil_overlay_visible(checked)
+        self.soil_overlay_toolbar.setVisible(checked)
+
+    def _on_soil_overlay_param_changed(self, index: int) -> None:
+        """Forward combo changes to the canvas view."""
+        key = self._soil_param_combo.itemData(index)
+        if isinstance(key, str) and key in ALL_PARAMS:
+            self.canvas_view.set_soil_overlay_param(key)
+
+    def _on_toggle_find_replace(self) -> None:
+        """Toggle Find & Replace panel visibility."""
+        self._find_panel.refresh_combos()
+        self._find_panel.setVisible(not self._find_panel.isVisible())
+        if self._find_panel.isVisible():
+            self._find_panel.activateWindow()
+            self._find_panel.raise_()
+
+    def _on_scene_changed_for_companion(self) -> None:
+        """Debounce companion highlight refresh when scene items move."""
+        # Guarded: the scene can emit `changed` during teardown after the timer's
+        # C++ object is gone — an unguarded slot RuntimeError aborts the interpreter
+        # (matches _on_scene_changed_for_plant_search).
+        with contextlib.suppress(RuntimeError):
+            self._companion_update_timer.start()
+
+    @staticmethod
+    def _companion_species_name(item: object) -> str:
+        """Return the best available species name for companion lookup.
+
+        Plants placed via gallery set ``item.plant_species`` (the SVG key).
+        Plants assigned via plant-search store full data in
+        ``item.metadata["plant_species"]`` as a dict with ``common_name`` /
+        ``scientific_name``.  We try the metadata dict first (more precise),
+        then fall back to the SVG key.
+        """
+        meta = getattr(item, 'metadata', {}) or {}
+        species_data = meta.get("plant_species") if isinstance(meta, dict) else None
+        if isinstance(species_data, dict):
+            name = species_data.get("common_name") or species_data.get("scientific_name") or ""
+            if name:
+                return name
+        return getattr(item, 'plant_species', '') or ''
+
+    @staticmethod
+    def _is_canvas_plant(item: object) -> bool:
+        """Return True if *item* is a plant-type canvas item."""
+        return (
+            hasattr(item, 'plant_species')
+            and is_plant_type(getattr(item, 'object_type', None))
+        )
+
+    def _clear_companion_highlights(self) -> None:
+        """Remove all companion highlight rings and warning badges from canvas items."""
+        for item in self.canvas_scene.items():
+            if hasattr(item, 'set_companion_highlight'):
+                item.set_companion_highlight(None)
+            if hasattr(item, 'set_antagonist_warning'):
+                item.set_antagonist_warning(False)
+
+    def _update_companion_highlights(self) -> None:
+        """Refresh companion planting highlight rings and permanent warning badges.
+
+        Must be idempotent -- driven by scene.changed via debounce; compute
+        final state then set once (issue #305).
+        """
+        import math
+
+        try:
+            scene_items = self.canvas_scene.items()
+        except RuntimeError:
+            return  # Scene already deleted during shutdown
+
+        # Every plant item gets a final value applied (so a plant that just
+        # lost its species — e.g. ApplySpeciesCommand.undo — is cleared, not
+        # left with a stale ring/badge); only named plants take part in the
+        # relationship scan.
+        canvas_plants = [it for it in scene_items if self._is_canvas_plant(it)]
+        all_plants = [it for it in canvas_plants if self._companion_species_name(it)]
+
+        # Desired final state per plant, computed before any setter call so
+        # each item is mutated at most once this pass.
+        highlights: dict[int, str | None] = {id(it): None for it in canvas_plants}
+        warnings: dict[int, bool] = {id(it): False for it in canvas_plants}
+
+        if self._companion_warnings_enabled:
+            # 1. Selection-based coloured rings (beneficial / antagonistic)
+            selected_plants = [it for it in self.canvas_scene.selectedItems() if it in all_plants]
+            for selected_plant in selected_plants:
+                sel_center = selected_plant.mapToScene(selected_plant.rect().center())  # type: ignore[attr-defined]
+                sel_species = self._companion_species_name(selected_plant)
+
+                for other in all_plants:
+                    if other is selected_plant:
+                        continue
+                    other_center = other.mapToScene(other.rect().center())  # type: ignore[attr-defined]
+                    dist = math.hypot(
+                        sel_center.x() - other_center.x(),
+                        sel_center.y() - other_center.y(),
+                    )
+                    if dist > self._companion_radius_cm:
+                        continue
+
+                    other_species = self._companion_species_name(other)
+                    rel = self._companion_service.get_relationship(sel_species, other_species)
+                    if rel is None:
+                        continue
+
+                    # Antagonistic takes priority over beneficial when multiple plants selected
+                    if rel.type == ANTAGONISTIC:
+                        highlights[id(other)] = ANTAGONISTIC
+                    elif rel.type == BENEFICIAL and highlights[id(other)] != ANTAGONISTIC:
+                        highlights[id(other)] = BENEFICIAL
+
+            # 2. Permanent warning badge: show on any plant that has an antagonist nearby
+            for plant_a in all_plants:
+                center_a = plant_a.mapToScene(plant_a.rect().center())  # type: ignore[attr-defined]
+                species_a = self._companion_species_name(plant_a)
+                for plant_b in all_plants:
+                    if plant_b is plant_a:
+                        continue
+                    center_b = plant_b.mapToScene(plant_b.rect().center())  # type: ignore[attr-defined]
+                    dist = math.hypot(center_a.x() - center_b.x(), center_a.y() - center_b.y())
+                    if dist > self._companion_radius_cm:
+                        continue
+                    rel = self._companion_service.get_relationship(
+                        species_a, self._companion_species_name(plant_b)
+                    )
+                    if rel is not None and rel.type == ANTAGONISTIC:
+                        warnings[id(plant_a)] = True
+                        break  # one antagonist is enough
+
+        for plant in canvas_plants:
+            plant.set_companion_highlight(highlights[id(plant)])  # type: ignore[attr-defined]
+            plant.set_antagonist_warning(warnings[id(plant)])  # type: ignore[attr-defined]
+
+    # -- Spacing circle overlap detection (US-11.2) --
+
+    def _on_scene_changed_for_spacing(self) -> None:
+        """Debounce spacing overlap refresh when scene items move."""
+        with contextlib.suppress(RuntimeError):
+            self._spacing_update_timer.start()
+
+    def _clear_spacing_overlaps(self) -> None:
+        """Clear all spacing overlap indicators."""
+        try:
+            items = self.canvas_scene.items()
+        except RuntimeError:
+            return
+        for item in items:
+            if hasattr(item, 'set_spacing_overlap'):
+                item.set_spacing_overlap(None)
+
+    def _update_spacing_overlaps(self) -> None:
+        """Refresh spacing overlap status for all plants.
+
+        Groups plants by parent bed for efficient pairwise checks.
+
+        Must be idempotent -- driven by scene.changed via debounce; compute
+        final state then set once (issue #305).
+        """
+        import math
+
+        # Container capacity is independent of the spacing-circle toggle, so it
+        # runs first — on the same triggers (timer, selection, create/move).
+        self._update_container_capacity()
+
+        try:
+            scene_items = self.canvas_scene.items()
+        except RuntimeError:
+            return
+
+        all_plants = [
+            it for it in scene_items
+            if self._is_canvas_plant(it)
+        ]
+
+        # Desired final overlap state per plant, computed before any setter
+        # call so each item is mutated at most once this pass.
+        desired: dict[int, str | None] = {id(plant): None for plant in all_plants}
+
+        if self._spacing_circles_enabled:
+            # Group plants by parent bed
+            bed_groups: dict[str, list] = {}
+            orphans: list = []
+            for plant in all_plants:
+                bed_id = getattr(plant, '_parent_bed_id', None)
+                if bed_id is not None:
+                    key = str(bed_id)
+                    bed_groups.setdefault(key, []).append(plant)
+                else:
+                    orphans.append(plant)
+
+            # Index every item by id once so each group can resolve its parent
+            # without an O(n) scan (US-C3b: trellis groups need a 1-D distance).
+            by_id: dict[str, object] = {}
+            for it in scene_items:
+                iid = getattr(it, "item_id", None)
+                if iid is not None:
+                    by_id[str(iid)] = it
+
+            # Check overlaps within each group. A TRELLIS parent uses a 1-D
+            # distance measured along its long axis (climbers are spaced along
+            # the bar; their perpendicular/canvas-Y offset is placement noise
+            # — US-C3b).
+            from open_garden_planner.core.object_types import ObjectType
+
+            for key, group in bed_groups.items():
+                parent = by_id.get(key)
+                if (
+                    parent is not None
+                    and getattr(parent, "object_type", None) is ObjectType.TRELLIS
+                ):
+                    distance = self._trellis_axis_distance_fn(parent)
+                else:
+                    distance = math.hypot
+                self._check_spacing_group(group, distance, desired)
+            if orphans:
+                self._check_spacing_group(orphans, math.hypot, desired)
+
+        for plant in all_plants:
+            plant.set_spacing_overlap(desired[id(plant)])  # type: ignore[attr-defined]
+
+    def _trellis_axis_distance_fn(self, trellis: object):
+        """Return a 1-D distance callable projecting onto the trellis long axis.
+
+        Climbers on a trellis are spaced along its long (rotation-aware) edge;
+        the perpendicular component of the separation is discarded. Returns a
+        ``(dx, dy) -> float`` callable measuring ``|separation · axis_unit|`` in
+        scene space. Falls back to ``math.hypot`` for a degenerate (zero-size)
+        rectangle.
+        """
+        import math
+
+        from PyQt6.QtCore import QPointF
+
+        # TRELLIS is rectangle-only for app-authored files, but a hand-edited or
+        # future-imported .ogp could tag a non-rect shape — degrade to 2-D rather
+        # than crash the whole spacing refresh.
+        if not hasattr(trellis, "rect"):
+            return math.hypot
+        rect = trellis.rect()  # type: ignore[attr-defined]
+        if rect.width() >= rect.height():
+            p0 = QPointF(rect.left(), rect.center().y())
+            p1 = QPointF(rect.right(), rect.center().y())
+        else:
+            p0 = QPointF(rect.center().x(), rect.top())
+            p1 = QPointF(rect.center().x(), rect.bottom())
+        s0 = trellis.mapToScene(p0)  # type: ignore[attr-defined]
+        s1 = trellis.mapToScene(p1)  # type: ignore[attr-defined]
+        vx, vy = s1.x() - s0.x(), s1.y() - s0.y()
+        mag = math.hypot(vx, vy)
+        if mag == 0:
+            return math.hypot
+        ux, uy = vx / mag, vy / mag
+        return lambda dx, dy: abs(dx * ux + dy * uy)
+
+    def _check_spacing_group(
+        self, plants: list, distance: object, desired: dict[int, str | None]
+    ) -> None:
+        """Compute spacing overlap decisions within a group of sibling plants.
+
+        Only plants with real spacing data (from database or user override)
+        participate in overlap detection. Plants without data are skipped
+        (left at their existing ``desired`` default, i.e. None).
+
+        ``distance`` is a ``(dx, dy) -> float`` callable: ``math.hypot`` for the
+        normal 2-D case, or a 1-D along-axis projection for a trellis group
+        (US-C3b). Both have the same signature, so the loop below is identical.
+
+        Writes results into ``desired`` (keyed by ``id(plant)``) rather than
+        calling setters directly — the caller applies each plant's final
+        value exactly once (issue #305).
+        """
+        # Filter to plants that have spacing data
+        with_data = [
+            p for p in plants
+            if p.effective_spacing_radius() is not None  # type: ignore[attr-defined]
+        ]
+        if len(with_data) < 2:
+            # Single plant with data gets "ideal"
+            for p in with_data:
+                desired[id(p)] = "ideal"
+            return
+
+        overlap_set: set[int] = set()
+
+        for i, plant_a in enumerate(with_data):
+            center_a = plant_a.mapToScene(plant_a.rect().center())  # type: ignore[attr-defined]
+            radius_a = plant_a.effective_spacing_radius()  # type: ignore[attr-defined]
+
+            for plant_b in with_data[i + 1:]:
+                center_b = plant_b.mapToScene(plant_b.rect().center())  # type: ignore[attr-defined]
+                radius_b = plant_b.effective_spacing_radius()  # type: ignore[attr-defined]
+
+                dist = distance(  # type: ignore[operator]
+                    center_a.x() - center_b.x(),
+                    center_a.y() - center_b.y(),
+                )
+
+                if dist < radius_a + radius_b:
+                    overlap_set.add(id(plant_a))
+                    overlap_set.add(id(plant_b))
+
+        for plant in with_data:
+            desired[id(plant)] = "overlap" if id(plant) in overlap_set else "ideal"
+
+    def _update_container_capacity(self) -> None:
+        """Flag containers whose plants overflow their footprint (US-C3).
+
+        Sums each container's child plant footprints (true drawn area, not the
+        spacing circle) and compares to the container footprint via
+        ``container_model.is_capacity_exceeded``; sets the per-item badge state.
+        """
+        from open_garden_planner.core import container_model as cm
+        from open_garden_planner.core.object_types import is_container_type
+        from open_garden_planner.ui.canvas.items.garden_item import GardenItemMixin
+
+        try:
+            scene_items = list(self.canvas_scene.items())
+        except RuntimeError:
+            return
+
+        by_id: dict[str, object] = {}
+        for it in scene_items:
+            iid = getattr(it, "item_id", None)
+            if iid is not None:
+                by_id[str(iid)] = it
+
+        for item in scene_items:
+            if not isinstance(item, GardenItemMixin):
+                continue
+            if not is_container_type(getattr(item, "object_type", None)):
+                continue
+            footprint = item._compute_area_cm2() or 0.0
+            child_areas: list[float] = []
+            for child_id in item.child_item_ids:
+                child = by_id.get(str(child_id))
+                if child is None:
+                    continue
+                area = child._compute_area_cm2() if hasattr(child, "_compute_area_cm2") else None
+                if area:
+                    child_areas.append(float(area))
+            item.set_capacity_overrun(cm.is_capacity_exceeded(footprint, child_areas))
+
+    # -- Constraints panel handlers --
+
+    def _on_constraint_selected(self, constraint_id: object) -> None:
+        """Handle constraint selected in constraints panel.
+
+        Selects both objects involved in the constraint on the canvas.
+
+        Args:
+            constraint_id: UUID of the selected constraint
+        """
+        from uuid import UUID
+
+        from open_garden_planner.ui.canvas.items.garden_item import GardenItemMixin
+
+        cid = constraint_id if isinstance(constraint_id, UUID) else UUID(str(constraint_id))
+        graph = self.canvas_scene.constraint_graph
+        constraint = graph.constraints.get(cid)
+        if constraint is None:
+            return
+
+        # Clear current selection and select both constrained objects
+        self.canvas_scene.clearSelection()
+        target_ids = {constraint.anchor_a.item_id, constraint.anchor_b.item_id}
+        for item in self.canvas_scene.items():
+            if isinstance(item, GardenItemMixin) and item.item_id in target_ids:
+                item.setSelected(True)
+
+    def _on_constraint_edit_requested(self, constraint_id: object) -> None:
+        """Handle constraint double-click for distance editing.
+
+        Args:
+            constraint_id: UUID of the constraint to edit
+        """
+        from uuid import UUID
+
+        cid = constraint_id if isinstance(constraint_id, UUID) else UUID(str(constraint_id))
+        self.canvas_view._edit_constraint_distance(cid)
+        self.constraints_panel.refresh()
+
+    def _on_constraint_delete_requested(self, constraint_id: object) -> None:
+        """Handle constraint delete from constraints panel.
+
+        Args:
+            constraint_id: UUID of the constraint to delete
+        """
+        from uuid import UUID
+
+        from open_garden_planner.core.commands import RemoveConstraintCommand
+
+        cid = constraint_id if isinstance(constraint_id, UUID) else UUID(str(constraint_id))
+        graph = self.canvas_scene.constraint_graph
+        constraint = graph.constraints.get(cid)
+        if constraint is None:
+            return
+
+        cmd = RemoveConstraintCommand(graph, constraint)
+        self.canvas_view.command_manager.execute(cmd)
+        self.canvas_scene.update_dimension_lines()
+
+    def _init_object_snap_from_settings(self) -> None:
+        """Initialize object snap state from persisted settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        enabled = settings.object_snap_enabled
+        self._object_snap_action.setChecked(enabled)
+        self.canvas_view.set_object_snap_enabled(enabled)
+
+        mid = settings.midpoint_snap_enabled
+        self._midpoint_snap_action.setChecked(mid)
+        self.canvas_view.set_midpoint_snap_enabled(mid)
+
+        inter = settings.intersection_snap_enabled
+        self._intersection_snap_action.setChecked(inter)
+        self.canvas_view.set_intersection_snap_enabled(inter)
+
+        near = settings.nearest_snap_enabled
+        self._nearest_snap_action.setChecked(near)
+        self.canvas_view.set_nearest_snap_enabled(near)
+
+        perp = settings.perpendicular_snap_enabled
+        self._perpendicular_snap_action.setChecked(perp)
+        self.canvas_view.set_perpendicular_snap_enabled(perp)
+
+        tan = settings.tangent_snap_enabled
+        self._tangent_snap_action.setChecked(tan)
+        self.canvas_view.set_tangent_snap_enabled(tan)
+
+        dyn = settings.dynamic_input_enabled
+        self._dynamic_input_action.setChecked(dyn)
+        self.canvas_view.set_dynamic_input_enabled(dyn)
+
+    def _on_toggle_preview_mode(self, checked: bool) -> None:
+        """Handle toggle preview mode action."""
+        if checked:
+            self._enter_preview_mode()
+        else:
+            self._exit_preview_mode()
+
+    def _enter_preview_mode(self) -> None:
+        """Enter fullscreen preview mode, hiding all UI chrome."""
+        if self._preview_mode:
+            return
+
+        # Save current state so we can restore it
+        self._pre_preview_state = {
+            "grid_visible": self.canvas_view.grid_visible,
+            "scale_bar_visible": self.canvas_view.scale_bar_visible,
+            "labels_visible": self.canvas_scene.labels_enabled,
+            "constraints_visible": self.canvas_scene.constraints_visible,
+            "was_maximized": self.isMaximized(),
+        }
+
+        self._preview_mode = True
+
+        # Deselect all objects (hides selection handles and annotations)
+        self.canvas_scene.clearSelection()
+
+        # Switch to select tool to cancel any in-progress drawing
+        self.canvas_view.set_active_tool(ToolType.SELECT)
+
+        # Hide UI chrome
+        self.menuBar().hide()
+        self.statusBar().hide()
+        self.main_toolbar.hide()
+        self.sidebar.hide()
+        self._pre_preview_state["soil_overlay_toolbar_visible"] = (
+            self.soil_overlay_toolbar.isVisible()
+        )
+        self.soil_overlay_toolbar.hide()
+
+        # Hide canvas overlays
+        self.canvas_view.set_grid_visible(False)
+        self.canvas_view.set_scale_bar_visible(False)
+        self.canvas_scene.set_labels_visible(False)
+        self.canvas_view.set_constraints_visible(False)
+
+        # Go fullscreen
+        self.showFullScreen()
+
+        # Fit the canvas nicely after entering fullscreen
+        QTimer.singleShot(50, self.canvas_view.fit_in_view)
+
+    def _exit_preview_mode(self) -> None:
+        """Exit fullscreen preview mode, restoring all UI chrome."""
+        if not self._preview_mode:
+            return
+
+        self._preview_mode = False
+        self._preview_action.setChecked(False)
+
+        # Restore UI chrome
+        self.menuBar().show()
+        self.statusBar().show()
+        self.main_toolbar.show()
+        self.sidebar.show()
+        if (self._pre_preview_state or {}).get("soil_overlay_toolbar_visible"):
+            self.soil_overlay_toolbar.show()
+
+        # Restore canvas overlays from saved state
+        state = self._pre_preview_state or {}
+        self.canvas_view.set_grid_visible(state.get("grid_visible", False))
+        self.grid_action.setChecked(state.get("grid_visible", False))
+        self.canvas_view.set_scale_bar_visible(state.get("scale_bar_visible", True))
+        self._scale_bar_action.setChecked(state.get("scale_bar_visible", True))
+        self.canvas_scene.set_labels_visible(state.get("labels_visible", True))
+        self._labels_action.setChecked(state.get("labels_visible", True))
+        self.canvas_view.set_constraints_visible(state.get("constraints_visible", True))
+        self._constraints_action.setChecked(state.get("constraints_visible", True))
+
+        # Restore window state
+        if state.get("was_maximized", True):
+            self.showMaximized()
+        else:
+            self.showNormal()
+
+        self._pre_preview_state = None
+
+    def keyPressEvent(self, event) -> None:
+        """Handle key press events for preview mode toggle."""
+        if event.key() == Qt.Key.Key_F11:
+            if self._preview_mode:
+                self._exit_preview_mode()
+            else:
+                self._enter_preview_mode()
+            event.accept()
+            return
+        if self._preview_mode and event.key() == Qt.Key.Key_Escape:
+            self._exit_preview_mode()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _on_toggle_grid(self, checked: bool) -> None:
+        """Handle toggle grid action."""
+        self.canvas_view.set_grid_visible(checked)
+
+    def _on_toggle_snap(self, checked: bool) -> None:
+        """Handle toggle snap action."""
+        self.canvas_view.set_snap_enabled(checked)
+
+    def _on_toggle_object_snap(self, checked: bool) -> None:
+        """Handle toggle object snap action."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_object_snap_enabled(checked)
+        get_settings().object_snap_enabled = checked
+
+    def _on_toggle_midpoint_snap(self, checked: bool) -> None:
+        """Handle toggle midpoint snap action (Package A US-A3)."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_midpoint_snap_enabled(checked)
+        get_settings().midpoint_snap_enabled = checked
+
+    def _on_toggle_intersection_snap(self, checked: bool) -> None:
+        """Handle toggle intersection snap action (Package A US-A3)."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_intersection_snap_enabled(checked)
+        get_settings().intersection_snap_enabled = checked
+
+    def _on_toggle_nearest_snap(self, checked: bool) -> None:
+        """Handle toggle nearest-point fallback snap (Package B US-B4)."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_nearest_snap_enabled(checked)
+        get_settings().nearest_snap_enabled = checked
+
+    def _on_toggle_perpendicular_snap(self, checked: bool) -> None:
+        """Handle toggle perpendicular snap (Package B US-B5)."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_perpendicular_snap_enabled(checked)
+        get_settings().perpendicular_snap_enabled = checked
+
+    def _on_toggle_tangent_snap(self, checked: bool) -> None:
+        """Handle toggle tangent snap (Package B US-B6)."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_tangent_snap_enabled(checked)
+        get_settings().tangent_snap_enabled = checked
+
+    def _on_toggle_dynamic_input(self, checked: bool) -> None:
+        """Handle toggle dynamic input action (Package A US-A4)."""
+        from open_garden_planner.app.settings import get_settings
+
+        self.canvas_view.set_dynamic_input_enabled(checked)
+        get_settings().dynamic_input_enabled = checked
+
+    def _on_align_left(self) -> None:
+        """Align selected objects to the left edge."""
+        from open_garden_planner.core.alignment import AlignMode
+        self.canvas_view.align_selected(AlignMode.LEFT)
+
+    def _on_align_right(self) -> None:
+        """Align selected objects to the right edge."""
+        from open_garden_planner.core.alignment import AlignMode
+        self.canvas_view.align_selected(AlignMode.RIGHT)
+
+    def _on_align_top(self) -> None:
+        """Align selected objects to the top edge."""
+        from open_garden_planner.core.alignment import AlignMode
+        self.canvas_view.align_selected(AlignMode.TOP)
+
+    def _on_align_bottom(self) -> None:
+        """Align selected objects to the bottom edge."""
+        from open_garden_planner.core.alignment import AlignMode
+        self.canvas_view.align_selected(AlignMode.BOTTOM)
+
+    def _on_align_center_h(self) -> None:
+        """Align selected objects to horizontal center."""
+        from open_garden_planner.core.alignment import AlignMode
+        self.canvas_view.align_selected(AlignMode.CENTER_H)
+
+    def _on_align_center_v(self) -> None:
+        """Align selected objects to vertical center."""
+        from open_garden_planner.core.alignment import AlignMode
+        self.canvas_view.align_selected(AlignMode.CENTER_V)
+
+    def _on_distribute_horizontal(self) -> None:
+        """Distribute selected objects with equal horizontal spacing."""
+        from open_garden_planner.core.alignment import DistributeMode
+        self.canvas_view.distribute_selected(DistributeMode.HORIZONTAL)
+
+    def _on_distribute_vertical(self) -> None:
+        """Distribute selected objects with equal vertical spacing."""
+        from open_garden_planner.core.alignment import DistributeMode
+        self.canvas_view.distribute_selected(DistributeMode.VERTICAL)
+
+    def _on_arrange_front(self) -> None:
+        """Bring the selected objects to the front of their layer."""
+        from open_garden_planner.core.stacking import ArrangeMode
+        self.canvas_view.arrange_selected(ArrangeMode.BRING_TO_FRONT)
+
+    def _on_arrange_forward(self) -> None:
+        """Bring the selected objects one step forward."""
+        from open_garden_planner.core.stacking import ArrangeMode
+        self.canvas_view.arrange_selected(ArrangeMode.BRING_FORWARD)
+
+    def _on_arrange_backward(self) -> None:
+        """Send the selected objects one step backward."""
+        from open_garden_planner.core.stacking import ArrangeMode
+        self.canvas_view.arrange_selected(ArrangeMode.SEND_BACKWARD)
+
+    def _on_arrange_back(self) -> None:
+        """Send the selected objects to the back of their layer."""
+        from open_garden_planner.core.stacking import ArrangeMode
+        self.canvas_view.arrange_selected(ArrangeMode.SEND_TO_BACK)
+
+    def _on_zoom_in(self) -> None:
+        """Handle zoom in action."""
+        self.canvas_view.zoom_in()
+
+    def _on_zoom_out(self) -> None:
+        """Handle zoom out action."""
+        self.canvas_view.zoom_out()
+
+    def _on_fit_to_window(self) -> None:
+        """Handle fit to window action."""
+        self.canvas_view.fit_in_view()
+
+    def _update_theme_menu_state(self) -> None:
+        """Update theme menu state from settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        current_theme = settings.theme_mode
+
+        # Update checkboxes
+        self._light_theme_action.setChecked(current_theme == ThemeMode.LIGHT)
+        self._dark_theme_action.setChecked(current_theme == ThemeMode.DARK)
+        self._system_theme_action.setChecked(current_theme == ThemeMode.SYSTEM)
+
+    def _on_theme_changed(self, mode: ThemeMode) -> None:
+        """Handle theme change action.
+
+        Args:
+            mode: New theme mode to apply
+        """
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        settings.theme_mode = mode
+
+        # Update menu checkmarks
+        self._light_theme_action.setChecked(mode == ThemeMode.LIGHT)
+        self._dark_theme_action.setChecked(mode == ThemeMode.DARK)
+        self._system_theme_action.setChecked(mode == ThemeMode.SYSTEM)
+
+        # Apply theme to application
+        apply_theme(QApplication.instance(), mode)
+
+        # Show feedback
+        theme_name = mode.value.capitalize()
+        self.statusBar().showMessage(self.tr("Theme changed to {theme}").format(theme=theme_name), 2000)
+
+    def _update_language_menu_state(self) -> None:
+        """Update language menu checkmarks from settings."""
+        from open_garden_planner.app.settings import get_settings
+
+        current_lang = get_settings().language
+        for lang_code, action in self._language_actions.items():
+            action.setChecked(lang_code == current_lang)
+
+    def _on_language_changed(self, lang_code: str) -> None:
+        """Handle language change action.
+
+        Args:
+            lang_code: New language code (e.g. 'en', 'de')
+        """
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+
+        # No change needed
+        if settings.language == lang_code:
+            return
+
+        settings.language = lang_code
+
+        # Update menu checkmarks
+        for lc, action in self._language_actions.items():
+            action.setChecked(lc == lang_code)
+
+        # Show restart-required message
+        from open_garden_planner.core.i18n import SUPPORTED_LANGUAGES
+
+        lang_name = SUPPORTED_LANGUAGES.get(lang_code, lang_code)
+        QMessageBox.information(
+            self,
+            self.tr("Language Changed"),
+            self.tr(
+                "Language has been set to {language}.\n\n"
+                "Please restart the application for the change to take effect."
+            ).format(language=lang_name),
+        )
+
+    def _on_tool_selected(self, tool_type: ToolType) -> None:
+        """Handle tool selection from toolbar.
+
+        Args:
+            tool_type: The selected tool type
+        """
+        self.canvas_view.set_active_tool(tool_type)
+
+    def _on_gallery_item_selected(self, item: object) -> None:
+        """Handle gallery item selection - update toolbar and pass plant info.
+
+        Args:
+            item: The GalleryItem that was selected
+        """
+        # Toolbar highlight sync is driven by `canvas_view.tool_type_changed`
+        # (see `_sync_toolbar_state_by_type`, #304); the gallery's own
+        # `tool_selected` has already activated the tool by the time this
+        # slot runs, so no direct toolbar call is needed here.
+
+        # Pass plant category/species to the active circle tool
+        from open_garden_planner.core.tools.circle_tool import CircleTool
+
+        active_tool = self.canvas_view.active_tool
+        if isinstance(active_tool, CircleTool):
+            category = getattr(item, "plant_category", None)
+            species = getattr(item, "species", "")
+            active_tool.set_plant_info(category=category, species=species)
+
+    def _sync_toolbar_state_by_type(self, tool_type: ToolType) -> None:
+        """Sync toolbar button states when the active tool changes.
+
+        Keyed off the ``ToolType`` enum rather than the (possibly translated)
+        display name — see #304. Every tool button lives on exactly one of
+        the two exclusive-group toolbars, so both are told about every tool
+        change: whichever toolbar owns ``tool_type`` highlights its button,
+        the other toolbar unchecks whatever it had checked.
+
+        Args:
+            tool_type: The ToolType that just became active.
+        """
+        self.main_toolbar.set_active_tool(tool_type)
+        self.constraint_toolbar.set_active_tool(tool_type)
+
+    def _on_active_layer_changed(self, layer_id) -> None:
+        """Handle active layer change from layers panel.
+
+        Args:
+            layer_id: UUID of the newly active layer
+        """
+        try:
+            layer = self.canvas_scene.get_layer_by_id(layer_id)
+            if layer:
+                self.canvas_scene.set_active_layer(layer)
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layer_add_requested(self, name: str) -> None:
+        """Create a new layer at the top of the order (undoable).
+
+        Args:
+            name: Unique name computed by the layers panel
+        """
+        from open_garden_planner.core.commands import AddLayerCommand  # noqa: PLC0415
+        from open_garden_planner.models.layer import Layer  # noqa: PLC0415
+
+        try:
+            layer = Layer(name=name)
+            self.canvas_view.command_manager.execute(
+                AddLayerCommand(self.canvas_scene, layer)
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layers_reordered(self, new_order) -> None:
+        """Handle layer reordering from layers panel (undoable).
+
+        Args:
+            new_order: New list of layers in order
+        """
+        from open_garden_planner.core.commands import ReorderLayersCommand  # noqa: PLC0415
+
+        try:
+            if [lyr.id for lyr in new_order] == [
+                lyr.id for lyr in self.canvas_scene.layers
+            ]:
+                return  # No-op drag — don't push an empty undo step
+            self.canvas_view.command_manager.execute(
+                ReorderLayersCommand(self.canvas_scene, new_order)
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layer_renamed(self, layer_id, new_name: str) -> None:
+        """Handle layer rename from layers panel (undoable).
+
+        Args:
+            layer_id: UUID of the layer to rename
+            new_name: Requested new name
+        """
+        from open_garden_planner.core.commands import RenameLayerCommand  # noqa: PLC0415
+
+        try:
+            layer = self.canvas_scene.get_layer_by_id(layer_id)
+            if layer is None or layer.name == new_name:
+                return
+            self.canvas_view.command_manager.execute(
+                RenameLayerCommand(self.canvas_scene, layer, new_name)
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layer_deleted(self, layer_id) -> None:
+        """Handle layer deletion from layers panel (undoable).
+
+        Args:
+            layer_id: UUID of the layer to delete
+        """
+        from open_garden_planner.core.commands import DeleteLayerCommand  # noqa: PLC0415
+
+        try:
+            if len(self.canvas_scene.layers) <= 1:
+                return  # Must keep at least one layer
+            layer = self.canvas_scene.get_layer_by_id(layer_id)
+            if layer is None:
+                return
+            replacement = self.canvas_scene.get_layer_replacement(layer_id)
+            if replacement is not None and replacement.locked:
+                self.statusBar().showMessage(
+                    self.tr(
+                        "Cannot delete the layer because its replacement layer is locked."
+                    ),
+                    5000,
+                )
+                return
+            self.canvas_view.command_manager.execute(
+                DeleteLayerCommand(self.canvas_scene, layer_id)
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layer_visibility_change_requested(self, layer_id, visible: bool) -> None:
+        """Toggle a layer's visibility (undoable).
+
+        Args:
+            layer_id: UUID of the layer
+            visible: New visibility state
+        """
+        from open_garden_planner.core.commands import SetLayerPropertyCommand  # noqa: PLC0415
+
+        try:
+            layer = self.canvas_scene.get_layer_by_id(layer_id)
+            if layer is None or layer.visible == visible:
+                return
+            self.canvas_view.command_manager.execute(
+                SetLayerPropertyCommand(
+                    self.canvas_scene, layer, "visible", layer.visible, visible
+                )
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layer_lock_change_requested(self, layer_id, locked: bool) -> None:
+        """Toggle a layer's lock state (undoable).
+
+        Args:
+            layer_id: UUID of the layer
+            locked: New lock state
+        """
+        from open_garden_planner.core.commands import SetLayerPropertyCommand  # noqa: PLC0415
+
+        try:
+            layer = self.canvas_scene.get_layer_by_id(layer_id)
+            if layer is None or layer.locked == locked:
+                return
+            self.canvas_view.command_manager.execute(
+                SetLayerPropertyCommand(
+                    self.canvas_scene, layer, "locked", layer.locked, locked
+                )
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_layer_opacity_committed(self, layer_id, old: float, new: float) -> None:
+        """Commit an opacity change as one undoable step.
+
+        Args:
+            layer_id: UUID of the layer
+            old: Opacity before the change (snapshotted at drag start)
+            new: Final opacity
+        """
+        from open_garden_planner.core.commands import SetLayerPropertyCommand  # noqa: PLC0415
+
+        try:
+            layer = self.canvas_scene.get_layer_by_id(layer_id)
+            if layer is None or abs(old - new) < 1e-9:
+                return
+            self.canvas_view.command_manager.execute(
+                SetLayerPropertyCommand(self.canvas_scene, layer, "opacity", old, new)
+            )
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_scene_active_layer_changed(self, layer) -> None:
+        """Sync the layers panel selection with the scene's active layer.
+
+        Args:
+            layer: The newly active Layer (or None)
+        """
+        try:
+            if layer is not None:
+                self.layers_panel.select_layer(layer.id)
+        except RuntimeError:
+            # Panel has been deleted, ignore
+            pass
+
+    def _on_layer_auto_unhidden(self, layer_id) -> None:
+        """Update the layers panel when the scene auto-unhides a hidden layer."""
+        self.layers_panel.refresh_layer_visibility(layer_id, True)
+        self._project_manager.mark_dirty()
+
+    def _on_scene_changed_for_plant_search(self) -> None:
+        """Coalesce bursts of scene changes into a single debounced refresh."""
+        with contextlib.suppress(RuntimeError):
+            self._plant_search_refresh_timer.start()
+
+    def _refresh_plant_search_panel(self) -> None:
+        """Refresh the plant search panel (debounce timer slot)."""
+        with contextlib.suppress(RuntimeError):
+            self.plant_search_panel.refresh_plant_list()
+
+    def _on_selection_changed(self) -> None:
+        """Handle selection changes in the canvas scene."""
+        # A genuine selection change clears per-panel dismissals so a newly
+        # selected item re-opens its contextual panels even if the user had
+        # closed them for the previous selection (US-226). This runs before the
+        # _update_*_panel slots (connected after this one) call set_selection_pinned.
+        self._sidebar_controller.reset_selection_dismissals()
+        # Guard against accessing deleted scene (can happen during shutdown or dialog execution)
+        try:
+            selected_items = self.canvas_scene.selectedItems()
+            count = len(selected_items)
+            self.update_selection(count, selected_items)
+        except RuntimeError:
+            # Scene has been deleted, ignore
+            pass
+
+    def _on_manage_custom_plants(self) -> None:
+        """Handle Manage Custom Plants action."""
+        from open_garden_planner.ui.dialogs import CustomPlantsDialog
+
+        dialog = CustomPlantsDialog(self)
+        dialog.exec()
+
+    def _on_check_companion_planting(self) -> None:
+        """Run whole-plan companion planting analysis and show report."""
+        from open_garden_planner.ui.dialogs.companion_check_dialog import (
+            CompanionCheckDialog,
+            analyse_plan,
+        )
+
+        lang = self._current_lang()
+        beneficial, antagonistic = analyse_plan(
+            scene=self.canvas_scene,
+            service=self._companion_service,
+            radius_cm=self._companion_radius_cm,
+            species_name_fn=self._companion_species_name,
+            is_plant_fn=self._is_canvas_plant,
+            lang=lang,
+        )
+
+        dialog = CompanionCheckDialog(
+            beneficial=beneficial,
+            antagonistic=antagonistic,
+            service=self._companion_service,
+            scene=self.canvas_scene,
+            lang=lang,
+            parent=self,
+        )
+        dialog.exec()
+
+    @staticmethod
+    def _current_lang() -> str:
+        """Return the current app language code (shared resolver)."""
+        from open_garden_planner.app.settings import active_language
+        return active_language()
+
+    def _resolved_google_maps_api_key(self) -> str:
+        """Resolve the Google Maps key without copying environment secrets."""
+        import os
+
+        from open_garden_planner.app.settings import get_settings
+
+        return (
+            get_settings().google_maps_api_key.strip()
+            or os.environ.get("OGP_GOOGLE_MAPS_KEY", "").strip()
+        )
+
+    def _update_satellite_menu_state(self) -> None:
+        """Refresh satellite action availability after settings changes."""
+        action = getattr(self, "_load_satellite_action", None)
+        if action is None:
+            return
+
+        enabled = bool(self._resolved_google_maps_api_key())
+        action.setEnabled(enabled)
+        if enabled:
+            hint = self.tr(
+                "Pick an area on Google Maps and load it as a true-to-scale "
+                "satellite background"
+            )
+        else:
+            hint = self.tr(
+                "Set a Google Maps API key in Preferences or "
+                "OGP_GOOGLE_MAPS_KEY in your .env file to enable satellite "
+                "background loading"
+            )
+        action.setStatusTip(hint)
+        action.setToolTip(hint)
+
+    def _on_preferences(self) -> None:
+        """Handle Preferences action; apply Agent API changes live."""
+        from open_garden_planner.app.settings import get_settings
+        from open_garden_planner.ui.dialogs import PreferencesDialog
+
+        settings = get_settings()
+
+        def _agent_api_state() -> tuple[bool, int, bool, str]:
+            # Include writes-enabled + token so toggling AI editing or
+            # regenerating the token also restarts the server (re-registering the
+            # write tools / applying the new token).
+            return (
+                settings.agent_api_enabled,
+                settings.agent_api_port,
+                settings.agent_api_writes_enabled,
+                settings.agent_api_token if settings.agent_api_writes_enabled else "",
+            )
+
+        before = _agent_api_state()
+        dialog = PreferencesDialog(self)
+        if dialog.exec():
+            self._update_satellite_menu_state()
+            after = _agent_api_state()
+            if before != after:
+                # Restart so a toggle, port, writes or token change takes effect.
+                self._stop_agent_api()
+                if after[0]:
+                    self._start_agent_api()
+
+    def _on_search_plant_database(self) -> None:
+        """Handle Search Plant Database action."""
+        import os
+
+        from open_garden_planner.app.settings import get_settings
+        from open_garden_planner.services import PlantAPIManager
+        from open_garden_planner.ui.dialogs import PlantSearchDialog, PreferencesDialog
+
+        # Read API credentials from QSettings, with env var fallback
+        settings = get_settings()
+        trefle_token = settings.trefle_api_token or os.environ.get("TREFLE_API_TOKEN", "")
+        perenual_key = settings.perenual_api_key or os.environ.get("PERENUAL_API_KEY", "")
+        permapeople_id = settings.permapeople_key_id or os.environ.get("PERMAPEOPLE_KEY_ID", "")
+        permapeople_secret = settings.permapeople_key_secret or os.environ.get("PERMAPEOPLE_KEY_SECRET", "")
+
+        # If no credentials configured anywhere, open Preferences dialog
+        if not any([trefle_token, perenual_key, permapeople_id and permapeople_secret]):
+            dialog = PreferencesDialog(self)
+            if dialog.exec():
+                # Re-read settings after user saved
+                trefle_token = settings.trefle_api_token
+                perenual_key = settings.perenual_api_key
+                permapeople_id = settings.permapeople_key_id
+                permapeople_secret = settings.permapeople_key_secret
+                # If still no credentials, abort
+                if not any([trefle_token, perenual_key, permapeople_id and permapeople_secret]):
+                    return
+            else:
+                return
+
+        api_manager = PlantAPIManager(
+            trefle_api_token=settings.trefle_api_token or None,
+            perenual_api_key=settings.perenual_api_key or None,
+            permapeople_key_id=settings.permapeople_key_id or None,
+            permapeople_key_secret=settings.permapeople_key_secret or None,
+        )
+
+        dialog = PlantSearchDialog(api_manager, self)
+        if dialog.exec():
+            # User selected a plant species
+            plant_data = dialog.selected_plant
+            if plant_data:
+                # Check if there's a selected plant item to update
+                selected_items = self.canvas_scene.selectedItems()
+                from open_garden_planner.core.object_types import ObjectType
+
+                # Find a plant item in selection
+                plant_item = None
+                for item in selected_items:
+                    if hasattr(item, 'object_type') and item.object_type in (
+                        ObjectType.TREE,
+                        ObjectType.SHRUB,
+                        ObjectType.PERENNIAL,
+                    ):
+                        plant_item = item
+                        break
+
+                if plant_item:
+                    # Update existing plant with species data (merge local calendar
+                    # DB). Routed through the shared assignment helper so the spacing
+                    # circle refreshes, a manual override is reconciled, and the
+                    # change is a single undoable step (issue #213).
+                    from open_garden_planner.services.bundled_species_db import (
+                        merge_calendar_data,  # noqa: PLC0415
+                    )
+                    from open_garden_planner.ui.plant_species_assignment import (
+                        apply_species_to_item,  # noqa: PLC0415
+                        confirm_apply_database_values,  # noqa: PLC0415
+                    )
+                    apply_species_to_item(
+                        plant_item,
+                        merge_calendar_data(plant_data.to_dict()),
+                        confirm=lambda: confirm_apply_database_values(self),
+                    )
+
+                    # Update the panel display
+                    self._update_plant_database_panel()
+
+                    self.statusBar().showMessage(
+                        self.tr("Updated plant with species: {name}").format(
+                            name=plant_data.common_name
+                        ),
+                        3000,
+                    )
+                else:
+                    # No plant selected - show message
+                    self.statusBar().showMessage(
+                        self.tr("Select a plant object (tree, shrub, or perennial) to assign species data"),
+                        5000,
+                    )
+
+    def _on_keyboard_shortcuts(self) -> None:
+        """Handle Keyboard Shortcuts action."""
+        from open_garden_planner.ui.dialogs import ShortcutsDialog
+
+        dialog = ShortcutsDialog(self)
+        dialog.exec()
+
+    def agent_api_running_url(self) -> str | None:
+        """The Agent API's connect URL if the server is actually running, else
+        None — the one place both the Help menu and Preferences dialog (D1.6)
+        ask "is there a live server to register?" so neither can reconstruct
+        a URL from settings/widget state and hand a dead endpoint to an AI
+        client's config.
+        """
+        if self._agent_server is not None and self._agent_server.is_running:
+            return self._agent_server.url
+        return None
+
+    def agent_api_write_token(self) -> str | None:
+        """The bearer token to hand a client, or None if writes aren't live.
+
+        Returns the token the *running server* was started with — never the raw
+        settings value — so the Connect dialog can only ever hand out a token the
+        live server will actually accept. Regenerating the token in Preferences
+        without saving persists a new settings value but doesn't restart the
+        server; deriving from the server (like ``agent_api_running_url``) avoids
+        registering a client with a token the server would reject.
+        """
+        server = self._agent_server
+        if server is None or not server.is_running:
+            return None
+        return server.write_token
+
+    def _on_connect_ai_assistant(self) -> None:
+        """Handle Connect AI Assistant action (US-D1.6)."""
+        from open_garden_planner.app.settings import get_settings
+        from open_garden_planner.ui.dialogs import ConnectAiAssistantDialog
+
+        dialog = ConnectAiAssistantDialog(
+            self.agent_api_running_url(),
+            self,
+            token=self.agent_api_write_token(),
+            enabled_in_settings=get_settings().agent_api_enabled,
+        )
+        dialog.exec()
+
+    def _on_about(self) -> None:
+        """Handle About action."""
+        from pathlib import Path
+
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPixmap
+        from PyQt6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout
+
+        # Create custom about dialog to show logo
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.tr("About Open Garden Planner"))
+        dialog.setFixedSize(450, 320)
+
+        layout = QVBoxLayout(dialog)
+
+        # Top row: logo + text
+        top_layout = QHBoxLayout()
+
+        # Logo on the left
+        icon_path = Path(__file__).parent.parent / "resources" / "icons" / "OGP_logo.png"
+        if icon_path.exists():
+            logo_label = QLabel()
+            pixmap = QPixmap(str(icon_path))
+            scaled_pixmap = pixmap.scaled(
+                128, 128, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            logo_label.setPixmap(scaled_pixmap)
+            logo_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+            top_layout.addWidget(logo_label)
+
+        # Text on the right
+        text_layout = QVBoxLayout()
+        text_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        title_label = QLabel("<h2>Open Garden Planner</h2>")
+        text_layout.addWidget(title_label)
+
+        from open_garden_planner.services.update_checker import get_current_version
+
+        version_label = QLabel(self.tr("<p>Version {v}</p>").format(v=get_current_version()))
+        text_layout.addWidget(version_label)
+
+        description_label = QLabel(
+            self.tr("<p>Precision garden planning for passionate gardeners.</p>"
+            "<p>Free and open source under GPLv3.</p>")
+        )
+        description_label.setWordWrap(True)
+        text_layout.addWidget(description_label)
+
+        link_label = QLabel(
+            "<p><a href='https://github.com/cofade/open-garden-planner'>"
+            "github.com/cofade/open-garden-planner</a></p>"
+        )
+        link_label.setOpenExternalLinks(True)
+        text_layout.addWidget(link_label)
+
+        text_layout.addStretch()
+        top_layout.addLayout(text_layout)
+        layout.addLayout(top_layout)
+
+        # Data sources button
+        from PyQt6.QtWidgets import QPushButton
+        data_sources_btn = QPushButton(self.tr("Data Sources && Licenses"))
+        data_sources_btn.clicked.connect(lambda: self._on_data_sources_about())
+        layout.addWidget(data_sources_btn)
+
+        dialog.exec()
+
+    def _on_data_sources_about(self) -> None:
+        """Show data sources and licenses dialog."""
+        from PyQt6.QtWidgets import QDialog, QTextEdit, QVBoxLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.tr("Data Sources && Licenses"))
+        dialog.setMinimumSize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setHtml(self._get_data_sources_html())
+        layout.addWidget(text_edit)
+
+        dialog.exec()
+
+    def _get_data_sources_html(self) -> str:
+        """Build the HTML content for the data sources & licenses dialog."""
+        parts = [
+            self.tr("<h3>Data Sources & Licenses</h3>"),
+            self.tr("<p>Open Garden Planner uses data from the following sources:</p>"),
+            self.tr("<h4>Online plant databases</h4>"),
+            "<ul>",
+            self.tr(
+                "<li><b>Permapeople</b> — "
+                "<a href='https://permapeople.org'>permapeople.org</a><br>"
+                "License: CC BY-SA 4.0 (Creative Commons Attribution-ShareAlike 4.0)<br>"
+                "Data is curated from public horticultural sources and available "
+                "under a share-alike license.</li>"
+            ),
+            self.tr(
+                "<li><b>Trefle</b> — "
+                "<a href='https://trefle.io'>trefle.io</a><br>"
+                "Attribution required per their API terms of service.</li>"
+            ),
+            self.tr(
+                "<li><b>Perenual</b> — "
+                "<a href='https://perenual.com'>perenual.com</a><br>"
+                "Free for personal and commercial use.</li>"
+            ),
+            "</ul>",
+            self.tr("<h4>Bundled data</h4>"),
+            "<ul>",
+            self.tr(
+                "<li><b>Species database</b> — RHS, Cornell University, "
+                "Royal Botanic Gardens Kew, USDA/GRIN-Global, "
+                "University of Minnesota, Oregon State University</li>"
+            ),
+            self.tr(
+                "<li><b>Companion planting</b> — RHS Companion Planting guide, "
+                "Louise Riotte 'Carrots Love Tomatoes', "
+                "Rodale's 'Companion Planting for Vegetables'</li>"
+            ),
+            self.tr(
+                "<li><b>Seed viability</b> — Oregon State University Extension, "
+                "Johnny's Selected Seeds, Mother Earth News, RHS</li>"
+            ),
+            self.tr(
+                "<li><b>Soil amendments</b> — Rodale, RHS, USDA Extension</li>"
+            ),
+            "</ul>",
+            self.tr("<h4>Icons</h4>"),
+            "<ul>",
+            self.tr("<li><b>Tabler Icons</b> — MIT License</li>"),
+            self.tr("<li><b>UI icons</b> — GPLv3 (original work)</li>"),
+            "</ul>",
+            self.tr(
+                "<p>All bundled data files are licensed under CC BY-SA 4.0. "
+                "See <code>resources/data/PROVENANCE.md</code> for details.</p>"
+            ),
+        ]
+        return "".join(parts)
+
+    # Public methods for updating status bar
+
+    def update_coordinates(self, x: float, y: float) -> None:
+        """Update the coordinate display in the status bar.
+
+        Args:
+            x: X coordinate in centimeters
+            y: Y coordinate in centimeters
+        """
+        self.coord_label.setText(self.tr("X: {x} cm  Y: {y} cm").format(x=f"{x:.2f}", y=f"{y:.2f}"))
+
+    def update_zoom(self, zoom_percent: float) -> None:
+        """Update the zoom display in the status bar.
+
+        Args:
+            zoom_percent: Zoom level as percentage (100 = 100%)
+        """
+        self.zoom_label.setText(f"{zoom_percent:.0f}%")
+
+    def update_selection(self, count: int, selected_items: list | None = None) -> None:
+        """Update the selection info in the status bar.
+
+        Args:
+            count: Number of selected objects
+            selected_items: List of selected QGraphicsItems (optional)
+        """
+        if count == 0:
+            self.selection_label.setText(self.tr("No selection"))
+        elif count == 1:
+            # For single selection, show area and perimeter if available
+            if selected_items:
+                item = selected_items[0]
+                measurements = calculate_area_and_perimeter(item)
+                if measurements:
+                    area, perimeter = measurements
+                    area_str = format_area(area)
+                    length_str = format_length(perimeter)
+                    self.selection_label.setText(
+                        self.tr("1 object | Area: {area} | Perimeter: {perimeter}").format(
+                            area=area_str, perimeter=length_str
+                        )
+                    )
+                else:
+                    self.selection_label.setText(self.tr("1 object selected"))
+            else:
+                self.selection_label.setText(self.tr("1 object selected"))
+        else:
+            # For multiple selection, show total area and perimeter
+            if selected_items:
+                total_area = 0.0
+                total_perimeter = 0.0
+                measurable_count = 0
+
+                for item in selected_items:
+                    measurements = calculate_area_and_perimeter(item)
+                    if measurements:
+                        area, perimeter = measurements
+                        total_area += area
+                        total_perimeter += perimeter
+                        measurable_count += 1
+
+                if measurable_count > 0:
+                    area_str = format_area(total_area)
+                    length_str = format_length(total_perimeter)
+                    self.selection_label.setText(
+                        self.tr(
+                            "{count} objects | Total Area: {area} | Total Perimeter: {perimeter}"
+                        ).format(count=count, area=area_str, perimeter=length_str)
+                    )
+                else:
+                    self.selection_label.setText(self.tr("{count} objects selected").format(count=count))
+            else:
+                self.selection_label.setText(self.tr("{count} objects selected").format(count=count))
+
+    def update_tool(self, tool_name: str) -> None:
+        """Update the current tool display in the status bar.
+
+        Args:
+            tool_name: Name of the active tool
+        """
+        self.tool_label.setText(tool_name)
+
+    def _on_import_background_image(self) -> None:
+        """Handle Import Background Image action."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Import Background Image"),
+            str(self._default_dialog_dir()),
+            self.tr("Images (*.png *.jpg *.jpeg *.tiff *.bmp);;All Files (*)"),
+        )
+        if file_path:
+            try:
+                from open_garden_planner.ui.canvas.items import BackgroundImageItem
+
+                image_item = BackgroundImageItem(file_path)
+                self.canvas_scene.addItem(image_item)
+
+                # Center the image on the canvas
+                canvas_center = self.canvas_scene.canvas_rect.center()
+                image_rect = image_item.boundingRect()
+                image_item.setPos(
+                    canvas_center.x() - image_rect.width() / 2,
+                    canvas_center.y() - image_rect.height() / 2,
+                )
+
+                self._project_manager.mark_dirty()
+                self.statusBar().showMessage(self.tr("Imported: {path}").format(path=file_path))
+            except Exception as e:
+                QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to import image:\n{error}").format(error=e))
+
+    def _on_load_satellite_background(self) -> None:
+        """Open the embedded Google Maps picker and import the chosen area."""
+        import io  # noqa: PLC0415
+        from datetime import UTC, datetime  # noqa: PLC0415
+
+        from open_garden_planner.ui.canvas.items import BackgroundImageItem  # noqa: PLC0415
+        from open_garden_planner.ui.dialogs.map_picker_dialog import (  # noqa: PLC0415
+            MapPickerDialog,
+        )
+
+        api_key = self._resolved_google_maps_api_key()
+        if not MapPickerDialog.is_available(api_key):
+            QMessageBox.warning(
+                self,
+                self.tr("API key missing"),
+                self.tr(
+                    "Set a Google Maps API key in Preferences or "
+                    "OGP_GOOGLE_MAPS_KEY in your .env file to enable "
+                    "satellite background loading."
+                ),
+            )
+            return
+
+        dialog = MapPickerDialog(self, api_key=api_key)
+        self._active_satellite_picker = dialog
+        try:
+            if dialog.exec() != dialog.DialogCode.Accepted:
+                return
+            result = dialog.fetch_result
+            if result is None:
+                return
+        finally:
+            if self._active_satellite_picker is dialog:
+                self._active_satellite_picker = None
+            if self._app_close_pending:
+                QTimer.singleShot(0, self.close)
+
+        # PIL image → PNG bytes.
+        buf = io.BytesIO()
+        result.image.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        # Replace any existing background image (a project has at most one
+        # logical 'satellite layer'; stacking would only confuse the user).
+        scene = self.canvas_scene
+        for item in list(scene.items()):
+            if isinstance(item, BackgroundImageItem):
+                scene.removeItem(item)
+
+        image_item = BackgroundImageItem.from_fetch_result(
+            image_path=f"google_satellite_z{result.zoom}.png",
+            png_bytes=png_bytes,
+            meters_per_pixel=result.meters_per_pixel,
+            bbox_nw=(result.bbox.nw_lat, result.bbox.nw_lng),
+            bbox_se=(result.bbox.se_lat, result.bbox.se_lng),
+            zoom=result.zoom,
+            source=result.source,
+            attribution=result.attribution,
+            fetched_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        scene.addItem(image_item)
+
+        # Resize the canvas to match the selected area so the satellite image
+        # IS the canvas. Image scene-size in cm = image_local_size_px / scale_factor
+        # (px/cm). Using the item's own dimensions keeps us in sync with the
+        # cropped image, no matter what the service returned.
+        image_rect = image_item.boundingRect()
+        canvas_w_cm = image_rect.width() / image_item.scale_factor
+        canvas_h_cm = image_rect.height() / image_item.scale_factor
+        scene.resize_canvas(canvas_w_cm, canvas_h_cm)
+
+        # Centre on the new canvas. ``boundingRect()`` is in local (pre-scale)
+        # coords; because ``transformOriginPoint`` is at the local centre, the
+        # scene centre after ``setPos(pos)`` is ``pos + (w/2, h/2)`` regardless
+        # of the scale factor — so we must NOT multiply by ``scale`` here.
+        canvas_center = scene.canvas_rect.center()
+        image_item.setPos(
+            canvas_center.x() - image_rect.width() / 2,
+            canvas_center.y() - image_rect.height() / 2,
+        )
+
+        # Zoom the view to the new canvas so the user sees the whole import.
+        self.canvas_view.fit_in_view()
+
+        self._project_manager.mark_dirty()
+        if result.source == "google_js_view_capture":
+            self.statusBar().showMessage(
+                self.tr(
+                    "Loaded satellite background (captured map view, zoom {zoom}) — "
+                    "canvas resized to {w_m:.0f}m x {h_m:.0f}m"
+                ).format(
+                    zoom=result.zoom,
+                    w_m=canvas_w_cm / 100,
+                    h_m=canvas_h_cm / 100,
+                )
+            )
+        else:
+            self.statusBar().showMessage(
+                self.tr(
+                    "Loaded satellite background ({cols}x{rows} tiles, zoom {zoom}) — "
+                    "canvas resized to {w_m:.0f}m x {h_m:.0f}m"
+                ).format(
+                    cols=result.tile_grid[0],
+                    rows=result.tile_grid[1],
+                    zoom=result.zoom,
+                    w_m=canvas_w_cm / 100,
+                    h_m=canvas_h_cm / 100,
+                )
+            )
+
+    def _on_set_location(self) -> None:
+        """Handle Set Garden Location action."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.ui.dialogs.location_dialog import LocationDialog  # noqa: PLC0415
+
+        dialog = LocationDialog(self, location=self._project_manager.location)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._project_manager.set_location(dialog.location_data)
+            self.statusBar().showMessage(self.tr("Garden location updated"), 3000)
+
+    def _on_soil_test_requested(self, target_id: str, display_name: str) -> None:
+        """Open SoilTestDialog for a bed (US-12.10a)."""
+        self._open_soil_test_dialog(target_id, display_name)
+
+    def _on_set_default_soil_test(self) -> None:
+        """Open SoilTestDialog for the project-wide default (US-12.10a)."""
+        self._open_soil_test_dialog("global", "")
+
+    def _on_soil_test_badge_clicked(self, bed_id: str) -> None:
+        """Open SoilTestDialog when the seasonal reminder badge is clicked (US-12.10e)."""
+        self._open_soil_test_dialog(bed_id, self._lookup_bed_display_name(bed_id))
+
+    def _lookup_bed_display_name(self, bed_id: str) -> str:
+        """Return the bed's name for the dialog title, or empty string if not found."""
+        from open_garden_planner.core.object_types import is_bed_type  # noqa: PLC0415
+
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None) or self.canvas_view.scene()
+        )
+        if scene is None:
+            return ""
+        for item in scene.items():
+            if not is_bed_type(getattr(item, "object_type", None)):
+                continue
+            if str(getattr(item, "item_id", "")) != bed_id:
+                continue
+            return getattr(item, "name", "") or ""
+        return ""
+
+    def _open_soil_test_dialog(self, target_id: str, display_name: str) -> None:
+        """Open the soil test dialog and execute AddSoilTestCommand on accept."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.core import AddSoilTestCommand  # noqa: PLC0415
+        from open_garden_planner.ui.dialogs import SoilTestDialog  # noqa: PLC0415
+
+        history = self._soil_service.get_history(target_id)
+        existing = history.latest
+        bed_area_m2 = (
+            self._lookup_bed_area_m2(target_id) if target_id != "global" else 0.0
+        )
+        # F6: when this dialog is for a bed (not the global target), pass the
+        # global-default history so the History tab can merge those rows in
+        # chronologically with a "(default)" badge.
+        default_history = (
+            None
+            if target_id == "global"
+            else self._soil_service.get_history("global")
+        )
+
+        dialog = SoilTestDialog(
+            parent=self,
+            target_id=target_id,
+            target_name=display_name,
+            existing_latest=existing,
+            existing_history=history,
+            existing_default_history=default_history,
+            bed_area_m2=bed_area_m2,
+            project_manager=self._project_manager,
+            command_manager=self.canvas_view.command_manager,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        record = dialog.result_record()
+        latest_after = self._soil_service.get_history(target_id).latest
+        if _should_skip_add_after_dialog(record, existing, latest_after):
+            self.statusBar().showMessage(self.tr("No changes"), 3000)
+            return
+        cmd = AddSoilTestCommand(self._project_manager, target_id, record)
+        self.canvas_view.command_manager.execute(cmd)
+        self.statusBar().showMessage(self.tr("Soil test recorded"), 3000)
+        # Refresh the soil overlay if it's currently visible.
+        if self.canvas_view.soil_overlay_visible:
+            self.canvas_view.viewport().update()
+        # Recompute mismatch borders and dashboard cards (US-12.10d).
+        self.canvas_view.refresh_soil_mismatches()
+        # Recompute seasonal reminder badges (US-12.10e).
+        self.canvas_view.refresh_soil_badges()
+        self.calendar_view.refresh()
+
+    def _on_pest_log_requested(self, target_id: str, display_name: str) -> None:
+        """Open PestLogDialog for a bed/plant (US-12.7)."""
+        self._open_pest_log_dialog(target_id, display_name)
+
+    def _on_pest_logs_changed(self, _pest_logs: object) -> None:
+        """Refresh the overview panel whenever pest logs change."""
+        self._refresh_pest_overview()
+
+    def _open_pest_log_dialog(self, target_id: str, display_name: str) -> None:
+        """Open the pest/disease dialog and execute AddPestLogCommand on accept."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.core import AddPestLogCommand  # noqa: PLC0415
+        from open_garden_planner.ui.dialogs import PestLogDialog  # noqa: PLC0415
+
+        if not display_name:
+            display_name = self._lookup_bed_display_name(target_id) or self._lookup_item_name(target_id)
+        history = self._project_manager.get_pest_log_history(target_id)
+        dialog = PestLogDialog(
+            parent=self,
+            target_id=target_id,
+            target_name=display_name,
+            existing_history=history,
+            project_manager=self._project_manager,
+            command_manager=self.canvas_view.command_manager,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        if not dialog.has_new_entry:
+            # User managed history (edit/delete) without adding a new entry.
+            self._refresh_pest_overview()
+            return
+
+        record = dialog.result_record()
+        cmd = AddPestLogCommand(self._project_manager, target_id, record)
+        self.canvas_view.command_manager.execute(cmd)
+        self.statusBar().showMessage(self.tr("Pest/disease log recorded"), 3000)
+        self._refresh_pest_overview()
+
+    # ── Harvest log (US-C1) ───────────────────────────────────────────────────
+
+    def _on_harvest_log_requested(self, target_id: str, display_name: str) -> None:
+        """Open HarvestLogDialog for a bed/plant (US-C1)."""
+        self._open_harvest_dialog(target_id, display_name)
+
+    def _harvest_species_for_target(
+        self, target_id: str, display_name: str
+    ) -> tuple[str, str]:
+        """Return ``(species_key, species_name)`` cached on a harvest history.
+
+        Reads the target item's ``plant_species`` metadata; falls back to the
+        display name, then to the item's localized object-type name (e.g. "Bed")
+        so an unnamed bed/plant never caches an empty name (which would surface
+        as the internal ``target:<uuid>`` key on the dashboard).
+        """
+        from open_garden_planner.core.object_types import (  # noqa: PLC0415
+            get_translated_display_name,
+        )
+        from open_garden_planner.models.plant_data import (  # noqa: PLC0415
+            species_key as _species_key,
+        )
+
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None) or self.canvas_view.scene()
+        )
+        species: dict = {}
+        type_fallback = ""
+        if scene is not None:
+            for item in scene.items():
+                if str(getattr(item, "item_id", "")) == target_id:
+                    meta = getattr(item, "metadata", {}) or {}
+                    species = meta.get("plant_species", {}) or {}
+                    obj_type = getattr(item, "object_type", None)
+                    if obj_type is not None:
+                        try:
+                            type_fallback = get_translated_display_name(obj_type)
+                        except Exception:
+                            type_fallback = ""
+                    break
+        key = _species_key(species) if species else ""
+        name = (
+            species.get("common_name")
+            or species.get("scientific_name")
+            or display_name
+            or type_fallback
+        )
+        return key, name
+
+    def _open_harvest_dialog(self, target_id: str, display_name: str) -> None:
+        """Open the harvest dialog and execute AddHarvestRecordCommand on accept."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.core import AddHarvestRecordCommand  # noqa: PLC0415
+        from open_garden_planner.ui.dialogs import HarvestLogDialog  # noqa: PLC0415
+
+        if not display_name:
+            display_name = (
+                self._lookup_bed_display_name(target_id)
+                or self._lookup_item_name(target_id)
+            )
+        history = self._project_manager.get_harvest_history(target_id)
+        dialog = HarvestLogDialog(
+            parent=self,
+            target_id=target_id,
+            target_name=display_name,
+            existing_history=history,
+            project_manager=self._project_manager,
+            command_manager=self.canvas_view.command_manager,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        if not dialog.has_new_entry:
+            # User managed history (edit/delete) without adding a new entry.
+            return
+
+        species_key, species_name = self._harvest_species_for_target(
+            target_id, display_name
+        )
+        record = dialog.result_record()
+        cmd = AddHarvestRecordCommand(
+            self._project_manager,
+            target_id,
+            record,
+            species_key=species_key,
+            species_name=species_name,
+        )
+        self.canvas_view.command_manager.execute(cmd)
+        self.statusBar().showMessage(self.tr("Harvest recorded"), 3000)
+
+    def _on_succession_plan_requested(self, bed_id: str, display_name: str) -> None:
+        """Open SuccessionPlanDialog for a bed (US-12.8)."""
+        self._open_succession_plan_dialog(bed_id, display_name)
+
+    def _on_succession_plans_changed(self, _plans: object) -> None:
+        """Refresh bed succession indicators whenever plans change (US-12.8)."""
+        self._refresh_succession_indicators()
+
+    def _open_succession_plan_dialog(self, bed_id: str, display_name: str) -> None:
+        """Open the succession plan dialog and execute SetSuccessionPlanCommand on accept."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.core.commands import SetSuccessionPlanCommand  # noqa: PLC0415
+        from open_garden_planner.models.succession import SuccessionPlan  # noqa: PLC0415
+        from open_garden_planner.ui.dialogs.succession_plan_dialog import (  # noqa: PLC0415
+            SuccessionPlanDialog,
+        )
+
+        if not display_name:
+            display_name = self._lookup_item_name(bed_id)
+
+        existing_raw = self._project_manager.succession_plans.get(bed_id)
+        existing_plan = SuccessionPlan.from_dict(existing_raw) if existing_raw else None
+
+        dialog = SuccessionPlanDialog(
+            parent=self,
+            bed_id=bed_id,
+            bed_name=display_name,
+            existing_plan=existing_plan,
+            frost_dates=self._project_manager.location,
+            project_manager=self._project_manager,
+            command_manager=self.canvas_view.command_manager,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        plan = dialog.result_plan()
+        cmd = SetSuccessionPlanCommand(self._project_manager, bed_id, plan)
+        self.canvas_view.command_manager.execute(cmd)
+        self._refresh_succession_indicators()
+        self.statusBar().showMessage(self.tr("Succession plan saved"), 3000)
+
+    def _refresh_succession_indicators(self) -> None:
+        """Update the succession badge on every bed-capable canvas item (US-12.8).
+
+        Builds an ordered ``[(common_name, is_current), ...]`` list for each
+        bed and hands it to the mixin's ``set_succession_indicator``. Past
+        entries are skipped; the current entry (if any) is marked with
+        ``is_current=True`` so the badge can highlight it. Works for any
+        bed shape (Rectangle/Polygon/Ellipse/Circle) since the badge is a
+        graphics-item child managed in ``GardenItemMixin``.
+        """
+        import datetime  # noqa: PLC0415
+
+        from open_garden_planner.core.object_types import is_bed_type  # noqa: PLC0415
+        from open_garden_planner.models.succession import SuccessionPlan  # noqa: PLC0415
+        from open_garden_planner.ui.canvas.items.garden_item import (  # noqa: PLC0415
+            GardenItemMixin,
+        )
+
+        today = datetime.date.today()
+        plans = self._project_manager.succession_plans
+        scene = getattr(self.canvas_view, "_canvas_scene", None) or self.canvas_view.scene()
+        if scene is None:
+            return
+
+        bed_map = {
+            str(item.item_id): item
+            for item in scene.items()
+            if isinstance(item, GardenItemMixin) and is_bed_type(item.object_type)
+        }
+
+        for item in bed_map.values():
+            item.set_succession_indicator(None)
+
+        for bed_id, plan_dict in plans.items():
+            item = bed_map.get(bed_id)
+            if item is None:
+                continue
+            plan = SuccessionPlan.from_dict(plan_dict)
+            current = plan.current_entry(today)
+            lines: list[tuple[str, bool]] = []
+            for entry in plan.entries_sorted():
+                if not entry.end_date:
+                    continue
+                try:
+                    end = datetime.date.fromisoformat(entry.end_date)
+                except ValueError:
+                    continue
+                if end < today:
+                    continue  # skip past entries
+                lines.append((entry.common_name, entry is current))
+            item.set_succession_indicator(lines or None)
+
+    def _lookup_item_name(self, target_id: str) -> str:
+        """Return the display name for any scene item (bed or plant) by id, else ''."""
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None) or self.canvas_view.scene()
+        )
+        if scene is None:
+            return ""
+        for item in scene.items():
+            if str(getattr(item, "item_id", "")) == target_id:
+                return getattr(item, "name", "") or ""
+        return ""
+
+    # ── Garden journal (US-12.9) ──────────────────────────────────────────
+
+    def _on_journal_note_placement(self, scene_x: float, scene_y: float) -> None:
+        """Open dialog for a new pin placed at ``(scene_x, scene_y)``."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.core import AddJournalNoteCommand  # noqa: PLC0415
+        from open_garden_planner.models.journal_note import JournalNote  # noqa: PLC0415
+        from open_garden_planner.ui.canvas.items.journal_pin_item import (  # noqa: PLC0415
+            JournalPinItem,
+        )
+        from open_garden_planner.ui.dialogs.journal_note_dialog import (  # noqa: PLC0415
+            JournalNoteDialog,
+        )
+
+        note = JournalNote(scene_x=scene_x, scene_y=scene_y)
+        dialog = JournalNoteDialog(
+            parent=self,
+            note=note,
+            project_manager=self._project_manager,
+            edit_mode=False,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.result_note()
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        if scene is None:
+            return
+        layer_id = (
+            scene.active_layer.id
+            if hasattr(scene, "active_layer") and scene.active_layer
+            else None
+        )
+        pin = JournalPinItem(
+            x=result.scene_x,
+            y=result.scene_y,
+            note_id=result.id,
+            layer_id=layer_id,
+        )
+        cmd = AddJournalNoteCommand(self._project_manager, scene, pin, result)
+        self.canvas_view.command_manager.execute(cmd)
+        self.statusBar().showMessage(self.tr("Journal note added"), 3000)
+
+    def _on_journal_note_edit(self, note_id: str) -> None:
+        """Open the dialog to edit an existing journal note."""
+        from PyQt6.QtWidgets import QDialog  # noqa: PLC0415
+
+        from open_garden_planner.core import EditJournalNoteCommand  # noqa: PLC0415
+        from open_garden_planner.ui.dialogs.journal_note_dialog import (  # noqa: PLC0415
+            JournalNoteDialog,
+        )
+
+        note = self._project_manager.get_journal_note(note_id)
+        if note is None:
+            return
+        dialog = JournalNoteDialog(
+            parent=self,
+            note=note,
+            project_manager=self._project_manager,
+            edit_mode=True,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dialog.result_note()
+        cmd = EditJournalNoteCommand(self._project_manager, updated)
+        self.canvas_view.command_manager.execute(cmd)
+
+    def _on_journal_note_delete(self, note_id: str) -> None:
+        """Confirm + remove the pin and its note."""
+        from PyQt6.QtWidgets import QMessageBox  # noqa: PLC0415
+
+        from open_garden_planner.core import DeleteJournalNoteCommand  # noqa: PLC0415
+        from open_garden_planner.ui.canvas.items.journal_pin_item import (  # noqa: PLC0415
+            JournalPinItem,
+        )
+
+        reply = QMessageBox.question(
+            self,
+            self.tr("Delete journal note"),
+            self.tr("Delete this journal note?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        if scene is None:
+            return
+        for item in scene.items():
+            if isinstance(item, JournalPinItem) and item.note_id == note_id:
+                cmd = DeleteJournalNoteCommand(self._project_manager, scene, item)
+                self.canvas_view.command_manager.execute(cmd)
+                return
+
+    def _on_journal_notes_batch_delete(self, note_ids: list[str]) -> None:
+        """Keyboard-Delete batch: drop pins + notes for every id, no per-pin prompt.
+
+        Matches the Delete-key UX for regular items (no confirmation; undo is
+        available). The right-click "Delete" path stays single-pin + confirmed.
+        """
+        from open_garden_planner.core import DeleteJournalNoteCommand  # noqa: PLC0415
+        from open_garden_planner.ui.canvas.items.journal_pin_item import (  # noqa: PLC0415
+            JournalPinItem,
+        )
+
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        if scene is None:
+            return
+        pins_by_id: dict[str, JournalPinItem] = {
+            item.note_id: item
+            for item in scene.items()
+            if isinstance(item, JournalPinItem)
+        }
+        for note_id in note_ids:
+            pin = pins_by_id.get(note_id)
+            if pin is None:
+                continue
+            self.canvas_view.command_manager.execute(
+                DeleteJournalNoteCommand(self._project_manager, scene, pin)
+            )
+
+    def _on_journal_note_activated(self, note_id: str) -> None:
+        """Sidebar double-click → centre viewport on pin + open editor."""
+        self.canvas_view.focus_on_journal_pin(note_id)
+        self._on_journal_note_edit(note_id)
+
+    def _on_smart_symbol_selected(self, symbol_id: str) -> None:
+        """Drop a parametric smart symbol at the viewport centre (US-C4)."""
+        from open_garden_planner.core.commands import CreateItemCommand
+        from open_garden_planner.services.smart_symbol_library import (
+            get_smart_symbol_library,
+        )
+        from open_garden_planner.ui.canvas.items.smart_symbol_item import SmartSymbolItem
+
+        definition = get_smart_symbol_library().get(symbol_id)
+        if definition is None:
+            return
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        if scene is None:
+            return
+        layer_id = (
+            scene.active_layer.id
+            if getattr(scene, "active_layer", None)
+            else None
+        )
+        # No canvas name → no floating label child to entangle with the
+        # regenerated geometry; the panel header shows the symbol's name.
+        symbol = SmartSymbolItem(
+            symbol_id=symbol_id,
+            symbol_version=definition.version,
+            params=definition.param_defaults(),
+            layer_id=layer_id,
+        )
+        center = self.canvas_view.mapToScene(
+            self.canvas_view.viewport().rect().center()
+        )
+        symbol.setPos(center)
+        symbol.regenerate_geometry()
+        self.canvas_view.command_manager.execute(CreateItemCommand(scene, symbol))
+        scene.clearSelection()
+        symbol.setSelected(True)
+
+    def _on_garden_journal_notes_changed(self, notes: object) -> None:
+        """Refresh the sidebar panel when notes change (added / edited / removed)."""
+        panel = getattr(self, "journal_panel", None)
+        if panel is None or not isinstance(notes, dict):
+            return
+        panel.refresh(notes)
+
+    def _refresh_pest_overview(self) -> None:
+        """Rebuild the Active Pest/Disease Issues panel (US-12.7)."""
+        panel = getattr(self, "pest_overview_panel", None)
+        if panel is None:
+            return
+        items_by_id: dict[str, str] = {}
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        if scene is not None:
+            for item in scene.items():
+                iid = getattr(item, "item_id", None)
+                if iid is None:
+                    continue
+                name = getattr(item, "name", "") or ""
+                if name:
+                    items_by_id[str(iid)] = name
+        panel.refresh(self._project_manager.pest_logs, items_by_id)
+
+    def _lookup_bed_area_m2(self, target_id: str) -> float:
+        """Return the area of the bed identified by ``target_id`` in m².
+
+        Returns 0.0 when the bed is not found, when its shape isn't supported by
+        ``calculate_area_and_perimeter`` (e.g. EllipseItem — pre-existing gap),
+        or when the canvas scene isn't available.
+        """
+        from open_garden_planner.core.measurements import (  # noqa: PLC0415
+            calculate_area_and_perimeter,
+        )
+        from open_garden_planner.core.object_types import is_bed_type  # noqa: PLC0415
+
+        scene = getattr(self.canvas_view, "_canvas_scene", None) or self.canvas_view.scene()
+        if scene is None:
+            return 0.0
+        for item in scene.items():
+            if not is_bed_type(getattr(item, "object_type", None)):
+                continue
+            if str(getattr(item, "item_id", "")) != target_id:
+                continue
+            result = calculate_area_and_perimeter(item)
+            if result is None:
+                return 0.0
+            area_cm2, _ = result
+            return area_cm2 / 10_000.0
+        return 0.0
+
+    def _on_amendment_plan(self) -> None:
+        """Open the cross-bed Amendment Plan dialog (US-12.10c)."""
+        from open_garden_planner.ui.dialogs import AmendmentPlanDialog  # noqa: PLC0415
+
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        dialog = AmendmentPlanDialog(
+            parent=self,
+            canvas_scene=scene,
+            soil_service=self._soil_service,
+            on_add_to_shopping_list=self._on_shopping_list,
+            project_manager=self._project_manager,
+        )
+        dialog.exec()
+
+    def _on_shopping_list(self) -> None:
+        """Open the Shopping List dialog (US-12.6)."""
+        from open_garden_planner.services.shopping_list_service import (  # noqa: PLC0415
+            ShoppingListService,
+        )
+        from open_garden_planner.ui.dialogs import ShoppingListDialog  # noqa: PLC0415
+
+        scene = (
+            getattr(self.canvas_view, "_canvas_scene", None)
+            or self.canvas_view.scene()
+        )
+        service = ShoppingListService(
+            scene=scene,
+            soil_service=self._soil_service,
+            project_manager=self._project_manager,
+        )
+        dialog = ShoppingListDialog(service=service, parent=self)
+        dialog.exec()
+
+    def _on_location_changed(self, location: object) -> None:
+        """Update the location label in the status bar."""
+        if location is None:
+            self.location_label.setText(self.tr("No location set"))
+            self.location_label.setToolTip(
+                self.tr("Garden GPS location — use File > Set Garden Location to configure")
+            )
+        else:
+            loc = location  # type: ignore[assignment]
+            lat = loc.get("latitude", 0.0)
+            lon = loc.get("longitude", 0.0)
+            lat_str = f"{abs(lat):.4f}°{'N' if lat >= 0 else 'S'}"
+            lon_str = f"{abs(lon):.4f}°{'E' if lon >= 0 else 'W'}"
+            self.location_label.setText(f"{lat_str}, {lon_str}")
+            frost = loc.get("frost_dates", {}) or {}
+            zone = frost.get("hardiness_zone", "")
+            tip = self.tr("Latitude: {lat}, Longitude: {lon}").format(lat=lat, lon=lon)
+            if zone:
+                tip += f"\n{self.tr('Zone')}: {zone}"
+            spring = frost.get("last_spring_frost", "")
+            fall = frost.get("first_fall_frost", "")
+            if spring:
+                tip += f"\n{self.tr('Last spring frost')}: {spring}"
+            if fall:
+                tip += f"\n{self.tr('First fall frost')}: {fall}"
+            self.location_label.setToolTip(tip)
+
+    def _on_crop_rotation_changed(self, rotation_data: object) -> None:
+        """Update the crop rotation service when project data changes (US-10.6).
+
+        Deserialization is guarded because this runs inside a Qt signal handler:
+        a single malformed record in ``.ogp`` (``PlantingRecord.from_dict`` reads
+        ``data["year"]`` as a required key) used to raise a ``KeyError`` straight
+        out of the slot, which in a signal handler means an exception inside the
+        event loop rather than a reportable error. Per-record tolerance keeps the
+        readable rows and drops only the broken one, matching
+        ``_agent_rotation_avoid_families``.
+        """
+        from open_garden_planner.models.crop_rotation import (
+            CropRotationHistory,
+            PlantingRecord,
+        )
+
+        if rotation_data and isinstance(rotation_data, dict):
+            records: list[PlantingRecord] = [
+                rec
+                for rec in (
+                    _read_crop_rotation_record(raw) for raw in rotation_data.get("records", [])
+                )
+                if rec is not None
+            ]
+            self._crop_rotation_service.history = CropRotationHistory(records=records)
+        else:
+            self._crop_rotation_service.history = CropRotationHistory()
+        self._update_bed_rotation_indicators()
+
+    def _on_season_changed(self, year: object) -> None:
+        """Update the season label in the status bar (US-10.7)."""
+        if year is None:
+            self.season_label.setText(self.tr("Season: —"))
+            self.season_label.setToolTip(
+                self.tr("Current season year — use File > Manage Seasons to configure")
+            )
+        else:
+            self.season_label.setText(self.tr("Season: {year}").format(year=year))
+            self.season_label.setToolTip(
+                self.tr("Season {year} — use File > Manage Seasons to manage seasons").format(year=year)
+            )
+
+    def _on_manage_seasons(self) -> None:
+        """Open the Season Manager dialog (US-10.7)."""
+        from open_garden_planner.ui.dialogs.season_manager_dialog import SeasonManagerDialog
+
+        dialog = SeasonManagerDialog(self._project_manager, self)
+        if dialog.exec() != SeasonManagerDialog.DialogCode.Accepted:
+            return
+
+        action = dialog.action
+        if action == "open":
+            path = dialog.open_season_path
+            if path:
+                if not self._confirm_discard_changes():
+                    return
+                self._open_project_file(str(path))
+
+        elif action == "create":
+            path = dialog.new_season_path
+            year = dialog.new_season_year
+            keep_plants = dialog.new_season_keep_plants
+            if path is None or year is None:
+                return
+            try:
+                self._project_manager.create_new_season(
+                    self.canvas_scene, year, path, keep_plants
+                )
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self,
+                    self.tr("Error"),
+                    self.tr("Failed to create season file:\n{error}").format(error=e),
+                )
+                return
+
+            # Ask user whether to open the new season now
+            from PyQt6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self,
+                self.tr("New Season Created"),
+                self.tr(
+                    "Season {year} has been created.\n\nOpen the new season now?"
+                ).format(year=year),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                if not self._confirm_discard_changes():
+                    return
+                self._open_project_file(str(path))
+
+    def _on_toggle_compare_overlay(self, checked: bool) -> None:
+        """Show or hide the previous-season compare overlay (US-10.7)."""
+        self.canvas_scene.set_compare_overlay_visible(checked)
+
+    def _load_compare_overlay_from_previous_season(self) -> None:
+        """Load the most recent linked season as a compare overlay (US-10.7).
+
+        Called after a project is loaded if linked_seasons is non-empty.
+        """
+        linked = self._project_manager.linked_seasons
+        if not linked:
+            self._compare_overlay_action.setEnabled(False)
+            self.canvas_scene.clear_compare_overlay()
+            return
+
+        current_file = self._project_manager.current_file
+        # Use the most recent previous season (highest year that exists)
+        current_year = self._project_manager.season_year or 0
+        candidates = [s for s in linked if s.get("year", 0) < current_year]
+        if not candidates:
+            candidates = linked  # Fall back to any linked season
+
+        target = max(candidates, key=lambda s: s.get("year", 0))
+        file_str = target.get("file", "")
+        if current_file and file_str and not Path(file_str).is_absolute():
+            resolved = current_file.parent / file_str
+        else:
+            resolved = Path(file_str) if file_str else None
+
+        if resolved is None or not resolved.exists():
+            self._compare_overlay_action.setEnabled(False)
+            self.canvas_scene.clear_compare_overlay()
+            return
+
+        try:
+            objects = self._project_manager.load_season_objects(resolved)
+            self.canvas_scene.set_compare_overlay(objects)
+            self._compare_overlay_action.setEnabled(True)
+            self._compare_overlay_action.setToolTip(
+                self.tr("Overlay {year} season plants (ghosted)").format(
+                    year=target.get("year", "?")
+                )
+            )
+        except Exception:
+            self._compare_overlay_action.setEnabled(False)
+            self.canvas_scene.clear_compare_overlay()
+
+    def _update_bed_rotation_indicators(self) -> None:
+        """Update visual rotation status indicators on all bed items (US-10.6)."""
+        from open_garden_planner.services.crop_rotation_service import RotationStatus
+
+        try:
+            for item in self.canvas_scene.items():
+                if self._is_bed_item(item):
+                    area_id = str(item.item_id)
+                    rec = self._crop_rotation_service.get_recommendation(area_id)
+                    status_str = rec.status.value if rec.status != RotationStatus.UNKNOWN else None
+                    item.set_rotation_status(status_str)
+        except RuntimeError:
+            pass
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Refresh tab views when they become active."""
+        if index == 1:
+            self.calendar_view.refresh()
+        elif index == 2:
+            self.seed_inventory_view.refresh()
+        elif index == self._tab_widget.indexOf(self.tasks_view):
+            self.tasks_view.refresh()
+        elif index == self._tab_widget.indexOf(self.harvest_view):
+            self.harvest_view.refresh()
+
+    def _on_frost_alert_ready(self, count: int, max_severity: str) -> None:
+        """Update the frost alert corner badge (themed icon, re-applied on
+        theme switch via ``refresh_theme_icons`` — #310)."""
+        self._frost_badge_state = (count, max_severity)
+        if count == 0:
+            self._frost_badge.hide()
+            return
+        bg = theme_color("error") if max_severity == "red" else theme_color("warning")
+        text = theme_color("on_status")
+        icon = get_icon("frost" if max_severity == "red" else "warning", color=text)
+        if icon is not None:
+            self._frost_badge.setIcon(icon)
+        label = self.tr("frost alert") if count == 1 else self.tr("frost alerts")
+        self._frost_badge.setText(f" {count} {label}  ")
+        self._frost_badge.setStyleSheet(
+            f"QPushButton {{ background: {bg}; color: {text}; font-weight: bold;"
+            "  border-radius: 4px; padding: 2px 6px; }"
+            f"QPushButton:hover {{ border: 1px solid {text}; }}"
+        )
+        self._frost_badge.show()
+
+    def _on_highlight_species(self, species_key: str) -> None:
+        """Switch to Garden Plan tab and select all items matching species_key."""
+        if species_key.startswith("frost_items:"):
+            ids = set(species_key[len("frost_items:"):].split(","))
+            self._tab_widget.setCurrentIndex(0)
+            def _do_select(ids: set = ids) -> None:
+                self.canvas_scene.clearSelection()
+                first = None
+                for item in self.canvas_scene.items():
+                    if hasattr(item, "item_id") and str(item.item_id) in ids:
+                        item.setSelected(True)
+                        if first is None:
+                            first = item
+                if first is not None:
+                    self.canvas_view.centerOn(first)
+            QTimer.singleShot(0, _do_select)
+            return
+
+        # Harvest dashboard rows for an unkeyed target (a bed, or a species-less
+        # plant) carry a ``target:<uuid>`` key — select that one item by id.
+        if species_key.startswith("target:"):
+            self._select_items_by_id({species_key[len("target:"):]})
+            return
+
+        from open_garden_planner.models.plant_data import species_key as _species_key
+
+        self._tab_widget.setCurrentIndex(0)
+        self.canvas_scene.clearSelection()
+        # The signal carries a canonical species_key (ADR-016: source_id →
+        # scientific → common, lowercased) — emitted identically by the planting
+        # calendar, Tasks tab and Harvest tab. Match on the same canonical key on
+        # both sides; comparing against the raw-cased display name never matched.
+        first = None
+        for item in self.canvas_scene.items():
+            if not hasattr(item, "metadata") or not item.metadata:
+                continue
+            ps_dict = item.metadata.get("plant_species")
+            if not ps_dict:
+                continue
+            try:
+                if _species_key(ps_dict) == species_key:
+                    item.setSelected(True)
+                    if first is None:
+                        first = item
+            except Exception:
+                continue
+        if first is not None:
+            self.canvas_view.centerOn(first)
+
+    def _select_items_by_id(self, ids: set[str]) -> None:
+        """Switch to Garden Plan and select/center the items with these UUIDs."""
+        self._tab_widget.setCurrentIndex(0)
+
+        def _do_select() -> None:
+            self.canvas_scene.clearSelection()
+            first = None
+            for item in self.canvas_scene.items():
+                if hasattr(item, "item_id") and str(item.item_id) in ids:
+                    item.setSelected(True)
+                    if first is None:
+                        first = item
+            if first is not None:
+                self.canvas_view.centerOn(first)
+
+        QTimer.singleShot(0, _do_select)
+
+    def _on_navigate_to_bed(self, bed_id: str) -> None:
+        """Navigate to a single bed from a task (US-C2)."""
+        self._select_items_by_id({bed_id})
+
+    def _on_navigate_to_items(self, ids: object) -> None:
+        """Navigate to a set of items from a task (US-C2, e.g. frost-affected)."""
+        self._select_items_by_id({str(i) for i in (ids or [])})

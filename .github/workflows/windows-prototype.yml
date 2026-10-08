@@ -1,0 +1,139 @@
+name: Windows prototype download
+
+on:
+  push:
+    branches: [main, 'feature/milestone-a-*']
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'installer/**'
+      - 'pyproject.toml'
+      - '.github/workflows/**'
+      - 'docs/WINDOWS*.md'
+      - 'THIRD_PARTY_NOTICES.md'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'installer/**'
+      - 'pyproject.toml'
+      - '.github/workflows/**'
+      - 'docs/WINDOWS*.md'
+      - 'THIRD_PARTY_NOTICES.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-prototype-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Build and exercise Windows x64 download
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install baseline dependencies
+        run: |
+          python -m pip install -c installer/constraints-desktop.txt -e ".[dev]" pyinstaller --report build-dependencies.json
+          python -m pip check
+      - name: Install NSIS
+        run: choco install nsis -y
+      - name: Verify inherited editor workflows
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python -m pytest tests/integration/test_drawing_workflows.py
+          tests/integration/test_undo_redo.py tests/integration/test_selection_and_resize.py
+          tests/integration/test_item_roundtrip_matrix.py tests/integration/test_stacking_roundtrip.py
+          tests/integration/test_layer_undo.py tests/integration/test_plant_species_autopopulate.py
+          tests/integration/test_shadow_overlay.py tests/unit/test_solar.py
+          tests/unit/test_shadow_geometry.py tests/unit/test_shade_aggregation.py
+          tests/unit/test_autosave.py tests/unit/test_export.py
+          --junitxml=build/windows-editor-tests.xml -q
+      - name: Freeze the actual upstream desktop application
+        run: python installer/build_installer.py --version 1.29.5 --skip-nsis
+      - name: Preserve notices and GPL binding sources before installation packaging
+        run: >-
+          python scripts/collect_desktop_notices.py
+          --output dist/OpenGardenPlanner/licenses --binding-sources dist/binding-sources
+      - name: Verify frozen subsystems without inherited console handles
+        shell: pwsh
+        run: |
+          ./scripts/verify_windows_selftest.ps1 -Executable "dist/OpenGardenPlanner/OpenGardenPlanner.exe"
+      - name: Exercise portable application startup, save, reopen and real exports
+        run: >-
+          python scripts/desktop_baseline_smoke.py
+          --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-portable-smoke
+      - name: Build installer including notices
+        run: python installer/build_installer.py --version 1.29.5 --skip-pyinstaller
+      - name: Verify installer and installed application
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "CreativeLandscapeBaseline"
+          $p = Start-Process -FilePath "dist/OpenGardenPlanner-v1.29.5-Setup.exe" -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer failed: $($p.ExitCode)" }
+          $installedAppPath = Join-Path $installDir "OpenGardenPlanner.exe"
+          if (-not (Test-Path (Join-Path $installDir "licenses/GPL-3.0.txt"))) { throw 'Installed license is missing' }
+          ./scripts/verify_windows_selftest.ps1 -Executable $installedAppPath
+          python scripts/desktop_baseline_smoke.py --exe "$installedAppPath" --output build/windows-installed-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assemble download with source, notices, build evidence and checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/download | Out-Null
+          Copy-Item dist/OpenGardenPlanner-v1.29.5-Setup.exe dist/download/
+          python -c "import shutil; shutil.make_archive('dist/download/OpenGardenPlanner-v1.29.5-Windows-x64-Portable', 'zip', 'dist', 'OpenGardenPlanner')"
+          if ($LASTEXITCODE -ne 0) { throw 'Portable archive failed' }
+          git archive --format=zip --output=dist/download/CreativeLandscapeStudio-Source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Application source archive failed' }
+          python -c "import shutil; shutil.make_archive('dist/download/PyQt-Binding-Sources', 'zip', 'dist', 'binding-sources')"
+          if ($LASTEXITCODE -ne 0) { throw 'Binding source archive failed' }
+          python scripts/verify_desktop_download.py dist/download
+          if ($LASTEXITCODE -ne 0) { throw 'Download integrity validation failed' }
+          Copy-Item docs/WINDOWS_DOWNLOAD.md dist/download/START-HERE.md
+          Copy-Item THIRD_PARTY_NOTICES.md dist/download/
+          Copy-Item build-dependencies.json dist/download/
+          Copy-Item build/windows-editor-tests.xml dist/download/
+          Copy-Item -Recurse build/windows-portable-smoke dist/download/portable-check
+          Copy-Item -Recurse build/windows-installed-smoke dist/download/installed-check
+          @{
+            source_commit = (git rev-parse HEAD)
+            upstream_commit = 'cb4a71db8649cc4e48f85f0bef671bb0ac58dd16'
+            platform = 'Windows x64'
+            run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            signed = $false
+            interactive_manual_test = 'not performed'
+          } | ConvertTo-Json | Set-Content -Encoding utf8 dist/download/BUILD-INFO.json
+          Get-ChildItem dist/download -File | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii dist/download/SHA256SUMS.txt
+      - name: Upload Windows test download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Creative-Landscape-Studio-Windows-x64-test
+          path: dist/download/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-evidence
+          path: |
+            build/windows-*
+            build-dependencies.json
+            build/ogp/warn-ogp.txt
+          if-no-files-found: warn
+          retention-days: 90

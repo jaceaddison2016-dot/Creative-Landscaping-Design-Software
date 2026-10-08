@@ -1,0 +1,3161 @@
+"""Fill in German translations for the .ts file and add missing contexts.
+
+This script:
+1. Reads the pylupdate6-generated .ts file
+2. Fills in all German translations
+3. Adds missing contexts (ObjectType, GalleryData, CategoryDropdown, GlobalSearchField)
+4. Writes the completed .ts file
+"""
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+TS_FILE = (
+    Path(__file__).parent.parent
+    / "src"
+    / "open_garden_planner"
+    / "resources"
+    / "translations"
+    / "open_garden_planner_de.ts"
+)
+
+# ── Complete English → German translation mapping ─────────────────────────
+TRANSLATIONS: dict[str, dict[str, str]] = {
+    # ── Commands (undo/redo descriptions shown in the status bar;
+    #    pylupdate6 cannot extract QCoreApplication.translate from non-QObject
+    #    command classes) ──
+    "Commands": {
+        "Add layer '{name}'": "Ebene '{name}' hinzufügen",
+        "Delete layer '{name}'": "Ebene '{name}' löschen",
+        "Rename layer to '{name}'": "Ebene umbenennen in '{name}'",
+        "Reorder layers": "Ebenen neu anordnen",
+        "Show layer '{name}'": "Ebene '{name}' einblenden",
+        "Hide layer '{name}'": "Ebene '{name}' ausblenden",
+        "Lock layer '{name}'": "Ebene '{name}' sperren",
+        "Unlock layer '{name}'": "Ebene '{name}' entsperren",
+        "Set opacity of layer '{name}' to {pct}%": "Deckkraft der Ebene '{name}' auf {pct}% setzen",
+        # ── Task management (US-C2, #188) ──
+        "Add task": "Aufgabe hinzufügen",
+        "Edit task": "Aufgabe bearbeiten",
+        "Delete task": "Aufgabe löschen",
+        # ── Legacy command descriptions migrated from English f-strings (#209) ──
+        "Create {item_type}": "{item_type} erstellen",
+        "Create {count} {item_type}": "{count} {item_type} erstellen",
+        "Delete item": "Objekt löschen",
+        "Delete {count} items": "{count} Objekte löschen",
+        "Move item": "Objekt verschieben",
+        "Move {count} items": "{count} Objekte verschieben",
+        "Change {property}": "{property} ändern",
+        # Property fragments interpolated into "Change {property}" by
+        # ChangePropertyCommand.description — registered here so the whole label
+        # localizes (e.g. "Textinhalt ändern" not "text content ändern"). #210.
+        "frost protection": "Frostschutz",
+        "spacing radius": "Pflanzabstand",
+        "object height": "Objekthöhe",
+        "text content": "Textinhalt",
+        "font": "Schriftart",
+        "font size": "Schriftgröße",
+        "bold": "Fett",
+        "italic": "Kursiv",
+        "text color": "Textfarbe",
+        "type": "Typ",
+        "name": "Name",
+        "label visibility": "Beschriftungssichtbarkeit",
+        "layer": "Ebene",
+        "fill pattern": "Füllmuster",
+        "stroke width": "Linienbreite",
+        "stroke style": "Linienstil",
+        "path/fence style": "Pfad-/Zaunstil",
+        "fill color": "Füllfarbe",
+        "stroke color": "Linienfarbe",
+        "Resize item": "Objektgröße ändern",
+        "Rotate item": "Objekt drehen",
+        "Move vertex": "Stützpunkt verschieben",
+        "Reshape curve": "Kurve umformen",
+        "Add vertex": "Stützpunkt hinzufügen",
+        "Delete vertex": "Stützpunkt löschen",
+        "Add constraint": "Bedingung hinzufügen",
+        "Remove constraint": "Bedingung entfernen",
+        "Edit constraint distance": "Bedingungsabstand bearbeiten",
+        "Ungroup": "Gruppierung aufheben",
+        "Create linear array ({count} items)": "Lineares Raster erstellen ({count} Objekte)",
+        "Create grid array ({count} items)": "Gitterraster erstellen ({count} Objekte)",
+        "Create circular array ({count} items)": "Kreisraster erstellen ({count} Objekte)",
+        "Mirror {count} item(s) (copy)": "{count} Objekt(e) spiegeln (kopieren)",
+        "Mirror {count} item(s) (move)": "{count} Objekt(e) spiegeln (verschieben)",
+        "Detach plant from bed": "Pflanze vom Beet lösen",
+        "Attach plant to bed": "Pflanze dem Beet zuordnen",
+        "Group {count} items": "{count} Objekte gruppieren",
+        "Boolean {operation}": "Boolesche Operation {operation}",
+        "Array along path ({count} copies)": "Reihung entlang Pfad ({count} Kopien)",
+        "Move {count} item(s) to layer '{name}'": "{count} Objekt(e) auf Ebene '{name}' verschieben",
+        "Trim polyline": "Polylinie stutzen",
+        "Trim polygon edge": "Polygonkante stutzen",
+        "Trim rectangle edge": "Rechteckkante stutzen",
+        "Extend polyline": "Polylinie verlängern",
+        "Fillet corner": "Ecke abrunden",
+        "Chamfer corner": "Ecke abschrägen",
+        "Add soil test": "Bodenprobe hinzufügen",
+        "Edit soil test": "Bodenprobe bearbeiten",
+        "Delete soil test": "Bodenprobe löschen",
+        "Add pest/disease log": "Schädlings-/Krankheitseintrag hinzufügen",
+        "Edit pest/disease log": "Schädlings-/Krankheitseintrag bearbeiten",
+        "Delete pest/disease log": "Schädlings-/Krankheitseintrag löschen",
+        "Set succession plan": "Folgepflanzung festlegen",
+        "Add garden journal note": "Gartentagebuch-Notiz hinzufügen",
+        "Edit garden journal note": "Gartentagebuch-Notiz bearbeiten",
+        "Delete garden journal note": "Gartentagebuch-Notiz löschen",
+        "Align items": "Objekte ausrichten",
+        "Move item (constrained)": "Objekt verschieben (mit Bedingung)",
+        "Move items (constrained)": "Objekte verschieben (mit Bedingung)",
+        "Align left": "Links ausrichten",
+        "Align right": "Rechts ausrichten",
+        "Align top": "Oben ausrichten",
+        "Align bottom": "Unten ausrichten",
+        "Align center horizontally": "Horizontal zentrieren",
+        "Align center vertically": "Vertikal zentrieren",
+        "Distribute horizontally": "Horizontal verteilen",
+        "Distribute vertically": "Vertikal verteilen",
+        "Distribute items": "Objekte verteilen",
+        "Apply species data": "Artdaten anwenden",
+    },
+
+    # ── BackgroundImageItem ──
+    "BackgroundImageItem": {
+        "Calibrate Scale...": "Skalierung kalibrieren...",
+        "Set Opacity ({pct}%)...": "Deckkraft festlegen ({pct}%)...",
+        "Lock Image": "Bild sperren",
+        "Unlock Image": "Bild entsperren",
+        "Remove Image": "Bild entfernen",
+    },
+
+    # ── CalibrationDialog ──
+    "CalibrationDialog": {
+        "Calibrate Background Image": "Hintergrundbild kalibrieren",
+        "<b>Instructions:</b><br>1. Click two points on the image at a known distance apart<br>2. Enter the real-world distance between those points<br>3. Click OK to apply calibration":
+            "<b>Anleitung:</b><br>1. Klicken Sie zwei Punkte im Bild an, deren Abstand bekannt ist<br>2. Geben Sie den realen Abstand zwischen diesen Punkten ein<br>3. Klicken Sie auf OK, um die Kalibrierung anzuwenden",
+        "Click the first point on the image": "Klicken Sie den ersten Punkt im Bild an",
+        "Real-world distance:": "Realer Abstand:",
+        "Reset Points": "Punkte zurücksetzen",
+        "Click the second point on the image": "Klicken Sie den zweiten Punkt im Bild an",
+        "Distance: {pixels} pixels. Enter the real-world distance below.":
+            "Abstand: {pixels} Pixel. Geben Sie den realen Abstand unten ein.",
+    },
+
+    # ── MapPickerDialog ──
+    "MapPickerDialog": {
+        "Load Satellite Background": "Satellitenbild laden",
+        "Search for an address, then draw a rectangle on the map.":
+            "Adresse suchen, dann ein Rechteck auf der Karte aufziehen.",
+        "Rectangle selected. Click 'Load image' to fetch.":
+            "Rechteck ausgewählt. Auf 'Bild laden' klicken, um es abzurufen.",
+        "Fetching satellite image...": "Satellitenbild wird geladen...",
+        "Cancelling...": "Wird abgebrochen...",
+        "Fetch cancelled.": "Abruf abgebrochen.",
+        "Try again, or pick a smaller area.":
+            "Erneut versuchen oder einen kleineren Bereich wählen.",
+        "Load image": "Bild laden",
+        "API key missing": "API-Schlüssel fehlt",
+        "Set a Google Maps API key in Preferences or "
+        "OGP_GOOGLE_MAPS_KEY in your .env file to enable satellite "
+        "background loading.":
+            "Einen Google-Maps-API-Schlüssel in den Einstellungen oder "
+            "OGP_GOOGLE_MAPS_KEY in der .env-Datei setzen, um Satellitenbilder "
+            "laden zu können.",
+        "Unexpected error while fetching satellite image.":
+            "Beim Abrufen des Satellitenbilds ist ein unerwarteter Fehler "
+            "aufgetreten.",
+        "Map error": "Kartenfehler",
+        "Failed to fetch image": "Bildabruf fehlgeschlagen",
+        # JS-API view capture (issue #346)
+        "Capture view": "Ansicht übernehmen",
+        "Positioning the map view...": "Kartenansicht wird positioniert...",
+        "Capture cancelled.": "Aufnahme abgebrochen.",
+        "Capture failed. Try again, or use 'Load image'.":
+            "Aufnahme fehlgeschlagen. Erneut versuchen oder 'Bild laden' verwenden.",
+        "Failed to capture view": "Aufnahme der Ansicht fehlgeschlagen",
+        "Satellite image blocked": "Satellitenbild blockiert",
+        "Google rejected the Static Maps request for your account and "
+        "region: satellite and hybrid map types are not available "
+        "through the Static Maps API (EEA restriction).\n\n"
+        "You can capture the satellite view directly from the map "
+        "below instead.":
+            "Google hat die Static-Maps-Anfrage für Ihr Konto und Ihre Region "
+            "abgelehnt: Satelliten- und Hybridkartentypen sind über die "
+            "Static-Maps-API nicht verfügbar (EWR-Einschränkung).\n\n"
+            "Sie können die Satellitenansicht stattdessen direkt aus der "
+            "unten angezeigten Karte übernehmen.",
+"Retry Static Maps": "Statische Karten erneut versuchen",
+          "The map view did not render. Try again after the map has finished loading.":
+              "Die Kartenansicht wurde nicht gerendert. Erneut versuchen, "
+              "nachdem die Karte vollständig geladen ist.",
+          "The capture dimensions are inconsistent with the display scaling. Please retry; if it keeps failing, restart the map window.":
+              "Die Aufnahmeabmessungen passen nicht zur Anzeige-Skalierung. "
+              "Erneut versuchen; wenn es weiterhin fehlschlägt, das Kartenfenster "
+              "neu starten.",
+          "The capture timed out. Check your network or the API key, then try again.":
+              "Zeitüberschreitung bei der Aufnahme. Netzwerk oder API-Schlüssel "
+              "prüfen und erneut versuchen.",
+          "Unexpected error while capturing the map view.":
+              "Beim Aufnehmen der Kartenansicht ist ein unerwarteter Fehler "
+              "aufgetreten.",
+          # Pan-grid capture (issue #347)
+          "One or more map frames could not be captured. Try again, or use 'Load image'.":
+              "Ein oder mehrere Kartenausschnitte konnten nicht erfasst werden. "
+              "Erneut versuchen oder 'Bild laden' verwenden.",
+          "The map view changed size during the capture. Please try again.":
+              "Die Kartenansicht hat während der Aufnahme ihre Größe geändert. "
+              "Bitte erneut versuchen.",
+          "Capturing frame {current} of {total}...":
+              "Kartenausschnitt {current} von {total} wird erfasst...",
+          "A map frame did not render. Retrying...":
+              "Ein Kartenausschnitt wurde nicht gerendert. Neuer Versuch...",
+          # Google attribution stays English (legal/brand text, not translated).
+        "Map data ©{year} Google": "Map data ©{year} Google",
+        # HTML-side picker UI (passed to JS via the bridge):
+        "Search address...": "Adresse suchen...",
+        "Draw rectangle": "Rechteck zeichnen",
+        "Clear": "Zurücksetzen",
+        "Click 'Draw rectangle', then drag a rectangle on the map.":
+            "Auf 'Rechteck zeichnen' klicken, dann auf der Karte ein Rechteck aufziehen.",
+        "Drag on the map to draw the rectangle.":
+            "Auf der Karte ein Rechteck aufziehen.",
+    },
+
+    # ── CanvasView ──
+    # CanvasScene — calibration status strings, live since #415 fixed the
+    # status route (027bee1). A BARE LITERAL here is invisible to the
+    # i18n gate and to any tr()-literal AST scan; see
+    # tests/unit/test_status_literals_are_translated.py.
+    "CanvasScene": {
+        "Calibration: Click first point on the image": "Kalibrierung: Ersten Punkt auf dem Bild anklicken",
+        "Calibration: Click second point on the image": "Kalibrierung: Zweiten Punkt auf dem Bild anklicken",
+        "Calibration complete": "Kalibrierung abgeschlossen",
+    },
+
+    "CanvasView": {
+        "Created {dir} offset of {dist:.1f} cm": "{dir}-Versatz von {dist:.1f} cm erstellt",
+        "Distance in cm": "Abstand in cm",
+        "House": "Haus",
+        "Garage/Shed": "Garage/Schuppen",
+        "Terrace/Patio": "Terrasse/Patio",
+        "Driveway": "Einfahrt",
+        "Pond/Pool": "Teich/Pool",
+        "Greenhouse": "Gewächshaus",
+        "Garden Bed": "Gartenbeet",
+        "Lawn": "Rasen",
+        "Fence": "Zaun",
+        "Wall": "Mauer",
+        "Path": "Weg",
+        "Tree": "Baum",
+        "Shrub": "Strauch",
+        "Perennial": "Staude",
+        "Hedge Section": "Heckenabschnitt",
+        "Table (Rectangular)": "Tisch (rechteckig)",
+        "Chair": "Stuhl",
+        "Bench": "Bank",
+        "Lounger": "Liege",
+        "Table (Round)": "Tisch (rund)",
+        "Parasol": "Sonnenschirm",
+        "BBQ/Grill": "Grill",
+        "Fire Pit": "Feuerstelle",
+        "Planter/Pot": "Pflanzgefäß/Topf",
+        "Raised Bed": "Hochbeet",
+        "Compost Bin": "Komposter",
+        "Cold Frame": "Frühbeet",
+        "Tool Shed": "Geräteschuppen",
+        "Rain Barrel": "Regentonne",
+        "Water Tap": "Wasserhahn",
+        # Package 3a roster (#308)
+        "Sandbox": "Sandkasten",
+        "Trampoline": "Trampolin",
+        "Hot Tub": "Whirlpool",
+        "Swing": "Schaukel",
+        "Picnic Table": "Picknicktisch",
+        "Hammock": "Hängematte",
+        "Wheelbarrow": "Schubkarre",
+        "Pergola": "Pergola",
+        "Bird Bath": "Vogeltränke",
+        "Container": "Pflanzgefäß",
+        "Round Container": "Rundes Pflanzgefäß",
+        "Wall Planter": "Wandpflanzgefäß",
+        "Trellis": "Rankgitter",
+        "Copied {count} item(s)": "{count} Element(e) kopiert",
+        "Cut {count} item(s)": "{count} Element(e) ausgeschnitten",
+        "Nothing to paste": "Nichts zum Einfügen",
+        "Pasted {count} item(s)": "{count} Element(e) eingefügt",
+        "Nothing to duplicate": "Nichts zum Duplizieren",
+        "Duplicated {count} item(s)": "{count} Element(e) dupliziert",
+        "Import Background Image...": "Hintergrundbild importieren...",
+        "Hedge": "Hecke",
+        "Distance": "Abstand",
+        "Edge length": "Kantenlänge",
+        "Horizontal": "Horizontal",
+        "Vertical": "Vertikal",
+        "Horizontal distance": "Horizontaler Abstand",
+        "Vertical distance": "Vertikaler Abstand",
+        "Angle": "Winkel",
+        "Parallel": "Parallel",
+        "Perpendicular": "Senkrecht",
+        "Equal": "Gleich",
+        "Fixed": "Fixiert",
+        "Coincident": "Koinzident",
+        "Horizontal symmetry": "Horizontale Symmetrie",
+        "Vertical symmetry": "Vertikale Symmetrie",
+        "Point on edge": "Punkt auf Kante",
+        "Point on circle": "Punkt auf Kreis",
+        "Tangent": "Tangente",
+        "Delete Bed": "Beet löschen",
+        "The selected bed(s) contain plants. What would you like to do?":
+            "Das/die ausgewählte(n) Beet(e) enthält/enthalten Pflanzen. Was möchten Sie tun?",
+        "Delete bed and plants": "Beet und Pflanzen löschen",
+        "Keep plants": "Pflanzen behalten",
+        "Select 2 or more items to group": "Mindestens 2 Elemente zum Gruppieren auswählen",
+        "Grouped {n} items": "{n} Elemente gruppiert",
+        "No group selected": "Keine Gruppe ausgewählt",
+        "Ungrouped": "Gruppierung aufgelöst",
+        "Distance must be positive": "Abstand muss positiv sein",
+        "Invalid distance. Enter a number in centimeters.":
+            "Ungültiger Abstand. Geben Sie eine Zahl in Zentimetern ein.",
+        "Select at least 2 objects to align":
+            "Wählen Sie mindestens 2 Objekte zum Ausrichten",
+        "Select at least 3 objects to distribute":
+            "Wählen Sie mindestens 3 Objekte zum Verteilen",
+        "Select a shape to offset": "Form zum Versetzen auswählen",
+        "Offset result is empty — try a smaller distance":
+            "Versatzergebnis ist leer – versuchen Sie einen kleineren Abstand",
+        "Created {dir} offset of {dist} cm": "{dir}-Versatz von {dist} cm erstellt",
+        "inward": "einwärts",
+        "outward": "auswärts",
+    },
+
+    # ── CoincidentConstraintTool ──
+    "CoincidentConstraintTool": {
+        "Conflicting Constraint": "Widersprüchliche Randbedingung",
+        "This constraint conflicts with existing constraints and cannot be applied. The existing constraints are unchanged.":
+            "Diese Randbedingung widerspricht bestehenden Randbedingungen und kann nicht angewendet werden. Die bestehenden Randbedingungen bleiben unverändert.",
+        "⊙ On Circle": "⊙ Auf Kreis",
+        "⊥ On Edge": "⊥ Auf Kante",
+    },
+
+    # ── ConstraintConflictDialog ──
+    "ConstraintConflictDialog": {
+        "Constraint conflict": "Randbedingungskonflikt",
+        "The new constraint cannot be satisfied together with the following existing constraints. Select which ones to delete, or cancel.":
+            "Die neue Randbedingung kann nicht zusammen mit den folgenden bestehenden Randbedingungen erfüllt werden. Wählen Sie aus, welche gelöscht werden sollen, oder brechen Sie ab.",
+        "Override (delete selected)": "Überschreiben (Auswahl löschen)",
+        "Cancel": "Abbrechen",
+    },
+
+    # ── ConstraintListItem ──
+    "ConstraintListItem": {
+        "◯ Tangent": "◯ Tangente",
+        "{a} tangent to {b} (r={d:.2f} m)": "{a} tangential zu {b} (r={d:.2f} m)",
+        "= Equal": "= Gleich",
+        "{a} equal size to {b}": "{a} gleiche Größe wie {b}",
+        "🔒 Fixed": "🔒 Fixiert",
+        "{a} is fixed in place": "{a} ist fixiert",
+        "Edge {d:.2f} m": "Kante {d:.2f} m",
+        "{a} edge length: {d:.2f} m": "{a} Kantenlänge: {d:.2f} m",
+        "{a} ↔ H-dist {b}: {d:.2f} m": "{a} ↔ H-Abst. {b}: {d:.2f} m",
+        "{a} ↕ V-dist {b}: {d:.2f} m": "{a} ↕ V-Abst. {b}: {d:.2f} m",
+    },
+
+    # ── ConstraintTool ──
+    "ConstraintTool": {
+        "Intra-object edge constraints are only supported for polygons and polylines.":
+            "Interne Kantenrandbedingungen werden nur für Polygone und Polylinien unterstützt.",
+        "Please select two adjacent (connected) edges of the same polygon.":
+            "Bitte wählen Sie zwei angrenzende (verbundene) Kanten desselben Polygons.",
+        "Parallel Constraint": "Parallelrandbedingung",
+        "The polygon needs at least 4 vertices for a parallel constraint between non-adjacent edges.":
+            "Das Polygon benötigt mindestens 4 Knoten für eine Parallelrandbedingung zwischen nicht angrenzenden Kanten.",
+        "Adjacent edges of the same polygon cannot be made parallel. To set a specific corner angle, use the Angle constraint tool.":
+            "Angrenzende Kanten desselben Polygons können nicht parallel gemacht werden. Um einen bestimmten Winkel festzulegen, verwenden Sie das Winkelrandbedingungswerkzeug.",
+    },
+
+    # ── CircleItem (context menu — pylupdate6 cannot extract _ alias) ──
+    "CircleItem": {
+        # Area label (US-11.9) and soil test (US-12.10a).
+        "Show Area": "Fläche anzeigen",
+        "Add soil test…": "Bodenprobe hinzufügen…",
+        "Log Pest/Disease…": "Schädling/Krankheit eintragen…",
+        "Delete": "Löschen",
+        "Duplicate": "Duplizieren",
+        "Create Linear Array...": "Lineares Muster erstellen...",
+        "Create Grid Array...": "Rastermuster erstellen...",
+        "Create Circular Array...": "Kreismuster erstellen...",
+        "Boolean": "Bool'sche Operation",
+        "Union": "Vereinigung",
+        "Intersect": "Schnittmenge",
+        "Subtract": "Subtraktion",
+        "Array Along Path...": "Muster entlang Pfad...",
+    },
+
+    # ── CircleTool ──
+    "CircleTool": {
+        "Circle": "Kreis",
+    },
+
+    # ── ArcItem / ArcTool (Phase 13 Package B — US-B2) ──
+    "ArcItem": {
+        "Delete Arc": "Bogen löschen",
+    },
+    "ArcTool": {
+        "Arc (3-point)": "Bogen (3 Punkte)",
+        "Points are collinear; drew a line instead":
+            "Punkte sind kollinear; stattdessen wurde eine Linie gezeichnet",
+    },
+
+    # ── BezierItem / BezierTool (Phase 13 Package B — US-B1) ──
+    "BezierItem": {
+        "Delete Bezier": "Bezier-Kurve löschen",
+    },
+    "BezierTool": {
+        "Bezier": "Bezier-Kurve",
+    },
+
+    # ── FilletTool / ChamferTool (Phase 13 Package B — US-B3) ──
+    "FilletTool": {
+        "Fillet": "Abrunden",
+        "Radius (cm):": "Radius (cm):",
+        "Fillet radius too large for this corner":
+            "Abrundungsradius zu groß für diese Ecke",
+        "Fillet radius: {radius:.1f} cm — press R to change":
+            "Abrundungsradius: {radius:.1f} cm — R drücken zum Ändern",
+    },
+    "ChamferTool": {
+        "Chamfer": "Anfasen",
+        "Distance (cm):": "Abstand (cm):",
+        "Chamfer distance too large for this corner":
+            "Anfasabstand zu groß für diese Ecke",
+        "Chamfer distance: {distance:.1f} cm — press D to change":
+            "Anfasabstand: {distance:.1f} cm — D drücken zum Ändern",
+    },
+
+    # ── EdgeLengthConstraintTool ──
+    "EdgeLengthConstraintTool": {
+        "Edge Length Constraint": "Kantenlängenrandbedingung",
+        "Conflicting Constraint": "Widersprüchliche Randbedingung",
+        "This constraint conflicts with existing constraints and cannot be applied. The existing constraints are unchanged.":
+            "Diese Randbedingung widerspricht bestehenden Randbedingungen und kann nicht angewendet werden. Die bestehenden Randbedingungen bleiben unverändert.",
+    },
+
+    # ── ColorButton ──
+    "ColorButton": {
+        "Choose Color": "Farbe wählen",
+    },
+
+    # ── ConstructionCircleItem ──
+    "ConstructionCircleItem": {
+        "Delete Construction Circle": "Hilfskreis löschen",
+    },
+
+    # ── ConstructionLineItem ──
+    "ConstructionLineItem": {
+        "Delete Construction Line": "Hilfslinie löschen",
+    },
+
+    # ── CustomPlantsDialog ──
+    "CustomPlantsDialog": {
+        "Manage Custom Plants": "Eigene Pflanzen verwalten",
+        "Custom Plant Library": "Eigene Pflanzenbibliothek",
+        "Plants you've created or customized are stored here. These are available across all your projects.":
+            "Hier werden Ihre selbst erstellten oder angepassten Pflanzen gespeichert. Diese sind in allen Ihren Projekten verfügbar.",
+        "Common Name": "Allgemeiner Name",
+        "Scientific Name": "Wissenschaftlicher Name",
+        "Family": "Familie",
+        "Cycle": "Lebenszyklus",
+        "Create New": "Neu erstellen",
+        "Create a new custom plant species": "Eine neue eigene Pflanzenart erstellen",
+        "Delete": "Löschen",
+        "Delete the selected plant": "Die ausgewählte Pflanze löschen",
+        "Close": "Schließen",
+        "No custom plants yet. Click 'Create New' to add one.":
+            "Noch keine eigenen Pflanzen. Klicken Sie auf 'Neu erstellen', um eine hinzuzufügen.",
+        "{count} custom plant(s) in library": "{count} eigene Pflanze(n) in der Bibliothek",
+        "New plant created. Edit it in the Plant Details panel.":
+            "Neue Pflanze erstellt. Bearbeiten Sie sie im Pflanzendetails-Panel.",
+        "Delete Plant": "Pflanze löschen",
+        "Are you sure you want to delete '{name}'?\n\nThis will remove it from your custom library. Plants already placed in projects will keep their data.":
+            "Sind Sie sicher, dass Sie '{name}' löschen möchten?\n\nDies entfernt sie aus Ihrer eigenen Bibliothek. Bereits in Projekten platzierte Pflanzen behalten ihre Daten.",
+    },
+
+    # ── DrawingToolsPanel ──
+    "DrawingToolsPanel": {
+        "Selection & Measurement": "Auswahl & Messung",
+        "Basic Shapes": "Grundformen",
+        "Structures": "Gebäude",
+        "Hardscape": "Befestigte Flächen",
+        "Linear Features": "Lineare Elemente",
+        "Garden": "Garten",
+        "Plants": "Pflanzen",
+    },
+
+    # ── ExportPngDialog ──
+    "ExportPngDialog": {
+        "Export as PNG": "Als PNG exportieren",
+        "Output Size": "Ausgabegröße",
+        "A4 Landscape (29.7 cm wide)": "A4 Querformat (29,7 cm breit)",
+        "Standard A4 paper in landscape orientation": "Standard-A4-Papier im Querformat",
+        "A3 Landscape (42.0 cm wide)": "A3 Querformat (42,0 cm breit)",
+        "A3 paper in landscape orientation (larger)": "A3-Papier im Querformat (größer)",
+        "Letter Landscape (27.9 cm wide)": "Letter Querformat (27,9 cm breit)",
+        "US Letter paper in landscape orientation": "US-Letter-Papier im Querformat",
+        "Resolution (DPI)": "Auflösung (DPI)",
+        "72 DPI (Screen)": "72 DPI (Bildschirm)",
+        "Best for on-screen viewing, smallest file size":
+            "Optimal für Bildschirmdarstellung, kleinste Dateigröße",
+        "150 DPI (Standard Print)": "150 DPI (Standarddruck)",
+        "Good balance of quality and file size":
+            "Gute Balance zwischen Qualität und Dateigröße",
+        "300 DPI (High Quality)": "300 DPI (Hohe Qualität)",
+        "Best for high-quality printing, largest file size":
+            "Optimal für hochwertigen Druck, größte Dateigröße",
+        "Output Preview": "Ausgabevorschau",
+        "Canvas size: {width} × {height} m": "Leinwandgröße: {width} × {height} m",
+        "Scale: 1:{denom}": "Maßstab: 1:{denom}",
+        "<b>Image size: {w} × {h} pixels</b>": "<b>Bildgröße: {w} × {h} Pixel</b>",
+    },
+
+    # ── GardenItemMixin (context menu submenus — pylupdate6 cannot extract _ alias) ──
+    "GardenItemMixin": {
+        "Move to Layer": "Auf Ebene verschieben",
+        "Change Type": "Typ ändern",
+    },
+
+    # ── GroupItem ──
+    "GroupItem": {
+        "Ungroup": "Gruppe aufheben",
+    },
+
+    # ── GalleryData (gallery items shown in toolbar dropdowns + global search) ──
+    "GalleryData": {
+        # Toolbar category names
+        "Beds & Surfaces": "Beete & Flächen",
+        "Basic Shapes": "Grundformen",
+        "Trees": "Bäume",
+        "Shrubs & Hedges": "Sträucher & Hecken",
+        "Flowers & Perennials": "Blumen & Stauden",
+        "Vegetables & Herbs": "Gemüse & Kräuter",
+        "Structures": "Strukturen",
+        "Furniture": "Möbel",
+        "Fences & Walls": "Zäune & Mauern",
+        "Infrastructure": "Infrastruktur",
+        "Vertical & Container": "Vertikal & Gefäße",
+        # Vertical & container gardening objects (US-C3)
+        "Container": "Pflanzgefäß",
+        "Round Container": "Rundes Pflanzgefäß",
+        "Wall Planter": "Wandpflanzgefäß",
+        "Trellis": "Rankgitter",
+        # Basic shapes
+        "Rectangle": "Rechteck",
+        "Polygon": "Polygon",
+        "Circle": "Kreis",
+        "Ellipse": "Ellipse",
+        # Tree categories + species
+        "Round Deciduous": "Rundkronen-Laubbaum",
+        "Columnar Tree": "Säulenbaum",
+        "Weeping Tree": "Trauerbaum",
+        "Conifer": "Nadelbaum",
+        "Fruit Tree": "Obstbaum",
+        "Palm": "Palme",
+        "Apple Tree": "Apfelbaum",
+        "Cherry Tree": "Kirschbaum",
+        "Pear Tree": "Birnbaum",
+        "Plum Tree": "Pflaumenbaum",
+        "Peach Tree": "Pfirsichbaum",
+        "Fig Tree": "Feigenbaum",
+        "Olive Tree": "Olivenbaum",
+        "Lemon Tree": "Zitronenbaum",
+        "Orange Tree": "Orangenbaum",
+        "Walnut Tree": "Walnussbaum",
+        "Oak": "Eiche",
+        "Maple": "Ahorn",
+        "Birch": "Birke",
+        "Willow": "Weide",
+        "Magnolia": "Magnolie",
+        "Pine": "Kiefer",
+        "Spruce": "Fichte",
+        # Shrub categories + species + hedge
+        "Spreading Shrub": "Ausladender Strauch",
+        "Compact Shrub": "Kompakter Strauch",
+        "Boxwood": "Buchsbaum",
+        "Rhododendron": "Rhododendron",
+        "Blueberry": "Heidelbeere",
+        "Raspberry": "Himbeere",
+        "Blackberry": "Brombeere",
+        "Gooseberry": "Stachelbeere",
+        "Currant": "Johannisbeere",
+        "Holly": "Stechpalme",
+        "Juniper": "Wacholder",
+        "Forsythia": "Forsythie",
+        "Lilac": "Flieder",
+        "Elderberry": "Holunder",
+        "Privet": "Liguster",
+        "Viburnum": "Schneeball",
+        "Barberry": "Berberitze",
+        "Camellia": "Kamelie",
+        "Spirea": "Spierstrauch",
+        "Hedge": "Hecke",
+        # Flower categories + species
+        "Flowering Perennial": "Blütenstaude",
+        "Ornamental Grass": "Ziergras",
+        "Ground Cover": "Bodendecker",
+        "Climbing Plant": "Kletterpflanze",
+        "Rose": "Rose",
+        "Lavender": "Lavendel",
+        "Sunflower": "Sonnenblume",
+        "Tulip": "Tulpe",
+        "Daffodil": "Narzisse",
+        "Dahlia": "Dahlie",
+        "Peony": "Pfingstrose",
+        "Iris": "Schwertlilie",
+        "Lily": "Lilie",
+        "Marigold": "Ringelblume",
+        "Zinnia": "Zinnie",
+        "Cosmos": "Kosmee",
+        "Aster": "Aster",
+        "Chrysanthemum": "Chrysantheme",
+        "Geranium": "Storchschnabel",
+        "Petunia": "Petunie",
+        "Pansy": "Stiefmütterchen",
+        "Hydrangea": "Hortensie",
+        "Clematis": "Waldrebe",
+        "Wisteria": "Glyzinie",
+        "Jasmine": "Jasmin",
+        "Hibiscus": "Hibiskus",
+        "Crocus": "Krokus",
+        # Vegetable / herb categories + species
+        "Vegetable": "Gemüse",
+        "Herb": "Kräuter",
+        "Tomato": "Tomate",
+        "Pepper": "Paprika",
+        "Eggplant": "Aubergine",
+        "Zucchini": "Zucchini",
+        "Cucumber": "Gurke",
+        "Pumpkin": "Kürbis",
+        "Bean": "Bohne",
+        "Pea": "Erbse",
+        "Corn": "Mais",
+        "Carrot": "Karotte",
+        "Radish": "Radieschen",
+        "Potato": "Kartoffel",
+        "Onion": "Zwiebel",
+        "Garlic": "Knoblauch",
+        "Lettuce": "Salat",
+        "Spinach": "Spinat",
+        "Cabbage": "Kohl",
+        "Kale": "Grünkohl",
+        "Broccoli": "Brokkoli",
+        "Basil": "Basilikum",
+        "Rosemary": "Rosmarin",
+        "Thyme": "Thymian",
+        "Sage": "Salbei",
+        "Mint": "Minze",
+        "Parsley": "Petersilie",
+        "Cilantro": "Koriander",
+        "Dill": "Dill",
+        "Chives": "Schnittlauch",
+        "Oregano": "Oregano",
+        # Structures
+        "House": "Haus",
+        "Garage/Shed": "Garage/Schuppen",
+        "Greenhouse": "Gewächshaus",
+        # Furniture
+        "Table (Rect.)": "Tisch (rechteckig)",
+        "Table (Round)": "Tisch (rund)",
+        "Chair": "Stuhl",
+        "Bench": "Bank",
+        "Parasol": "Sonnenschirm",
+        "Lounger": "Liege",
+        "BBQ/Grill": "Grill",
+        "Fire Pit": "Feuerstelle",
+        # Fences & Walls
+        "Fence": "Zaun",
+        "Wall": "Mauer",
+        "Path": "Weg",
+        # Beds & Surfaces
+        "Garden Bed": "Gartenbeet",
+        "Lawn": "Rasen",
+        "Terrace/Patio": "Terrasse/Patio",
+        "Driveway": "Einfahrt",
+        "Pond/Pool": "Teich/Pool",
+        "Raised Bed": "Hochbeet",
+        "Cold Frame": "Frühbeet",
+        # Infrastructure
+        "Planter/Pot": "Pflanzgefäß/Topf",
+        "Compost Bin": "Komposter",
+        "Rain Barrel": "Regentonne",
+        "Water Tap": "Wasserhahn",
+        "Tool Shed": "Geräteschuppen",
+        # Package 3a roster (#308)
+        "Sandbox": "Sandkasten",
+        "Trampoline": "Trampolin",
+        "Hot Tub": "Whirlpool",
+        "Swing": "Schaukel",
+        "Picnic Table": "Picknicktisch",
+        "Hammock": "Hängematte",
+        "Wheelbarrow": "Schubkarre",
+        "Pergola": "Pergola",
+        "Bird Bath": "Vogeltränke",
+    },
+
+    # ── CategoryDropdown (popup under each toolbar category button) ──
+    "CategoryDropdown": {
+        "Filter…": "Filtern…",
+    },
+
+    # ── GlobalSearchField (toolbar object search) ──
+    "GlobalSearchField": {
+        "Search object…": "Objekt suchen…",
+    },
+
+    # ── GardenPlannerApp ──
+    "GardenPlannerApp": {
+        "Tasks": "Aufgaben",
+        "Smart Symbols": "Smart-Symbole",
+        "&File": "&Datei",
+        "&Edit": "&Bearbeiten",
+        "&View": "&Ansicht",
+        "&Plants": "&Pflanzen",
+        "&Garden": "&Garten",
+        "&Help": "&Hilfe",
+        "&Set default soil test…": "Standard-Bodenprobe &festlegen…",
+        "Set a project-wide soil test used when individual beds have none":
+            "Eine projektweite Bodenprobe festlegen, falls einzelne Beete keine eigene haben",
+        "Soil test recorded": "Bodenprobe gespeichert",
+        # US-D3.4 - agent soil-test write. The tool's undo_description, shown in
+        # the Edit menu, so it must read as a user action.
+        "Remove soil test": "Bodenprobe entfernen",
+        # US-D3.4 - the plan-wide default soil target's display label, returned
+        # by get_soil_status when bed_id is omitted.
+        "Plan-wide default": "Gesamter Plan",
+        "No changes": "Keine Änderungen",
+        # US-12.7 — Pest/disease log
+        "Pest/disease log recorded": "Schädlings-/Krankheitseintrag gespeichert",
+        "Active Pest/Disease Issues": "Aktive Schädlinge/Krankheiten",
+        # US-12.8 — Succession planting
+        "Succession plan saved": "Anbaufolge gespeichert",
+        # US-12.9 — Garden journal map-linked notes
+        "Garden Journal": "Gartentagebuch",
+        "Journal note added": "Tagebuchnotiz hinzugefügt",
+        "Delete journal note": "Tagebuchnotiz löschen",
+        "Delete this journal note?": "Diese Tagebuchnotiz löschen?",
+        # US-12.10c — Amendment Plan menu
+        "&Amendment Plan…": "&Bodenverbesserungs-Plan…",
+        "View amendment recommendations for deficient beds":
+            "Empfehlungen für mangelhafte Beete anzeigen",
+        # US-12.6 — Shopping List menu
+        "S&hopping List…": "&Einkaufsliste…",
+        "Generate a shopping list of plants, seeds, and materials":
+            "Eine Einkaufsliste mit Pflanzen, Samen und Materialien erstellen",
+        # Soil-health overlay (US-12.10b)
+        "Soil &Health Overlay": "Boden&gesundheits-Overlay",
+        "Tint beds by soil-health rating (excluded from exports)":
+            "Beete nach Bodengesundheit einfärben (nicht in Exporten enthalten)",
+        "Soil Overlay": "Boden-Overlay",
+        "Soil parameter:": "Bodenparameter:",
+        "Overall": "Gesamt",
+        "pH": "pH",
+        "Nitrogen (N)": "Stickstoff (N)",
+        "Phosphorus (P)": "Phosphor (P)",
+        "Potassium (K)": "Kalium (K)",
+        "&New Project": "&Neues Projekt",
+        "Create a new garden project": "Ein neues Gartenprojekt erstellen",
+        "&Open...": "&Öffnen...",
+        "Open an existing project": "Ein bestehendes Projekt öffnen",
+        "Open &Recent": "Zuletzt &geöffnet",
+        "&Save": "&Speichern",
+        "Save the current project": "Das aktuelle Projekt speichern",
+        "Save &As...": "Speichern &unter...",
+        "Save the project with a new name": "Das Projekt unter neuem Namen speichern",
+        "&Import Background Image...": "&Hintergrundbild importieren...",
+        "Import a background image (satellite photo, etc.)":
+            "Ein Hintergrundbild importieren (Satellitenfoto usw.)",
+        "&Export": "&Exportieren",
+        "Export as &PNG...": "Als &PNG exportieren...",
+        "Export the plan as a PNG image": "Den Plan als PNG-Bild exportieren",
+        "Export as &SVG...": "Als &SVG exportieren...",
+        "Export the plan as an SVG vector file": "Den Plan als SVG-Vektordatei exportieren",
+        "Export Plant List as &CSV...": "Pflanzenliste als &CSV exportieren...",
+        "Export all plants to a CSV spreadsheet": "Alle Pflanzen in eine CSV-Tabelle exportieren",
+        "Import &DXF...": "&DXF importieren...",
+        "Import a DXF CAD file onto the canvas": "Eine DXF-CAD-Datei in die Zeichenfläche importieren",
+        "Export as D&XF...": "Als D&XF exportieren...",
+        "Export the plan as a DXF file for CAD software": "Den Plan als DXF-Datei für CAD-Software exportieren",
+        "Export PDF &Report...": "PDF-&Bericht exportieren...",
+        "Generate a multi-page PDF report of the garden plan": "Einen mehrseitigen PDF-Bericht des Gartenplans erstellen",
+        "Import DXF": "DXF importieren",
+        "DXF Files (*.dxf);;All Files (*)": "DXF-Dateien (*.dxf);;Alle Dateien (*)",
+        "Import Error": "Importfehler",
+        "Failed to import DXF:\n{error}": "DXF-Import fehlgeschlagen:\n{error}",
+        "Nothing Imported": "Nichts importiert",
+        "No supported entities found in the selected layers.": "In den ausgewählten Ebenen wurden keine unterstützten Objekte gefunden.",
+        "Imported {n} item(s) from DXF.": "{n} Objekt(e) aus DXF importiert.",
+        "Skipped {k} unsupported entity/entities ({types}).": "{k} nicht unterstützte(s) Objekt(e) übersprungen ({types}).",
+        "Export as DXF": "Als DXF exportieren",
+        "Failed to export DXF:\n{error}": "DXF-Export fehlgeschlagen:\n{error}",
+        "Export PDF Report": "PDF-Bericht exportieren",
+        "PDF Files (*.pdf);;All Files (*)": "PDF-Dateien (*.pdf);;Alle Dateien (*)",
+        "Generating PDF…": "PDF wird erstellt…",
+        "Failed to export PDF report:\n{error}": "PDF-Bericht-Export fehlgeschlagen:\n{error}",
+        "E&xit": "&Beenden",
+        "Exit the application": "Die Anwendung beenden",
+        "&Undo": "&Rückgängig",
+        "Undo the last action": "Die letzte Aktion rückgängig machen",
+        "&Redo": "&Wiederherstellen",
+        "Redo the last undone action": "Die letzte rückgängig gemachte Aktion wiederherstellen",
+        "Cu&t": "Aus&schneiden",
+        "Cut selected objects": "Ausgewählte Objekte ausschneiden",
+        "&Copy": "&Kopieren",
+        "Copy selected objects": "Ausgewählte Objekte kopieren",
+        "&Paste": "&Einfügen",
+        "Paste objects from clipboard": "Objekte aus der Zwischenablage einfügen",
+        "Dupl&icate": "D&uplizieren",
+        "Duplicate selected objects": "Ausgewählte Objekte duplizieren",
+        "&Delete": "&Löschen",
+        "Delete selected objects": "Ausgewählte Objekte löschen",
+        "Select &All": "&Alles auswählen",
+        "Select all objects": "Alle Objekte auswählen",
+        "&Find && Replace…": "Su&chen && Ersetzen…",
+        "Find and replace objects by name, type, layer or species":
+            "Objekte nach Name, Typ, Ebene oder Art suchen und ersetzen",
+        "Ali&gn && Distribute": "Ausrichten && &Verteilen",
+        "Align &Left": "Links &ausrichten",
+        "Align selected objects to the left edge":
+            "Ausgewählte Objekte am linken Rand ausrichten",
+        "Align &Right": "&Rechts ausrichten",
+        "Align selected objects to the right edge":
+            "Ausgewählte Objekte am rechten Rand ausrichten",
+        "Align &Top": "&Oben ausrichten",
+        "Align selected objects to the top edge":
+            "Ausgewählte Objekte am oberen Rand ausrichten",
+        "Align &Bottom": "&Unten ausrichten",
+        "Align selected objects to the bottom edge":
+            "Ausgewählte Objekte am unteren Rand ausrichten",
+        "Align Center &Horizontally": "&Horizontal zentrieren",
+        "Align selected objects to horizontal center":
+            "Ausgewählte Objekte horizontal zentrieren",
+        "Align Center &Vertically": "&Vertikal zentrieren",
+        "Align selected objects to vertical center":
+            "Ausgewählte Objekte vertikal zentrieren",
+        "&Distribute Horizontal": "Horizontal ver&teilen",
+        "Distribute selected objects with equal horizontal spacing":
+            "Ausgewählte Objekte mit gleichem horizontalen Abstand verteilen",
+        "D&istribute Vertical": "Vertikal vert&eilen",
+        "Distribute selected objects with equal vertical spacing":
+            "Ausgewählte Objekte mit gleichem vertikalen Abstand verteilen",
+        "Auto-&Save": "Automatisc&hes Speichern",
+        "&Enable Auto-Save": "Automatisches Speichern &aktivieren",
+        "Enable or disable automatic saving": "Automatisches Speichern ein- oder ausschalten",
+        "{n} minute(s)": "{n} Minute(n)",
+        "Zoom &In": "Ver&größern",
+        "Zoom in on the canvas": "In die Leinwand hineinzoomen",
+        "Zoom &Out": "Ver&kleinern",
+        "Zoom out on the canvas": "Aus der Leinwand herauszoomen",
+        "&Fit to Window": "An &Fenster anpassen",
+        "Fit the entire canvas in the window": "Die gesamte Leinwand ins Fenster einpassen",
+        "Show &Grid": "&Raster anzeigen",
+        "Toggle grid visibility": "Rastersichtbarkeit umschalten",
+        "&Snap to Grid": "Am Raster ei&nrasten",
+        "Toggle snap to grid": "Einrasten am Raster umschalten",
+        "Snap to &Objects": "An &Objekten einrasten",
+        "Toggle snap to object edges and centers":
+            "Einrasten an Objektkanten und -mittelpunkten umschalten",
+        # Package A US-A3 / US-A4
+        "Snap to &Midpoints": "An &Mittelpunkten einrasten",
+        "Toggle snap to the midpoint of any straight edge":
+            "Einrasten auf den Mittelpunkt jeder geraden Kante umschalten",
+        "Snap to &Intersections": "An &Schnittpunkten einrasten",
+        "Toggle snap to intersections of straight edges":
+            "Einrasten auf Schnittpunkte gerader Kanten umschalten",
+        # Phase 13 Package B — US-B4
+        "Snap to &Nearest Point": "Auf nächsten Punkt fangen",
+        "Toggle snap to the closest point on any visible edge or curve":
+            "Fangen auf den nächsten Punkt jeder sichtbaren Kante oder Kurve umschalten",
+        # Phase 13 Package B — US-B5
+        "Snap &Perpendicular": "Senkrecht fangen",
+        "Toggle snap to the perpendicular foot from the last drawn point onto the nearest edge":
+            "Fangen auf den Senkrechten-Fußpunkt vom letzten gezeichneten Punkt zur nächsten Kante umschalten",
+        # Phase 13 Package B — US-B6
+        "Snap &Tangent": "Tangential fangen",
+        "Toggle snap to the tangent point on a circle or arc from the last drawn point":
+            "Fangen auf den Tangentialpunkt eines Kreises oder Bogens vom letzten gezeichneten Punkt umschalten",
+        "Enable &Dynamic Input": "Dynamische &Eingabe aktivieren",
+        "Toggle typed distance/angle input next to the cursor and in the status bar":
+            "Eingabe von Distanz/Winkel am Cursor und in der Statusleiste umschalten",
+        "Show &Shadows": "&Schatten anzeigen",
+        "Toggle drop shadows on objects": "Schlagschatten auf Objekten umschalten",
+        "Show Scale &Bar": "Maßstabs&leiste anzeigen",
+        "Toggle the scale bar overlay on the canvas":
+            "Maßstabsleiste auf der Leinwand umschalten",
+        "Show &Labels": "&Beschriftungen anzeigen",
+        "Toggle object labels on the canvas": "Objektbeschriftungen auf der Leinwand umschalten",
+        "&Fullscreen Preview": "&Vollbildvorschau",
+        "Toggle fullscreen preview mode (hides all UI)":
+            "Vollbildvorschau umschalten (blendet alle UI-Elemente aus)",
+        "&Theme": "&Design",
+        "&Light": "&Hell",
+        "Use light color scheme": "Helles Farbschema verwenden",
+        "&Dark": "&Dunkel",
+        "Use dark color scheme": "Dunkles Farbschema verwenden",
+        "&System": "&System",
+        "Follow system color scheme preference": "Systemfarbschema-Einstellung folgen",
+        "&Search Plant Database": "Pflanzen&datenbank durchsuchen",
+        "Search for plant species in online databases":
+            "Pflanzenarten in Online-Datenbanken suchen",
+        "&Manage Custom Plants...": "Eigene Pflanzen &verwalten...",
+        "View, edit, and delete your custom plant species":
+            "Ihre eigenen Pflanzenarten anzeigen, bearbeiten und löschen",
+        "&Keyboard Shortcuts": "&Tastenkürzel",
+        "Show keyboard shortcuts reference": "Tastenkürzel-Übersicht anzeigen",
+        "&About Open Garden Planner": "&Über Open Garden Planner",
+        "About this application": "Über diese Anwendung",
+        "About &Qt": "Über &Qt",
+        "X: 0.00 cm  Y: 0.00 cm": "X: 0,00 cm  Y: 0,00 cm",
+        "No selection": "Keine Auswahl",
+        "Select": "Auswählen",
+        "Ready": "Bereit",
+        "Object Gallery": "Objektgalerie",
+        "Properties": "Eigenschaften",
+        "Layers": "Ebenen",
+        "Find Plants": "Pflanzen finden",
+        "Plant Details": "Pflanzendetails",
+        "Auto-saved": "Automatisch gespeichert",
+        "Auto-save failed: {error}": "Automatisches Speichern fehlgeschlagen: {error}",
+        "A recovery file was found from {timestamp}.\n\nOriginal project: {original_file}\n\nWould you like to recover this file?":
+            "Eine Wiederherstellungsdatei vom {timestamp} wurde gefunden.\n\nUrsprüngliches Projekt: {original_file}\n\nMöchten Sie diese Datei wiederherstellen?",
+        "A recovery file for an unsaved project was found from {timestamp}.\n\nWould you like to recover this file?":
+            "Eine Wiederherstellungsdatei für ein nicht gespeichertes Projekt vom {timestamp} wurde gefunden.\n\nMöchten Sie diese Datei wiederherstellen?",
+        "Recover Auto-Save": "Automatische Speicherung wiederherstellen",
+        "Recovered from auto-save. Remember to save your work!":
+            "Von automatischer Speicherung wiederhergestellt. Denken Sie daran, Ihre Arbeit zu speichern!",
+        "Recovery Complete": "Wiederherstellung abgeschlossen",
+        "Your work has been recovered from the auto-save file.\n\nPlease save your project to a permanent location.":
+            "Ihre Arbeit wurde aus der automatischen Speicherung wiederhergestellt.\n\nBitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.",
+        "Recovery Failed": "Wiederherstellung fehlgeschlagen",
+        "Failed to recover from auto-save:\n{error}":
+            "Wiederherstellung von automatischer Speicherung fehlgeschlagen:\n{error}",
+        "New project created: {width}m x {height}m":
+            "Neues Projekt erstellt: {width}m x {height}m",
+        "Open Project": "Projekt öffnen",
+        "Open Garden Planner (*.ogp);;All Files (*)":
+            "Open Garden Planner (*.ogp);;Alle Dateien (*)",
+        "Opened: {path}": "Geöffnet: {path}",
+        "Warning: {count} unrecognized item(s) could not be loaded and were skipped.":
+            "Warnung: {count} nicht erkannte(s) Objekt(e) konnten nicht geladen werden und wurden übersprungen.",
+        "Error": "Fehler",
+        "Failed to open file:\n{error}": "Datei konnte nicht geöffnet werden:\n{error}",
+        "No recent projects": "Keine aktuellen Projekte",
+        "{name} (not found)": "{name} (nicht gefunden)",
+        "File not found: {path}": "Datei nicht gefunden: {path}",
+        "Clear Recent Projects": "Aktuelle Projekte löschen",
+        "Recent projects list cleared": "Liste der aktuellen Projekte gelöscht",
+        "Save Project As": "Projekt speichern unter",
+        "Saved: {path}": "Gespeichert: {path}",
+        "Failed to save file:\n{error}": "Datei konnte nicht gespeichert werden:\n{error}",
+        "Export as PNG": "Als PNG exportieren",
+        "PNG Image (*.png);;All Files (*)": "PNG-Bild (*.png);;Alle Dateien (*)",
+        "Exported: {path}": "Exportiert: {path}",
+        "Export Error": "Exportfehler",
+        "Failed to export PNG:\n{error}": "PNG-Export fehlgeschlagen:\n{error}",
+        "Export as SVG": "Als SVG exportieren",
+        "SVG Vector (*.svg);;All Files (*)": "SVG-Vektor (*.svg);;Alle Dateien (*)",
+        "Failed to export SVG:\n{error}": "SVG-Export fehlgeschlagen:\n{error}",
+        "Export Plant List as CSV": "Pflanzenliste als CSV exportieren",
+        "CSV Spreadsheet (*.csv);;All Files (*)": "CSV-Tabelle (*.csv);;Alle Dateien (*)",
+        "No Plants Found": "Keine Pflanzen gefunden",
+        "No plants found in the project. The CSV file will be empty.":
+            "Keine Pflanzen im Projekt gefunden. Die CSV-Datei wird leer sein.",
+        "Exported {count} plant(s) to: {path}":
+            "{count} Pflanze(n) exportiert nach: {path}",
+        "Failed to export plant list:\n{error}":
+            "Pflanzenliste konnte nicht exportiert werden:\n{error}",
+        "Unsaved Changes": "Ungespeicherte Änderungen",
+        "Do you want to save changes before proceeding?":
+            "Möchten Sie Änderungen speichern, bevor Sie fortfahren?",
+        "Undo: {desc}": "Rückgängig: {desc}",
+        "Nothing to undo": "Nichts zum Rückgängigmachen",
+        "Redo: {desc}": "Wiederherstellen: {desc}",
+        "Nothing to redo": "Nichts zum Wiederherstellen",
+        "Selected {count} object(s)": "{count} Objekt(e) ausgewählt",
+        "Auto-save enabled": "Automatisches Speichern aktiviert",
+        "Auto-save disabled": "Automatisches Speichern deaktiviert",
+        "Auto-save interval set to {n} minute(s)":
+            "Intervall für automatisches Speichern auf {n} Minute(n) gesetzt",
+        "Theme changed to {theme}": "Design geändert zu {theme}",
+        "Updated plant with species: {name}": "Pflanze aktualisiert mit Art: {name}",
+        "Select a plant object (tree, shrub, or perennial) to assign species data":
+            "Wählen Sie ein Pflanzenobjekt (Baum, Strauch oder Staude), um Artdaten zuzuweisen",
+        "About Open Garden Planner": "Über Open Garden Planner",
+        "<p>Version 0.1.0</p>": "<p>Version 0.1.0</p>",
+        "<p>Precision garden planning for passionate gardeners.</p><p>Free and open source under GPLv3.</p>":
+            "<p>Präzise Gartenplanung für leidenschaftliche Gärtner.</p><p>Frei und quelloffen unter GPLv3.</p>",
+        "X: {x} cm  Y: {y} cm": "X: {x} cm  Y: {y} cm",
+        "1 object | Area: {area} | Perimeter: {perimeter}":
+            "1 Objekt | Fläche: {area} | Umfang: {perimeter}",
+        "1 object selected": "1 Objekt ausgewählt",
+        "{count} objects | Total Area: {area} | Total Perimeter: {perimeter}":
+            "{count} Objekte | Gesamtfläche: {area} | Gesamtumfang: {perimeter}",
+        "{count} objects selected": "{count} Objekte ausgewählt",
+        "Import Background Image": "Hintergrundbild importieren",
+        "Images (*.png *.jpg *.jpeg *.tiff *.bmp);;All Files (*)":
+            "Bilder (*.png *.jpg *.jpeg *.tiff *.bmp);;Alle Dateien (*)",
+        "Imported: {path}": "Importiert: {path}",
+        "Failed to import image:\n{error}":
+            "Bild konnte nicht importiert werden:\n{error}",
+        "Load Sa&tellite Background...": "Sa&tellitenbild laden...",
+        "Pick an area on Google Maps and load it as a true-to-scale satellite background":
+            "Bereich auf Google Maps auswählen und maßstabsgetreu als Satellitenbild laden",
+        "Set OGP_GOOGLE_MAPS_KEY in your .env file to enable satellite background loading":
+            "OGP_GOOGLE_MAPS_KEY in der .env-Datei setzen, um Satellitenbilder laden zu können",
+        "Set a Google Maps API key in Preferences or "
+        "OGP_GOOGLE_MAPS_KEY in your .env file to enable satellite "
+        "background loading":
+            "Einen Google-Maps-API-Schlüssel in den Einstellungen oder "
+            "OGP_GOOGLE_MAPS_KEY in der .env-Datei setzen, um Satellitenbilder "
+            "laden zu können",
+        "Set a Google Maps API key in Preferences or "
+        "OGP_GOOGLE_MAPS_KEY in your .env file to enable "
+        "satellite background loading.":
+            "Einen Google-Maps-API-Schlüssel in den Einstellungen oder "
+            "OGP_GOOGLE_MAPS_KEY in der .env-Datei setzen, um Satellitenbilder "
+            "laden zu können.",
+        "Set OGP_GOOGLE_MAPS_KEY in your .env file to enable satellite background loading.":
+            "OGP_GOOGLE_MAPS_KEY in der .env-Datei setzen, um Satellitenbilder laden zu können.",
+        "API key missing": "API-Schlüssel fehlt",
+        "Loaded satellite background ({cols}x{rows} tiles, zoom {zoom})":
+            "Satellitenbild geladen ({cols}x{rows} Kacheln, Zoom {zoom})",
+        "Loaded satellite background ({cols}x{rows} tiles, zoom {zoom}) — canvas resized to {w_m:.0f}m x {h_m:.0f}m":
+            "Satellitenbild geladen ({cols}x{rows} Kacheln, Zoom {zoom}) — Leinwand auf {w_m:.0f}m x {h_m:.0f}m angepasst",
+        "Loaded satellite background (captured map view, zoom {zoom}) — canvas resized to {w_m:.0f}m x {h_m:.0f}m":
+            "Satellitenbild geladen (übernommene Kartenansicht, Zoom {zoom}) — Leinwand auf {w_m:.0f}m x {h_m:.0f}m angepasst",
+        "&Language": "&Sprache",
+        "Language Changed": "Sprache geändert",
+        "Language has been set to {language}.\n\nPlease restart the application for the change to take effect.":
+            "Die Sprache wurde auf {language} gesetzt.\n\nBitte starten Sie die Anwendung neu, damit die Änderung wirksam wird.",
+        "Set Garden &Location...": "Gartenstandort &festlegen...",
+        "Set GPS coordinates and frost dates for planting calendar":
+            "GPS-Koordinaten und Frostdaten für den Pflanzkalender festlegen",
+        "&Print...": "D&rucken...",
+        "Print the garden plan": "Den Gartenplan drucken",
+        "Canvas Si&ze...": "Leinwand&größe...",
+        "Resize the canvas dimensions": "Die Leinwandabmessungen ändern",
+        "Pr&eferences...": "Ei&nstellungen...",
+        "Configure application settings and API keys":
+            "Anwendungseinstellungen und API-Schlüssel konfigurieren",
+        "Show &Constraints": "Randbedingungen &anzeigen",
+        "Toggle constraint dimension lines on the canvas":
+            "Maßlinien für Randbedingungen auf der Leinwand umschalten",
+        "Show C&onstruction Geometry": "K&onstruktionsgeometrie anzeigen",
+        "Toggle construction geometry visibility (excluded from exports)":
+            "Sichtbarkeit der Konstruktionsgeometrie umschalten (von Exporten ausgeschlossen)",
+        "Show &Guide Lines": "&Hilfslinien anzeigen",
+        "Toggle ruler and guide lines (drag from ruler to create)":
+            "Lineale und Hilfslinien umschalten (vom Lineal ziehen zum Erstellen)",
+        "Show Companion &Warnings": "Begleitpflanzen&warnungen anzeigen",
+        "Highlight compatible and incompatible plants near the selected plant":
+            "Kompatible und inkompatible Pflanzen in der Nähe der ausgewählten Pflanze hervorheben",
+        "Show S&pacing Circles": "Ab&standskreise anzeigen",
+        "Show recommended spacing zones around plants":
+            "Empfohlene Abstandszonen um Pflanzen anzeigen",
+        "Show &Minimap": "&Übersichtskarte anzeigen",
+        "Show a minimap overview for quick navigation":
+            "Übersichtskarte für schnelle Navigation anzeigen",
+        "Check &Companion Planting...": "&Mischkulturen prüfen...",
+        "Analyse the whole plan for companion planting compatibility":
+            "Den gesamten Plan auf Mischkulturkompatibilität analysieren",
+        "No location set": "Kein Standort festgelegt",
+        "Garden GPS location — use File > Set Garden Location to configure":
+            "Garten-GPS-Standort — Datei > Gartenstandort festlegen zum Konfigurieren verwenden",
+        "Garden Plan": "Gartenplan",
+        "Planting Calendar": "Pflanzkalender",
+        "Seed Inventory": "Saatgutbestand",
+        "Layout": "Layout",
+        "Constraints": "Randbedingungen",
+        "Delete all constraints": "Alle Randbedingungen löschen",
+        "Companion Planting": "Mischkulturen",
+        "Crop Rotation": "Fruchtfolge",
+        "Canvas Size": "Leinwandgröße",
+        "Canvas resized to {width}m x {height}m": "Leinwand auf {width}m x {height}m geändert",
+        "<p>Version {v}</p>": "<p>Version {v}</p>",
+        "Garden location updated": "Gartenstandort aktualisiert",
+        "Latitude: {lat}, Longitude: {lon}": "Breite: {lat}, Länge: {lon}",
+        "Zone": "Zone",
+        "Last spring frost": "Letzter Spätfrost",
+        "First fall frost": "Erster Herbstfrost",
+        "Frost alert — click to view details in Planting Calendar":
+            "Frostwarnung — klicken, um Details im Pflanzkalender anzuzeigen",
+        "frost alert": "Frostwarnung",
+        "frost alerts": "Frostwarnungen",
+    },
+
+    # ── CropRotationPanel (issue #378 — succession plan shown as non-history) ──
+    "CropRotationPanel": {
+        "No bed selected": "Kein Beet ausgewählt",
+        "Planting History": "Pflanzhistorie",
+        "Add Planting Record...": "Pflanzung hinzufügen...",
+        "Edit": "Bearbeiten",
+        "Delete": "Löschen",
+        "Unnamed Bed": "Unbenanntes Beet",
+        "Good Rotation": "Gute Fruchtfolge",
+        "Suboptimal Rotation": "Suboptimale Fruchtfolge",
+        "Rotation Violation": "Fruchtfolge-Verstoß",
+        "No History": "Keine Historie",
+        "Next: %1": "Nächstes: %1",
+        "Avoid: %1": "Vermeiden: %1",
+        "(no records yet)": "(noch keine Einträge)",
+        "Delete Record": "Eintrag löschen",
+        "Delete this planting record?": "Diesen Pflanzeintrag löschen?",
+        "Planned This Season": "Geplant für diese Saison",
+        "Planned crops are not planting history and do not affect the "
+        "rotation advice above.":
+            "Geplante Kulturen sind keine Pflanzhistorie und beeinflussen die "
+            "Fruchtfolge-Empfehlung oben nicht.",
+        "(plan has no crop slots)": "(Plan enthält keine Kulturposten)",
+        "{name} — family unknown": "{name} — Familie unbekannt",
+        "No planting history yet, so the rotation advice cannot see "
+        "this bed's planned crops. See the succession plan below.":
+            "Noch keine Pflanzhistorie, daher kann die Fruchtfolge-Empfehlung "
+            "die geplanten Kulturen dieses Beets nicht berücksichtigen. Siehe "
+            "den Anbaufolge-Plan unten.",
+    },
+
+    # ── LayerListItem ──
+    "LayerListItem": {
+        "Toggle visibility": "Sichtbarkeit umschalten",
+        "Toggle lock": "Sperre umschalten",
+        "Rename Layer": "Ebene umbenennen",
+        "Delete Layer": "Ebene löschen",
+    },
+
+    # ── LayersPanel ──
+    "LayersPanel": {
+        "Opacity:": "Deckkraft:",
+        "Layer opacity": "Ebenen-Deckkraft",
+        "Add Layer": "Ebene hinzufügen",
+    },
+
+    # ── MainToolbar ──
+    "MainToolbar": {
+        "Tools": "Werkzeuge",
+        "Select (V)": "Auswählen (V)",
+        "Select and move objects": "Objekte auswählen und verschieben",
+        "Measure (M)": "Messen (M)",
+        "Measure distances between two points": "Abstände zwischen zwei Punkten messen",
+        "Text": "Text",
+        "Place a text annotation": "Eine Textanmerkung platzieren",
+        "Callout": "Beschriftungspfeil",
+        "Place a callout annotation with leader line": "Beschriftungspfeil mit Führungslinie platzieren",
+        "Journal Pin": "Tagebuch-Nadel",
+        "Drop a garden-journal note pin": "Tagebuchnotiz-Nadel platzieren",
+    },
+
+    # ── CategoryToolbar (object category dropdowns + global search) ──
+    "CategoryToolbar": {
+        "Categories": "Kategorien",
+    },
+
+    # ── MeasureTool ──
+    "MeasureTool": {
+        "Measure": "Messen",
+    },
+
+    # ── CoordinateInputField (Package A US-A1/A2) ──
+    "CoordinateInputField": {
+        "@dx,dy   @dist<angle   x,y": "@dx,dy   @dist<Winkel   x,y",
+        "Typed coordinate input. Examples: @500,0 (relative), "
+        "@300<45 (polar, 0deg = east, CCW positive), 1000,500 "
+        "(absolute). Press Enter to commit.":
+            "Eingabe von Koordinaten. Beispiele: @500,0 (relativ), "
+            "@300<45 (polar, 0° = Osten, gegen den Uhrzeigersinn positiv), "
+            "1000,500 (absolut). Mit Enter bestätigen.",
+    },
+
+    # ── DynamicInputOverlay (Package A US-A4) ──
+    "DynamicInputOverlay": {
+        "dist": "Dist",
+        "ang": "Winkel",
+    },
+
+    # ── ParseError messages routed to the input field tooltip (Package A) ──
+    "ParseError": {
+        "Empty input": "Leere Eingabe",
+        "Missing coordinate after '@'": "Koordinate nach '@' fehlt",
+        "Polar input requires exactly one '<'":
+            "Polare Eingabe erfordert genau ein '<'",
+        "Polar input requires distance and angle":
+            "Polare Eingabe erfordert Distanz und Winkel",
+        "Polar input requires an existing point to anchor to":
+            "Polare Eingabe erfordert einen vorhandenen Bezugspunkt",
+        "Relative input requires an existing point to anchor to":
+            "Relative Eingabe erfordert einen vorhandenen Bezugspunkt",
+        "Expected two values separated by ';'":
+            "Erwarte zwei Werte, getrennt durch ';'",
+        "Expected two whitespace-separated values":
+            "Erwarte zwei durch Leerzeichen getrennte Werte",
+        "Expected two values when mixing '.' and ','":
+            "Erwarte zwei Werte bei gemischter Verwendung von '.' und ','",
+        "Expected two values; no separator found":
+            "Erwarte zwei Werte; kein Trennzeichen gefunden",
+        "Too many ',' separators to disambiguate":
+            "Zu viele ',' für eindeutige Auflösung",
+        "Not a number: '{token}'": "Keine Zahl: '{token}'",
+    },
+
+    # ── CollapsiblePanel (US-226 sidebar accordion: header click tooltips) ──
+    "CollapsiblePanel": {
+        "Click to open": "Zum Öffnen klicken",
+        "Click to keep open": "Zum Offenhalten klicken",
+        "Click to collapse": "Zum Einklappen klicken",
+    },
+
+    # ── NewProjectDialog ──
+    "NewProjectDialog": {
+        "New Project": "Neues Projekt",
+        "Canvas Dimensions": "Leinwandabmessungen",
+        "Width:": "Breite:",
+        "Height:": "Höhe:",
+        "Tip: You can resize the canvas later from Edit > Canvas Size.":
+            "Tipp: Sie können die Leinwandgröße später unter Bearbeiten > Leinwandgröße ändern.",
+        "Garden Year": "Gartenjahr",
+        "Assign a year to this plan": "Diesem Plan ein Jahr zuweisen",
+    },
+
+    # ── PlantDatabasePanel ──
+    "PlantDatabasePanel": {
+        # Issue #213 — override reconciliation when assigning a database species
+        "Apply Database Values": "Datenbankwerte anwenden",
+        "This plant has custom values that differ from the database. "
+        "Apply the database values?":
+            "Diese Pflanze hat benutzerdefinierte Werte, die von der Datenbank "
+            "abweichen. Datenbankwerte anwenden?",
+        "Apply database values": "Datenbankwerte anwenden",
+        "Keep custom values": "Benutzerdefinierte Werte behalten",
+        "Search": "Suchen",
+        "Search for plant species in online databases":
+            "Pflanzenarten in Online-Datenbanken suchen",
+        "Create Custom": "Eigene erstellen",
+        "Create a custom plant species entry": "Einen eigenen Pflanzeneintrag erstellen",
+        "Load Custom": "Eigene laden",
+        "Load a plant from your custom library": "Eine Pflanze aus Ihrer eigenen Bibliothek laden",
+        # Shared with PlantSearchDialog's results list via plant_source_label()
+        "Unknown source": "Unbekannte Quelle",
+        "Custom Plant": "Eigene Pflanze",
+        "Bundled": "Mitgeliefert",
+        # Licence line shown in Plant Details via plant_source_license()
+        "Data: {source} · CC BY-SA 4.0": "Daten: {source} · CC BY-SA 4.0",
+        "Data: {source} · attribution required": "Daten: {source} · Namensnennung erforderlich",
+        "Data: {source} · free for personal/commercial use": "Daten: {source} · frei für private/kommerzielle Nutzung",
+        # About dialog — Data Sources & Licenses
+        "Data Sources && Licenses": "Datenquellen && Lizenzen",
+        "Data Sources & Licenses": "Datenquellen & Lizenzen",
+        "Select a plant to view details": "Wählen Sie eine Pflanze, um Details anzuzeigen",
+        "Enter common name...": "Allgemeinen Namen eingeben...",
+        "Common Name:": "Allgemeiner Name:",
+        "Enter scientific name...": "Wissenschaftlichen Namen eingeben...",
+        "Scientific Name:": "Wissenschaftlicher Name:",
+        "Enter plant family...": "Pflanzenfamilie eingeben...",
+        "Family:": "Familie:",
+        "Enter variety or cultivar...": "Sorte oder Kultivar eingeben...",
+        "Variety:": "Sorte:",
+        # Neutral "unset" placeholder shared by the characteristic combos and the
+        # dimension/pH/hardiness spin-boxes (#231); em-dash stays an em-dash in German.
+        "—": "—",
+        "Cycle:": "Lebenszyklus:",
+        "Flower Type:": "Blütentyp:",
+        "Pollination:": "Bestäubung:",
+        "Sun:": "Sonne:",
+        "Water:": "Wasser:",
+        "Max Height:": "Max. Höhe:",
+        "Max Spread:": "Max. Breite:",
+        "Current Height:": "Aktuelle Höhe:",
+        "Current Spread:": "Aktuelle Breite:",
+        "Edible:": "Essbar:",
+        "e.g., fruit, leaves, roots...": "z.B. Früchte, Blätter, Wurzeln...",
+        "Edible Parts:": "Essbare Teile:",
+        "Min:": "Min.:",
+        "Max:": "Max.:",
+        "Hardiness:": "Winterhärte:",
+        # US-12.10d soil requirements
+        "pH range:": "pH-Bereich:",
+        "N demand:": "N-Bedarf:",
+        "P demand:": "P-Bedarf:",
+        "K demand:": "K-Bedarf:",
+        "Overall demand:": "Gesamt-Bedarf:",
+        "High": "Hoch",
+        "Low": "Niedrig",
+        "Fixer": "Sammler",
+        "Heavy feeder": "Starkzehrer",
+        "Medium feeder": "Mittelzehrer",
+        "Light feeder": "Schwachzehrer",
+        "Fixer (legume)": "Sammler (Hülsenfrüchtler)",
+        "Planted:": "Gepflanzt:",
+        "Notes about this plant...": "Notizen zu dieser Pflanze...",
+        "Notes:": "Notizen:",
+        "+ Add Field": "+ Feld hinzufügen",
+        "Add a custom metadata field": "Ein benutzerdefiniertes Metadatenfeld hinzufügen",
+        "Custom:": "Benutzerdefiniert:",
+        "(future)": "(zukünftig)",
+        "({days} days)": "({days} Tage)",
+        "({months} mo)": "({months} Mon.)",
+        "({years}y {remaining_months}mo)": "({years}J. {remaining_months}Mon.)",
+        "({years}y)": "({years}J.)",
+        "Field name": "Feldname",
+        "Value": "Wert",
+        "Remove this field": "Dieses Feld entfernen",
+        "No species data.\n\nClick 'Search' to find species online,\nor 'Create Custom' to define your own.":
+            "Keine Artdaten.\n\nKlicken Sie auf 'Suchen', um Arten online zu finden,\noder 'Eigene erstellen', um Ihre eigene zu definieren.",
+        "Data Source: {source}": "Datenquelle: {source}",
+        "No Plant Selected": "Keine Pflanze ausgewählt",
+        "Please select a plant object (tree, shrub, or perennial) first.":
+            "Bitte wählen Sie zuerst ein Pflanzenobjekt (Baum, Strauch oder Staude) aus.",
+        "No Custom Plants": "Keine eigenen Pflanzen",
+        "Your custom plant library is empty.\n\nUse 'Create Custom' to add plants, or use the Plants menu to manage your custom plant library.":
+            "Ihre eigene Pflanzenbibliothek ist leer.\n\nVerwenden Sie 'Eigene erstellen', um Pflanzen hinzuzufügen, oder das Pflanzen-Menü, um Ihre eigene Pflanzenbibliothek zu verwalten.",
+        "Select Custom Plant": "Eigene Pflanze auswählen",
+    },
+
+    # ── PlantSearchDialog ──
+    "PlantSearchDialog": {
+        "Search Plant Species": "Pflanzenarten suchen",
+        "Search:": "Suche:",
+        "Enter plant common or scientific name...":
+            "Geben Sie den allgemeinen oder wissenschaftlichen Pflanzennamen ein...",
+        "Search": "Suchen",
+        "Enter a plant name to search": "Geben Sie einen Pflanzennamen zum Suchen ein",
+        "Results:": "Ergebnisse:",
+        "Plant Details:": "Pflanzendetails:",
+        "Select a plant to view details": "Wählen Sie eine Pflanze, um Details anzuzeigen",
+        "Searching for '{query}'...": "Suche nach '{query}'...",
+        "Found {count} results": "{count} Ergebnisse gefunden",
+        # "No results found" is no longer emitted by src (replaced by the two
+        # #302 strings below) but stays registered: this script only fills the
+        # pylupdate-generated .ts, it never prunes it.
+        "No results found": "Keine Ergebnisse gefunden",
+        "No plants matched '{query}'. Try another spelling or the scientific name.":
+            "Keine Pflanzen passen zu '{query}'. Versuchen Sie eine andere Schreibweise "
+            "oder den wissenschaftlichen Namen.",
+        "({sources} unavailable — check Preferences.)":
+            "({sources} nicht erreichbar — Einstellungen prüfen.)",
+        "No plant databases are configured. Add API credentials in Preferences to search online.":
+            "Es sind keine Pflanzendatenbanken konfiguriert. Fügen Sie in den Einstellungen "
+            "API-Zugangsdaten hinzu, um online zu suchen.",
+        "{name} ({scientific}) — {source}": "{name} ({scientific}) — {source}",
+        "Unknown": "Unbekannt",
+        "Search failed: {error}": "Suche fehlgeschlagen: {error}",
+        "Search Failed": "Suche fehlgeschlagen",
+        "Failed to search plant database:\n{error}\n\nPlease check your internet connection and API credentials.":
+            "Pflanzendatenbank-Suche fehlgeschlagen:\n{error}\n\nBitte überprüfen Sie Ihre Internetverbindung und API-Zugangsdaten.",
+        "Botanical Classification": "Botanische Klassifikation",
+        "Family:": "Familie:",
+        "Genus:": "Gattung:",
+        "Growing Requirements": "Wachstumsanforderungen",
+        "Cycle:": "Lebenszyklus:",
+        "Sun:": "Sonne:",
+        "Water:": "Wasser:",
+        "Hardiness Zones:": "Winterhärtezonen:",
+        "Hardiness Zone:": "Winterhärtezone:",
+        "Soil:": "Boden:",
+        "Size": "Größe",
+        "Max Height:": "Max. Höhe:",
+        "Max Spread:": "Max. Breite:",
+        "Attributes": "Eigenschaften",
+        "Edible:": "Essbar:",
+        "Yes": "Ja",
+        "Flowering:": "Blüte:",
+        "Source: {source}": "Quelle: {source}",
+        "No Selection": "Keine Auswahl",
+        "Please select a plant from the search results.":
+            "Bitte wählen Sie eine Pflanze aus den Suchergebnissen.",
+        "Limited Plant Data": "Eingeschränkte Pflanzendaten",
+        "Could not load full details for {name} from {source}. "
+        "The plant will be added with basic information only "
+        "(sun, water, pH, and foliage data may be missing).":
+            "Es konnten keine vollständigen Details für {name} von {source} geladen werden. "
+            "Die Pflanze wird nur mit grundlegenden Informationen hinzugefügt "
+            "(Sonne, Wasser, pH-Wert und Laubdaten könnten fehlen).",
+    },
+
+    # ── PolygonItem (context menu — pylupdate6 cannot extract _ alias) ──
+    "PolygonItem": {
+        # Area label (US-11.9) and soil test (US-12.10a).
+        "Show Area": "Fläche anzeigen",
+        "Add soil test…": "Bodenprobe hinzufügen…",
+        "Log Pest/Disease…": "Schädling/Krankheit eintragen…",
+        "Exit Vertex Edit Mode": "Knotenbearbeitungsmodus beenden",
+        "Edit Vertices": "Knoten bearbeiten",
+        "Edit Label": "Beschriftung bearbeiten",
+        "Hide Grid": "Raster ausblenden",
+        "Show Grid": "Raster einblenden",
+        "Delete": "Löschen",
+        "Duplicate": "Duplizieren",
+        "Create Linear Array...": "Lineares Muster erstellen...",
+        "Create Grid Array...": "Rastermuster erstellen...",
+        "Create Circular Array...": "Kreismuster erstellen...",
+        "Boolean": "Bool'sche Operation",
+        "Union": "Vereinigung",
+        "Intersect": "Schnittmenge",
+        "Subtract": "Subtraktion",
+        "Array Along Path...": "Muster entlang Pfad...",
+    },
+
+    # ── PolygonTool ──
+    "PolygonTool": {
+        "Polygon": "Polygon",
+    },
+
+    # ── PolylineItem (context menu — pylupdate6 cannot extract _ alias) ──
+    "PolylineItem": {
+        "Exit Vertex Edit Mode": "Knotenbearbeitungsmodus beenden",
+        "Edit Vertices": "Knoten bearbeiten",
+        "Edit Label": "Beschriftung bearbeiten",
+        "Delete": "Löschen",
+        "Duplicate": "Duplizieren",
+        "Create Linear Array...": "Lineares Muster erstellen...",
+        "Create Grid Array...": "Rastermuster erstellen...",
+        "Create Circular Array...": "Kreismuster erstellen...",
+        "Array Along Path...": "Muster entlang Pfad...",
+    },
+
+    # ── PolylineTool ──
+    "PolylineTool": {
+        "Polyline": "Polylinie",
+    },
+
+    # ── PlantingCalendarView ──
+    # NOTE: "Soil mismatch in {bed}: {plants}" moved to the "Tasks" context (#228,
+    # now emitted by services/task_generator.generate_soil_mismatch_tasks).
+    "PlantingCalendarView": {
+        "Germination": "Keimung",
+        "Prick out": "Pikieren",
+        "Harden off": "Abhärten",
+        "Sow {name} in {bed} (succession)": "{name} in {bed} säen (Anbaufolge)",
+        "Clear {name} from {bed} (succession)": "{name} aus {bed} räumen (Anbaufolge)",
+        "{title} — {names}": "{title} — {names}",
+    },
+
+    # ── BedActions (shared context menu items for bed-capable shapes — ADR-017) ──
+    "BedActions": {
+        "Hide Grid": "Raster ausblenden",
+        "Show Grid": "Raster einblenden",
+        "Add soil test…": "Bodentest hinzufügen…",
+        "Log Pest/Disease…": "Schädling/Krankheit erfassen…",
+        "Plan Succession…": "Anbaufolge planen…",
+    },
+
+    # ── SuccessionPlanDialog (US-12.8) ──
+    "SuccessionPlanDialog": {
+        "Succession Plan: {name}": "Anbaufolge: {name}",
+        "Succession Plan": "Anbaufolge",
+        "Year": "Jahr",
+        "Early Spring": "Frühling (früh)",
+        "Late Spring": "Frühling (spät)",
+        "Summer": "Sommer",
+        "Fall": "Herbst",
+        "Season": "Saison",
+        "Plant": "Pflanze",
+        "Start Date": "Startdatum",
+        "End Date": "Enddatum",
+        "Add Entry": "Eintrag hinzufügen",
+        "Edit Entry": "Eintrag bearbeiten",
+        "Delete Entry": "Eintrag löschen",
+        "Crop Compatibility": "Kulturverträglichkeit",
+        "No compatibility data for current entries.": "Keine Verträglichkeitsdaten für aktuelle Einträge.",
+        "Set project location for accurate dates": "Projektstandort festlegen für genaue Daten",
+        "{a} overlaps {b}: antagonist": "{a} überschneidet sich mit {b}: unverträglich",
+    },
+
+    # ── _EntryDialog (US-12.8 succession entry editor) ──
+    "_EntryDialog": {
+        "Add Succession Entry": "Anbaufolge-Eintrag hinzufügen",
+        "Edit Succession Entry": "Anbaufolge-Eintrag bearbeiten",
+        "Plant name": "Pflanzenname",
+        "Start": "Start",
+        "End": "Ende",
+        "Notes": "Notizen",
+        "Validation": "Validierung",
+        "Plant name is required.": "Pflanzenname ist erforderlich.",
+        "End date must not be before start date.": "Enddatum darf nicht vor dem Startdatum liegen.",
+        "Season:": "Saison:",
+        "Cancel": "Abbrechen",
+        "OK": "OK",
+        # current _EntryDialog strings (the rows above are older wording kept for the .ts history)
+        "Add Entry": "Eintrag hinzufügen",
+        "Edit Entry": "Eintrag bearbeiten",
+        "Plant": "Pflanze",
+        "e.g. Lettuce, Tomato, Spinach…": "z. B. Salat, Tomate, Spinat…",
+        "Start Date": "Startdatum",
+        "End Date": "Enddatum",
+        "Optional notes…": "Optionale Notizen…",
+        "Season: {seg}": "Saison: {seg}",
+    },
+
+    # ── PrintOptionsDialog ──
+    "PrintOptionsDialog": {
+        "Print Options": "Druckoptionen",
+        "Scale": "Maßstab",
+        "Print scale:": "Druckmaßstab:",
+        "Include": "Einschließen",
+        "Grid": "Raster",
+        "Object labels": "Objektbeschriftungen",
+        "Legend (project name, scale, date)": "Legende (Projektname, Maßstab, Datum)",
+        "Canvas: {w} m × {h} m": "Leinwand: {w} m × {h} m",
+        "Single page (scaled to fit)": "Eine Seite (skaliert passend)",
+        "1 page at {scale}": "1 Seite bei {scale}",
+        "{total} pages ({cols} × {rows}) at {scale}": "{total} Seiten ({cols} × {rows}) bei {scale}",
+    },
+
+    # ── PropertiesDialog ──
+    "PropertiesDialog": {
+        "Object Properties": "Objekteigenschaften",
+        "Basic Information": "Grundinformationen",
+        "Type:": "Typ:",
+        "Name:": "Name:",
+        "Layer:": "Ebene:",
+        "Appearance": "Erscheinungsbild",
+        "Fill Color:": "Füllfarbe:",
+        "Fill Pattern:": "Füllmuster:",
+        "Stroke Color:": "Linienfarbe:",
+        "Stroke Width:": "Linienstärke:",
+        "Stroke Style:": "Linienstil:",
+        "Additional Information": "Zusätzliche Informationen",
+    },
+
+    # ── WeatherWidget (US-12.1) ──
+    "WeatherWidget": {
+        "Weather Forecast": "Wettervorhersage",
+        "Refresh forecast": "Vorhersage aktualisieren",
+        "Show / hide full forecast": "Vollständige Vorhersage anzeigen/ausblenden",
+        "Loading forecast …": "Vorhersage wird geladen …",
+        "Set a location to enable weather forecast.\n"
+        "Use File › Set Garden Location to configure GPS coordinates.":
+            "Legen Sie einen Standort fest, um die Wettervorhersage zu aktivieren.\n"
+            "Verwenden Sie Datei › Gartenstandort festlegen zum Konfigurieren der GPS-Koordinaten.",
+        "Date": "Datum",
+        "Weather": "Wetter",
+        "Max °C": "Max °C",
+        "Min °C": "Min °C",
+        "Rain mm": "Regen mm",
+        "Weather forecast unavailable:\n{message}": "Wettervorhersage nicht verfügbar:\n{message}",
+        "Last updated %1 min ago": "Zuletzt aktualisiert vor %1 Min.",
+        "Last updated %1 h ago": "Zuletzt aktualisiert vor %1 Std.",
+    },
+
+    # ── _WeatherFetchWorker ──
+    "_WeatherFetchWorker": {
+        "Forecast unavailable": "Vorhersage nicht verfügbar",
+    },
+
+    # ── _DashboardPanel (US-12.2 frost task templates; #228 converged) ──
+    "_DashboardPanel": {
+        # Frost task titles already start with "Frost …", so the template just
+        # prefixes the warning icon (the temperature + plant names are in %1).
+        "⚠ %1": "⚠ %1",
+        "❄ %1": "❄ %1",
+    },
+
+    # ── SmartSymbolsPanel (US-C4) ──
+    "SmartSymbolsPanel": {
+        "Search symbols…": "Symbole suchen…",
+        "Insert": "Einfügen",
+    },
+
+    # ── PropertiesPanel ──
+    "PropertiesPanel": {
+        # US-E9 asset-forge pilot fill patterns (#264)
+        "Decking": "Terrassendielen",
+        "Corten steel": "Cortenstahl",
+        "No objects selected": "Keine Objekte ausgewählt",
+        "{count} objects selected": "{count} Objekte ausgewählt",
+        "Symbol definition not found — showing cached geometry.":
+            "Symboldefinition nicht gefunden — zwischengespeicherte Geometrie wird angezeigt.",
+        "Multi-selection editing\nnot yet implemented":
+            "Mehrfachauswahl-Bearbeitung\nnoch nicht implementiert",
+        "Type:": "Typ:",
+        "Name:": "Name:",
+        "Show label on canvas": "Beschriftung auf der Leinwand anzeigen",
+        "Label:": "Beschriftung:",
+        "Layer:": "Ebene:",
+        "Position:": "Position:",
+        "Diameter:": "Durchmesser:",
+        "Size:": "Größe:",
+        "Semi-axes:": "Halbachsen:",
+        "Fill Color:": "Füllfarbe:",
+        "Fill Pattern:": "Füllmuster:",
+        "Stroke Color:": "Linienfarbe:",
+        "Stroke Width:": "Linienstärke:",
+        "Stroke Style:": "Linienstil:",
+        "Group ({n} items)": "Gruppe ({n} Elemente)",
+        "Ctrl+Shift+G to ungroup": "Strg+Umschalt+G zum Aufheben der Gruppierung",
+        "Contained Plants": "Enthaltene Pflanzen",
+        "No plants in this bed": "Keine Pflanzen in diesem Beet",
+        "Total: {count} plant(s)": "Gesamt: {count} Pflanze(n)",
+        "Unlink": "Verknüpfung aufheben",
+        "Parent Bed": "Übergeordnetes Beet",
+        "Grid Overlay": "Rasterüberlagerung",
+        "Show grid": "Raster anzeigen",
+        "Grid:": "Raster:",
+        "Spacing:": "Abstand:",
+        "Cells:": "Zellen:",
+        "Soil Fill": "Bodensubstrat",
+        "Soil depth:": "Bodentiefe:",
+        "Fill depth used to calculate soil volume in the Shopping List":
+            "Fülltiefe zur Berechnung des Bodenvolumens in der Einkaufsliste",
+        # ── Container properties (US-C3) ──
+        "Container": "Pflanzgefäß",
+        "Material:": "Material:",
+        "Terracotta": "Ton",
+        "Plastic": "Kunststoff",
+        "Wood": "Holz",
+        "Metal": "Metall",
+        "Drainage:": "Drainage:",
+        "Has drainage holes": "Hat Abzugslöcher",
+        "Height:": "Höhe:",
+        "Soil volume:": "Bodenvolumen:",
+        "Auto": "Auto",
+        "0 = auto-compute from footprint × height; set a value to override":
+            "0 = automatisch aus Grundfläche × Höhe; Wert zum Überschreiben eingeben",
+        "Effective:": "Effektiv:",
+        "{litres:.1f} L": "{litres:.1f} L",
+        "—": "—",
+        # ── Object height (US-E2, sun/shade) ──
+        "Object height:": "Objekthöhe:",
+        "Custom height (0 = back to automatic)":
+            "Eigene Höhe (0 = zurück zu automatisch)",
+        "From container fill height": "Aus Gefäß-Füllhöhe",
+        "From measured current height": "Aus gemessener aktueller Höhe",
+        "From assigned species (max height)":
+            "Aus zugewiesener Pflanzenart (max. Höhe)",
+        "Default for this object type": "Standard für diesen Objekttyp",
+        "No height — casts no shadow": "Keine Höhe — wirft keinen Schatten",
+        "Recommended spacing radius (half of plant spread)":
+            "Empfohlener Abstandsradius (halbe Pflanzenbreite)",
+        "Spacing radius:": "Abstandsradius:",
+        "Needs frost protection": "Frostschutz benötigt",
+        "Frost protection:": "Frostschutz:",
+        "Override frost sensitivity:\n☑ Always protect  ☐ Never protect  ‒ Use plant database default":
+            "Frostempfindlichkeit überschreiben:\n☑ Immer schützen  ☐ Nie schützen  ‒ Datenbankstandard verwenden",
+        "Text": "Text",
+        "Content:": "Inhalt:",
+        "Font:": "Schriftart:",
+        "Bold": "Fett",
+        "Italic": "Kursiv",
+        "Style:": "Stil:",
+        "Color:": "Farbe:",
+        "── Paths ──": "── Wege ──",
+        "── Fences ──": "── Zäune ──",
+    },
+
+    # ── EllipseItem (context menu — pylupdate6 cannot extract _ alias) ──
+    "EllipseItem": {
+        # Area label (US-11.9) and soil test (US-12.10a).
+        "Show Area": "Fläche anzeigen",
+        "Add soil test…": "Bodenprobe hinzufügen…",
+        "Log Pest/Disease…": "Schädling/Krankheit eintragen…",
+        "Edit Label": "Beschriftung bearbeiten",
+        "Delete": "Löschen",
+        "Duplicate": "Duplizieren",
+        "Create Linear Array...": "Lineares Muster erstellen...",
+        "Create Grid Array...": "Rastermuster erstellen...",
+        "Create Circular Array...": "Kreismuster erstellen...",
+        "Boolean": "Bool'sche Operation",
+        "Union": "Vereinigung",
+        "Intersect": "Schnittmenge",
+        "Subtract": "Subtraktion",
+        "Array Along Path...": "Muster entlang Pfad...",
+    },
+
+    # ── EllipseTool ──
+    "EllipseTool": {
+        "Ellipse": "Ellipse",
+    },
+
+    # ── OffsetTool / CanvasView strings for offset ──
+    "OffsetTool": {
+        "Offset": "Versatz",
+    },
+
+    # ── ConstraintToolbar (button tooltips for CAD-editing tools) ──
+    "ConstraintToolbar": {
+        "Constraints": "Randbedingungen",
+        "Trim/Extend (I) — X toggles mode": "Trimmen/Erweitern (I) — X wechselt Modus",
+        "Offset (O) — parallel copy inward/outward":
+            "Versatz (O) — parallele Kopie nach innen/außen",
+        "Fillet (Shift+F) — round a corner": "Abrunden (Umschalt+F) — Ecke abrunden",
+        "Chamfer (Shift+C) — bevel a corner":
+            "Anfasen (Umschalt+C) — Ecke abschrägen",
+        "Mirror (Shift+M) — reflect selection across an axis":
+            "Spiegeln (Umschalt+M) — Auswahl an einer Achse spiegeln",
+    },
+
+    # ── MirrorTool (US-B4) ──
+    "MirrorTool": {
+        "Mirror": "Spiegeln",
+        "Select shapes to mirror first, then pick the axis":
+            "Zuerst Formen zum Spiegeln auswählen, dann die Achse festlegen",
+        "Mirror: click axis start": "Spiegeln: Achsen-Startpunkt anklicken",
+        "Select shapes to mirror first":
+            "Zuerst Formen zum Spiegeln auswählen",
+        "Click axis end (hold Shift for 45°)":
+            "Achsen-Endpunkt anklicken (Umschalt für 45°)",
+        "Axis must have a length": "Die Achse muss eine Länge haben",
+        "Mirror the selection across the axis?":
+            "Die Auswahl an der Achse spiegeln?",
+        "Copy": "Kopieren",
+        "Move": "Verschieben",
+        "Nothing mirrored ({skipped} unsupported)":
+            "Nichts gespiegelt ({skipped} nicht unterstützt)",
+        "Mirrored {count} item(s)": "{count} Element(e) gespiegelt",
+        "({skipped} unsupported skipped)":
+            "({skipped} nicht unterstützte übersprungen)",
+        "— copies are unconstrained": "— Kopien sind ohne Randbedingungen",
+    },
+
+    # ── Paper Space (Phase 13 Package B — US-B7) ──
+    "TitleBlockItem": {
+        "Project:": "Projekt:",
+        "Date:": "Datum:",
+        "Scale:": "Maßstab:",
+        "(unsaved)": "(nicht gespeichert)",
+    },
+
+    # ── RectangleItem (context menu — pylupdate6 cannot extract _ alias) ──
+    "RectangleItem": {
+        # Area label (US-11.9) and soil test (US-12.10a).
+        "Show Area": "Fläche anzeigen",
+        "Add soil test…": "Bodenprobe hinzufügen…",
+        "Log Pest/Disease…": "Schädling/Krankheit eintragen…",
+        "Exit Vertex Edit Mode": "Knotenbearbeitungsmodus beenden",
+        "Edit Vertices": "Knoten bearbeiten",
+        "Edit Label": "Beschriftung bearbeiten",
+        "Hide Grid": "Raster ausblenden",
+        "Show Grid": "Raster einblenden",
+        "Delete": "Löschen",
+        "Duplicate": "Duplizieren",
+        "Create Linear Array...": "Lineares Muster erstellen...",
+        "Create Grid Array...": "Rastermuster erstellen...",
+        "Create Circular Array...": "Kreismuster erstellen...",
+        "Boolean": "Bool'sche Operation",
+        "Union": "Vereinigung",
+        "Intersect": "Schnittmenge",
+        "Subtract": "Subtraktion",
+        "Array Along Path...": "Muster entlang Pfad...",
+    },
+
+    # ── RectangleTool ──
+    "RectangleTool": {
+        "Rectangle": "Rechteck",
+    },
+
+    # ── ResizeHandle ──
+    "ResizeHandle": {
+        "Scale blocked: item has dimensional constraints": "Skalierung blockiert: Element hat Maßeinschränkungen",
+    },
+
+    # ── SelectTool ──
+    "SelectTool": {
+        "Select": "Auswählen",
+    },
+
+    # ── ShortcutsDialog ──
+    "ShortcutsDialog": {
+        "Keyboard Shortcuts": "Tastenkürzel",
+        "File": "Datei",
+        "New Project": "Neues Projekt",
+        "Open Project": "Projekt öffnen",
+        "Save": "Speichern",
+        "Save As": "Speichern unter",
+        "Exit": "Beenden",
+        "Edit": "Bearbeiten",
+        "Undo": "Rückgängig",
+        "Redo": "Wiederherstellen",
+        "Cut": "Ausschneiden",
+        "Copy": "Kopieren",
+        "Paste": "Einfügen",
+        "Duplicate": "Duplizieren",
+        "Delete selected": "Auswahl löschen",
+        "Select All": "Alles auswählen",
+        "View": "Ansicht",
+        "Zoom In": "Vergrößern",
+        "Zoom Out": "Verkleinern",
+        "Fit to Window": "An Fenster anpassen",
+        "Toggle Grid": "Raster umschalten",
+        "Toggle Snap to Grid": "Am Raster einrasten umschalten",
+        "Fullscreen Preview": "Vollbildvorschau",
+        "Exit Fullscreen Preview": "Vollbildvorschau beenden",
+        "Scroll Wheel": "Mausrad",
+        "Zoom": "Zoom",
+        "Middle Mouse Drag": "Mittlere Maustaste ziehen",
+        "Pan": "Schwenken",
+        "Drawing Tools": "Zeichenwerkzeuge",
+        "Select Tool": "Auswahlwerkzeug",
+        "Measure Tool": "Messwerkzeug",
+        "Rectangle": "Rechteck",
+        "Polygon": "Polygon",
+        "Circle": "Kreis",
+        "Property Objects": "Grundstücksobjekte",
+        "House": "Haus",
+        "Terrace/Patio": "Terrasse/Patio",
+        "Driveway": "Einfahrt",
+        "Garden Bed": "Gartenbeet",
+        "Fence": "Zaun",
+        "Wall": "Mauer",
+        "Path": "Weg",
+        "Plant Tools": "Pflanzenwerkzeuge",
+        "Tree": "Baum",
+        "Shrub": "Strauch",
+        "Perennial": "Staude",
+        "Search Plant Database": "Pflanzendatenbank durchsuchen",
+        "Object Manipulation": "Objektbearbeitung",
+        "Arrow Keys": "Pfeiltasten",
+        "Move selected (by grid size)": "Auswahl verschieben (um Rastergröße)",
+        "Shift+Arrow Keys": "Umschalt+Pfeiltasten",
+        "Move selected (by 1cm)": "Auswahl verschieben (um 1 cm)",
+        "Double-click": "Doppelklick",
+        "Edit object label": "Objektbeschriftung bearbeiten",
+        "Close": "Schließen",
+    },
+
+    # ── SeedInventoryView ──
+    "SeedInventoryView": {
+        "(unnamed plant)": "(unbenannte Pflanze)",
+    },
+
+    # ── TextItem (context menu — pylupdate6 cannot extract _ alias) ──
+    "TextItem": {
+        "Edit Text": "Text bearbeiten",
+        "Delete": "Löschen",
+    },
+
+    # ── TextTool ──
+    "TextTool": {
+        "Text": "Text",
+    },
+
+    # ── VertexHandle (context menu — pylupdate6 cannot extract _ alias) ──
+    "VertexHandle": {
+        "Delete Vertex": "Knoten löschen",
+        "Insert Vertex Before": "Knoten davor einfügen",
+        "Insert Vertex After": "Knoten danach einfügen",
+    },
+
+    # ── MidpointHandle (context menu + tooltip) ──
+    "MidpointHandle": {
+        "Click to add a vertex": "Klicken zum Hinzufügen eines Knotens",
+        "Add Vertex Here": "Hier Knoten einfügen",
+    },
+
+    # ── _DetailPanel ──
+    # The species detail line was five hardcoded English f-strings (#415); the
+    # frost-tolerance column prints the data file's raw token.
+    "_DetailPanel": {
+        "↺": "↺",
+        "Germination: {min}–{max} days": "Keimung: {min}–{max} Tage",
+        "Min. germ. temp: {temp} °C": "Min. Keimtemperatur: {temp} °C",
+        "Seed depth: {depth} cm": "Saattiefe: {depth} cm",
+        "Frost tolerance: {level}": "Frostverträglichkeit: {level}",
+        "Maturity: {min}–{max} days": "Reifezeit: {min}–{max} Tage",
+        "hardy": "winterhart",
+        "half-hardy": "bedingt winterhart",
+        "tender": "frostempfindlich",
+        "The end date of a propagation step cannot be before its start date — the step was not changed.":
+            "Das Enddatum eines Vermehrungsschritts kann nicht vor seinem Startdatum liegen — der Schritt wurde nicht geändert.",
+    },
+
+    # ── WelcomeDialog ──
+    "WelcomeDialog": {
+        "Welcome to Open Garden Planner": "Willkommen bei Open Garden Planner",
+        "Open Garden Planner": "Open Garden Planner",
+        "Recent Projects": "Aktuelle Projekte",
+        "Clear Recent": "Verlauf löschen",
+        "Get Started": "Erste Schritte",
+        "New Project": "Neues Projekt",
+        "Open Project...": "Projekt öffnen...",
+        "Open Selected": "Ausgewähltes öffnen",
+        "<b>Tip:</b> Double-click a recent project to open it directly.":
+            "<b>Tipp:</b> Doppelklicken Sie auf ein aktuelles Projekt, um es direkt zu öffnen.",
+        "Show this screen on startup": "Diesen Bildschirm beim Start anzeigen",
+        "Close": "Schließen",
+        "No recent projects": "Keine aktuellen Projekte",
+        "{name} (not found)": "{name} (nicht gefunden)",
+        "File not found: {path}": "Datei nicht gefunden: {path}",
+    },
+
+    # ── CalloutItem (US-11.10) ──
+    "CalloutItem": {
+        "Edit Text": "Text bearbeiten",
+        "Delete": "Löschen",
+    },
+
+    # ── FindReplacePanel (US-11.24) ──
+    "FindReplacePanel": {
+        "Find & Replace": "Suchen & Ersetzen",
+        "Name contains:": "Name enthält:",
+        "Type:": "Typ:",
+        "Layer:": "Ebene:",
+        "Species contains:": "Art enthält:",
+        "(any)": "(beliebig)",
+        "Search": "Suchen",
+        "Select All Matching": "Alle Treffer auswählen",
+        "All Types": "Alle Typen",
+        "All Layers": "Alle Ebenen",
+        "(unnamed)": "(unbenannt)",
+        "Bulk change layer:": "Ebene ändern:",
+        "Replace species:": "Art ersetzen:",
+        "Apply": "Anwenden",
+    },
+
+    # ── ObjectType (from QT_TR_NOOP in object_types.py — missing from pylupdate6) ──
+    "ObjectType": {
+        "Generic Rectangle": "Generisches Rechteck",
+        "Generic Polygon": "Generisches Polygon",
+        "Generic Circle": "Generischer Kreis",
+        "Ellipse": "Ellipse",
+        "House": "Haus",
+        "Garage/Shed": "Garage/Schuppen",
+        "Terrace/Patio": "Terrasse/Patio",
+        "Driveway": "Einfahrt",
+        "Pond/Pool": "Teich/Pool",
+        "Greenhouse": "Gewächshaus",
+        "Garden Bed": "Gartenbeet",
+        "Lawn": "Rasen",
+        "Fence": "Zaun",
+        "Wall": "Mauer",
+        "Path": "Weg",
+        "Tree": "Baum",
+        "Shrub": "Strauch",
+        "Perennial": "Staude",
+        "Hedge Section": "Heckenabschnitt",
+        "Table (Rectangular)": "Tisch (rechteckig)",
+        "Chair": "Stuhl",
+        "Bench": "Bank",
+        "Lounger": "Liege",
+        "Table (Round)": "Tisch (rund)",
+        "Parasol": "Sonnenschirm",
+        "BBQ/Grill": "Grill",
+        "Fire Pit": "Feuerstelle",
+        "Planter/Pot": "Pflanzgefäß/Topf",
+        "Raised Bed": "Hochbeet",
+        "Compost Bin": "Komposter",
+        "Cold Frame": "Frühbeet",
+        "Tool Shed": "Geräteschuppen",
+        "Rain Barrel": "Regentonne",
+        "Water Tap": "Wasserhahn",
+        # Package 3a roster (#308)
+        "Sandbox": "Sandkasten",
+        "Trampoline": "Trampolin",
+        "Hot Tub": "Whirlpool",
+        "Swing": "Schaukel",
+        "Picnic Table": "Picknicktisch",
+        "Hammock": "Hängematte",
+        "Wheelbarrow": "Schubkarre",
+        "Pergola": "Pergola",
+        "Bird Bath": "Vogeltränke",
+        # ── Vertical & container gardening (US-C3) ──
+        "Container": "Pflanzgefäß",
+        "Round Container": "Rundes Pflanzgefäß",
+        "Wall Planter": "Wandpflanzgefäß",
+        "Trellis": "Rankgitter",
+        "Text": "Text",
+        "Callout": "Beschriftungspfeil",
+        "Journal Pin": "Tagebuch-Nadel",
+    },
+
+    # ── ContainerModel (US-C3 — watering hints, QCoreApplication.translate) ──
+    "ContainerModel": {
+        "Porous terracotta dries out fast — water frequently.":
+            "Poröser Ton trocknet schnell aus — häufig gießen.",
+        "Plastic retains moisture — water sparingly to avoid root rot.":
+            "Kunststoff hält Feuchtigkeit — sparsam gießen, um Wurzelfäule zu vermeiden.",
+        "Wood holds moisture moderately, but can rot if kept waterlogged.":
+            "Holz hält Feuchtigkeit mäßig, kann bei Staunässe aber faulen.",
+        "Metal heats up in sun and dries the root zone — monitor on hot days.":
+            "Metall heizt in der Sonne auf und trocknet den Wurzelbereich — an heißen "
+            "Tagen beobachten.",
+        # Atomic no-drainage suffix — the UI translates this and the material
+        # hint separately and joins them, so no per-material combined strings.
+        "No drainage holes: water carefully — risk of waterlogging.":
+            "Keine Abzugslöcher: vorsichtig gießen — Gefahr von Staunässe.",
+    },
+
+    # ── Tasks (US-C2 #188 — QCoreApplication.translate in task_generator.py) ──
+    "Tasks": {
+        "Frost {temp}°C": "Frost {temp}°C",
+        "Soil mismatch in {bed}: {plants}": "Bodenkonflikt in {bed}: {plants}",
+    },
+
+    # ── TasksView (US-C2 #188 — the Tasks dashboard tab) ──
+    "TasksView": {
+        "Tasks": "Aufgaben",
+        "Add Task": "Aufgabe hinzufügen",
+        "Overdue": "Überfällig",
+        "Today": "Heute",
+        "This Week": "Diese Woche",
+        "Upcoming": "Demnächst",
+        "No date": "Ohne Datum",
+        "Snoozed": "Zurückgestellt",
+        "Done": "Erledigt",
+        "No tasks — you're all caught up.": "Keine Aufgaben — alles erledigt.",
+        "Show on canvas": "Auf der Zeichenfläche anzeigen",
+        "Un-snooze": "Zurückstellung aufheben",
+        "Snooze": "Zurückstellen",
+        "Edit": "Bearbeiten",
+        "Delete": "Löschen",
+        "Dismiss": "Verwerfen",
+        "Reopen": "Wieder öffnen",
+        "1 day": "1 Tag",
+        "1 week": "1 Woche",
+        "2 weeks": "2 Wochen",
+    },
+
+    # ── TaskReminderBar (US-C2 #188 — overdue-task reminder bar) ──
+    "TaskReminderBar": {
+        "You have {n} overdue manual task(s).":
+            "Sie haben {n} überfällige manuelle Aufgabe(n).",
+        "Show Tasks": "Aufgaben anzeigen",
+        "Dismiss": "Verwerfen",
+    },
+
+    # ── TaskDialog (US-C2 #188 — manual task add/edit dialog) ──
+    "TaskDialog": {
+        "New Task": "Neue Aufgabe",
+        "Edit Task": "Aufgabe bearbeiten",
+        "Due Date": "Fälligkeitsdatum",
+        "Title": "Titel",
+        "Task summary…": "Kurzbeschreibung…",
+        "Linked Bed": "Verknüpftes Beet",
+        "(No bed)": "(Kein Beet)",
+        "Notes": "Notizen",
+        "Details…": "Details…",
+    },
+
+    # ── PreferencesDialog (US-12.2 weather section) ──
+    "PreferencesDialog": {
+        "Tasks": "Aufgaben",
+        "Notify about overdue tasks on startup":
+            "Beim Start über überfällige Aufgaben benachrichtigen",
+        "Show a reminder on startup when the open project has overdue tasks":
+            "Beim Start an überfällige Aufgaben im geöffneten Projekt erinnern",
+        "Preferences": "Einstellungen",
+        "Configure API keys for online services below. "
+        "Keys are stored locally in your user settings and are never "
+        "included in garden plans or the installer. "
+        "Environment variables (.env) are used as fallback.":
+            "Konfigurieren Sie unten API-Schlüssel für Online-Dienste. "
+            "Schlüssel werden lokal in Ihren Benutzereinstellungen gespeichert "
+            "und nie in Gartenpläne oder das Installationsprogramm aufgenommen. "
+            "Umgebungsvariablen (.env) werden als Fallback verwendet.",
+        "Google Maps": "Google Maps",
+        "Enter Google Maps API key...": "Google-Maps-API-Schlüssel eingeben...",
+        "Used for Load Satellite Background. The key is stored only in "
+        "your local user settings and is never included in plans or "
+        "the installer.":
+            "Für 'Satellitenbild laden' verwendet. Der Schlüssel wird nur in "
+            "Ihren lokalen Benutzereinstellungen gespeichert und nie in Pläne "
+            "oder das Installationsprogramm aufgenommen.",
+        "Using OGP_GOOGLE_MAPS_KEY from environment":
+            "OGP_GOOGLE_MAPS_KEY aus der Umgebung wird verwendet",
+        "Configure your plant database API keys below. "
+        "Keys are stored locally and never shared. "
+        "Environment variables (.env) are used as fallback.":
+            "Konfigurieren Sie unten Ihre Pflanzendatenbank-API-Schlüssel. "
+            "Schlüssel werden lokal gespeichert und nie weitergegeben. "
+            "Umgebungsvariablen (.env) werden als Fallback verwendet.",
+        "Trefle (trefle.io)": "Trefle (trefle.io)",
+        "API Token:": "API-Token:",
+        "Enter Trefle API token...": "Trefle-API-Token eingeben...",
+        "Get API Key": "API-Schlüssel erhalten",
+        "Test": "Testen",
+        "Perenual (perenual.com)": "Perenual (perenual.com)",
+        "API Key:": "API-Schlüssel:",
+        "Enter Perenual API key...": "Perenual-API-Schlüssel eingeben...",
+        "Permapeople (permapeople.org)": "Permapeople (permapeople.org)",
+        "Key ID:": "Schlüssel-ID:",
+        "Enter Key ID...": "Schlüssel-ID eingeben...",
+        "Key Secret:": "Schlüssel-Geheimnis:",
+        "Enter Key Secret...": "Schlüssel-Geheimnis eingeben...",
+        "Show": "Anzeigen",
+        "Hide": "Ausblenden",
+        "Cancel": "Abbrechen",
+        "Save": "Speichern",
+        "Please enter a Trefle API token first.": "Bitte zuerst einen Trefle-API-Token eingeben.",
+        "Please enter a Perenual API key first.": "Bitte zuerst einen Perenual-API-Schlüssel eingeben.",
+        "Please enter both Permapeople Key ID and Key Secret.":
+            "Bitte sowohl Permapeople-Schlüssel-ID als auch Schlüssel-Geheimnis eingeben.",
+        # Weather section (US-12.2)
+        "Weather": "Wetter",
+        "Orange warning threshold (°C):": "Orange Warnschwelle (°C):",
+        "Red alert threshold (°C):": "Roter Alarm-Schwellenwert (°C):",
+        "Temperature at or below which half-hardy plants are at risk":
+            "Temperatur, bei der oder darunter halbharte Pflanzen gefährdet sind",
+        "Temperature at or below which tender plants are at risk":
+            "Temperatur, bei der oder darunter empfindliche Pflanzen gefährdet sind",
+        # Agent API section (US-D1.1)
+        "Agent API": "Agent-API",
+        "Enable Agent API (local MCP server)":
+            "Agent-API aktivieren (lokaler MCP-Server)",
+        "Run a local MCP server so AI assistants can read this garden "
+        "plan. Binds to 127.0.0.1 (this computer) only; read-only.":
+            "Lokalen MCP-Server starten, damit KI-Assistenten diesen Gartenplan "
+            "lesen können. Bindet nur an 127.0.0.1 (diesen Computer); nur Lesen.",
+        "Port:": "Port:",
+        "Server URL:": "Server-URL:",
+    },
+
+    # ── UpdateBar ──
+    "UpdateBar": {
+        "A new version ({version}) is available.": "Eine neue Version ({version}) ist verfügbar.",
+        "What's new": "Was ist neu",
+        "Download && Install": "Herunterladen && Installieren",
+        "Skip this version": "Diese Version überspringen",
+        "Remind me later": "Später erinnern",
+        "Install Update": "Update installieren",
+        "The installer will be downloaded and launched.\n"
+        "Open Garden Planner will close when the installer starts.\n\n"
+        "Continue?":
+            "Das Installationsprogramm wird heruntergeladen und gestartet.\n"
+            "Open Garden Planner wird geschlossen, wenn die Installation beginnt.\n\n"
+            "Fortfahren?",
+        "Downloading {filename}…": "{filename} wird heruntergeladen…",
+        "Cancel": "Abbrechen",
+        "Download Failed": "Download fehlgeschlagen",
+        "Could not download the installer:\n{error}\n\n"
+        "Download the latest release directly:\n{url}":
+            "Das Installationsprogramm konnte nicht heruntergeladen werden:\n{error}\n\n"
+            "Neueste Version direkt herunterladen:\n{url}",
+        "Launch Failed": "Start fehlgeschlagen",
+        "Could not launch the installer:\n{error}\n\n"
+        "Try running Open Garden Planner as Administrator, "
+        "or download the installer directly:\n{url}":
+            "Das Installationsprogramm konnte nicht gestartet werden:\n{error}\n\n"
+            "Starten Sie Open Garden Planner als Administrator, "
+            "oder laden Sie das Installationsprogramm direkt herunter:\n{url}",
+    },
+
+    # ── DxfImportDialog ──
+    "DxfImportDialog": {
+        "Import DXF": "DXF importieren",
+        "File: {name}": "Datei: {name}",
+        "Scale Factor": "Skalierungsfaktor",
+        "Scale (DXF units → cm):": "Skalierung (DXF-Einheiten → cm):",
+        "Multiply DXF coordinates by this factor to get centimeters.\n"
+        "Use 0.1 for DXF in mm, 100 for DXF in metres.":
+            "DXF-Koordinaten mit diesem Faktor multiplizieren, um Zentimeter zu erhalten.\n"
+            "0,1 für DXF in mm, 100 für DXF in Metern.",
+        "Layers to Import": "Zu importierende Ebenen",
+        "Loading layers…": "Ebenen werden geladen…",
+        "Failed to read DXF: {error}": "DXF konnte nicht gelesen werden: {error}",
+        "No layers found — all entities will be imported.":
+            "Keine Ebenen gefunden – alle Objekte werden importiert.",
+        "{n} layer(s) found.": "{n} Ebene(n) gefunden.",
+    },
+
+    # ── PdfReportDialog ──
+    "PdfReportDialog": {
+        "Export PDF Report": "PDF-Bericht exportieren",
+        "Report Information": "Berichtsinformationen",
+        "Project name:": "Projektname:",
+        "Author:": "Autor:",
+        "Paper": "Papier",
+        "Size": "Größe",
+        "Orientation": "Ausrichtung",
+        "Landscape": "Querformat",
+        "Portrait": "Hochformat",
+        "Pages to Include": "Einzuschließende Seiten",
+        "Cover page": "Titelseite",
+        "Plan overview (full garden)": "Planübersicht (gesamter Garten)",
+        "Bed detail views (one page per bed)": "Beet-Detailansichten (eine Seite pro Beet)",
+        "Plant list": "Pflanzenliste",
+        "Garden journal notes": "Gartentagebuch-Notizen",
+        "Legend (layers)": "Legende (Ebenen)",
+        "A progress dialog will appear during export.":
+            "Während des Exports wird ein Fortschrittsdialog angezeigt.",
+    },
+
+    # ── PdfReportService (service-layer strings written into the PDF) ──
+    "PdfReportService": {
+        "N": "N",
+        # Shopping list extension (US-12.6).
+        "Shopping List": "Einkaufsliste",
+        "Category": "Kategorie",
+        "Item": "Artikel",
+        "Quantity": "Menge",
+        "Unit": "Einheit",
+        "Price": "Preis",
+        "Total": "Gesamt",
+        "Notes": "Notizen",
+        "Grand total": "Gesamtsumme",
+        "Shopping list is empty.": "Einkaufsliste ist leer.",
+        "Plant List": "Pflanzenliste",
+        "Legend": "Legende",
+        "Bed": "Beet",
+        "No plants found in this project.": "Keine Pflanzen in diesem Projekt gefunden.",
+        "Created with Open Garden Planner": "Erstellt mit Open Garden Planner",
+        "Garden Notes": "Tagebuchnotizen",
+        "No journal notes recorded.": "Keine Tagebuchnotizen vorhanden.",
+        "(no date)": "(kein Datum)",
+        "(empty)": "(leer)",
+        "(photo: {filename})": "(Foto: {filename})",
+    },
+
+    # ── SoilTestDialog (US-12.10a, extended in US-12.10c) ──
+    "SoilTestDialog": {
+        "Soil Test": "Bodenprobe",
+        "Soil Test — {name}": "Bodenprobe — {name}",
+        "Default Soil Test": "Standard-Bodenprobe",
+        "Date": "Datum",
+        "Mode": "Modus",
+        "Kit (categorical)": "Testkit (kategorisch)",
+        "Lab (ppm)": "Labor (ppm)",
+        "pH (0–14)": "pH (0–14)",
+        "Nitrogen (N)": "Stickstoff (N)",
+        "Phosphorus (P)": "Phosphor (P)",
+        "Potassium (K)": "Kalium (K)",
+        "Calcium (Ca)": "Calcium (Ca)",
+        "Magnesium (Mg)": "Magnesium (Mg)",
+        "Sulfur (S)": "Schwefel (S)",
+        "Notes": "Notizen",
+        "Depleted": "Verarmt",
+        "Deficient": "Mangel",
+        "Adequate": "Ausreichend",
+        "Sufficient": "Genügend",
+        "Surplus": "Überschuss",
+        "Low": "Niedrig",
+        "Medium": "Mittel",
+        "High": "Hoch",
+        "—": "—",
+        # US-12.10c — inline amendments section
+        "Amendments for this bed": "Bodenverbesserer für dieses Beet",
+        "Target pH": "Ziel-pH",
+        "Target N": "Ziel-N",
+        "Target P": "Ziel-P",
+        "Target K": "Ziel-K",
+        "No deficiencies — soil is adequate.": "Keine Mängel — der Boden ist ausreichend.",
+        "Raises pH {cur:.1f} → {tgt:.1f}": "Hebt pH {cur:.1f} → {tgt:.1f}",
+        "Lowers pH {cur:.1f} → {tgt:.1f}": "Senkt pH {cur:.1f} → {tgt:.1f}",
+        "Raises {nutrient} level {cur} → {tgt}": "Hebt {nutrient}-Stufe {cur} → {tgt}",
+        # US-12.10e — History tab
+        "Entry": "Eingabe",
+        "History": "Verlauf",
+        "Past tests": "Frühere Tests",
+        "No past tests yet": "Noch keine Tests aufgezeichnet",
+        "Trends": "Trends",
+        # Issue #171 — edit/delete past records
+        "Edit": "Bearbeiten",
+        "Delete": "Löschen",
+        "Edit Soil Test": "Bodenprobe bearbeiten",
+        "Delete the soil test from {date}?":
+            "Bodenprobe vom {date} löschen?",
+        "Delete soil test": "Bodenprobe löschen",
+        # F6: default-record badge in History tab
+        " (default)": " (Standard)",
+        # F2.10a: Lab-mode badge so users can tell same-date kit/lab rows apart.
+        " [Lab]": " [Labor]",
+        "pH": "pH",
+        "(no pH)": "(kein pH)",
+        "{date} — pH {ph}, N{n} P{p} K{k}":
+            "{date} — pH {ph}, N{n} P{p} K{k}",
+        # US-12.11: soil texture combo
+        "Soil texture": "Bodenart",
+        "(unknown)": "(unbekannt)",
+        "Sandy": "Sandig",
+        "Loamy": "Lehmig",
+        "Clayey": "Tonig",
+        "Compacted": "Verdichtet",
+    },
+
+    # ── SoilSparklineWidget (US-12.10e) ──
+    "SoilSparklineWidget": {
+        "No history yet": "Noch kein Verlauf",
+    },
+
+    # ── PestLogDialog (US-12.7) ──
+    "PestLogDialog": {
+        "Pest/Disease Log": "Schädlings-/Krankheitseintrag",
+        "Pest/Disease Log — {name}": "Schädlings-/Krankheitseintrag — {name}",
+        "Edit Pest/Disease Log": "Eintrag bearbeiten",
+        "Entry": "Eintrag",
+        "History": "Verlauf",
+        "Date": "Datum",
+        "Type": "Typ",
+        "Pest": "Schädling",
+        "Disease": "Krankheit",
+        "Name": "Name",
+        "e.g. Aphids, Powdery mildew": "z. B. Blattläuse, Echter Mehltau",
+        "Severity": "Schwere",
+        "Low": "Niedrig",
+        "Medium": "Mittel",
+        "High": "Hoch",
+        "Treatment": "Behandlung",
+        "e.g. Neem oil spray, weekly": "z. B. Neemöl-Spray, wöchentlich",
+        "Notes": "Notizen",
+        "(no photo)": "(kein Foto)",
+        "(unsaved)": "(ungespeichert)",
+        "(missing)": "(fehlt)",
+        "Attach Photo…": "Foto anhängen…",
+        "Remove Photo": "Foto entfernen",
+        "Save project first to attach photos":
+            "Projekt zuerst speichern, um Fotos anzuhängen",
+        "Resolved": "Behoben",
+        "Past entries": "Frühere Einträge",
+        "No past entries": "Keine früheren Einträge",
+        "Edit": "Bearbeiten",
+        "Delete": "Löschen",
+        "{date} — {type} — {name} ({severity})":
+            "{date} — {type} — {name} ({severity})",
+        " [Resolved]": " [Behoben]",
+        "(unnamed)": "(unbenannt)",
+        "Delete the entry from {date}?":
+            "Eintrag vom {date} löschen?",
+        "Delete pest/disease entry": "Eintrag löschen",
+        "Empty name": "Leerer Name",
+        "Save entry with empty name?":
+            "Eintrag mit leerem Namen speichern?",
+        "Select photo": "Foto auswählen",
+        "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)":
+            "Bilder (*.png *.jpg *.jpeg *.gif *.bmp *.webp)",
+        "Photo attach failed": "Foto-Anhang fehlgeschlagen",
+        "Could not copy photo: {err}":
+            "Foto konnte nicht kopiert werden: {err}",
+        "Click to open in image viewer": "Klicken, um in Bildbetrachter zu öffnen",
+    },
+
+    # ── PestOverviewPanel (US-12.7) ──
+    "PestOverviewPanel": {
+        "Active issues:": "Aktive Probleme:",
+        "No active issues": "Keine aktiven Probleme",
+        "(deleted item)": "(gelöschtes Objekt)",
+        "(unnamed)": "(unbenannt)",
+        "low": "niedrig",
+        "medium": "mittel",
+        "high": "hoch",
+        "{display} > {name} ({severity}) — {date}":
+            "{display} > {name} ({severity}) — {date}",
+    },
+
+    # ── JournalNoteDialog (US-12.9) ──
+    "JournalNoteDialog": {
+        "New Journal Note": "Neue Tagebuchnotiz",
+        "Edit Journal Note": "Tagebuchnotiz bearbeiten",
+        "Date": "Datum",
+        "Note": "Notiz",
+        "What happened here? Observations, weather, plans…":
+            "Was ist hier passiert? Beobachtungen, Wetter, Pläne…",
+        "(no photo)": "(kein Foto)",
+        "(unsaved)": "(ungespeichert)",
+        "(missing)": "(fehlt)",
+        "Attach Photo…": "Foto anhängen…",
+        "Remove Photo": "Foto entfernen",
+        "Save project first to attach photos":
+            "Projekt zuerst speichern, um Fotos anzuhängen",
+        "Select photo": "Foto auswählen",
+        "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)":
+            "Bilder (*.png *.jpg *.jpeg *.gif *.bmp *.webp)",
+        "Photo attach failed": "Foto-Anhang fehlgeschlagen",
+        "Could not copy photo: {err}":
+            "Foto konnte nicht kopiert werden: {err}",
+        "Click to open in image viewer": "Klicken, um in Bildbetrachter zu öffnen",
+    },
+
+    # ── JournalPanel (US-12.9) ──
+    "JournalPanel": {
+        "Garden journal:": "Gartentagebuch:",
+        "Search notes…": "Notizen durchsuchen…",
+        "Date range": "Datumsbereich",
+        "No journal notes yet": "Noch keine Tagebuchnotizen",
+        "No matching notes": "Keine passenden Notizen",
+        "{date} — {snippet}{photo}": "{date} — {snippet}{photo}",
+        "{date} — (empty){photo}": "{date} — (leer){photo}",
+    },
+
+    # ── JournalPinItem (US-12.9) ──
+    "JournalPinItem": {
+        "Garden journal note (double-click to edit)":
+            "Tagebuchnotiz (Doppelklick zum Bearbeiten)",
+        "Edit Note…": "Notiz bearbeiten…",
+        "Delete": "Löschen",
+    },
+
+    # ── SoilBadgeItem (US-12.10e) ──
+    "SoilBadgeItem": {
+        "Soil test overdue — click to record":
+            "Bodenprobe überfällig — zum Eintragen klicken",
+    },
+
+    # ── SoilService — plant-soil mismatch tooltip reasons (US-12.10d) ──
+    "SoilService": {
+        "Plant": "Pflanze",
+        "{name} needs pH ≥{min:.1f}, current {cur:.1f}":
+            "{name} braucht pH ≥{min:.1f}, aktuell {cur:.1f}",
+        "{name} needs pH ≤{max:.1f}, current {cur:.1f}":
+            "{name} braucht pH ≤{max:.1f}, aktuell {cur:.1f}",
+        "{name} is a heavy N feeder (current level: {lvl})":
+            "{name} ist ein N-Starkzehrer (aktueller Wert: {lvl})",
+        "{name} is a heavy P feeder (current level: {lvl})":
+            "{name} ist ein P-Starkzehrer (aktueller Wert: {lvl})",
+        "{name} is a heavy K feeder (current level: {lvl})":
+            "{name} ist ein K-Starkzehrer (aktueller Wert: {lvl})",
+    },
+
+    # ── AmendmentPlanDialog (US-12.10c) ──
+    "AmendmentPlanDialog": {
+        "Amendment Plan": "Bodenverbesserungs-Plan",
+        "Recommended soil amendments aggregated across all beds with a "
+        "deficient soil test. Quantities are totals — purchase rounded up "
+        "and consult local extension advice before bulk application.":
+            "Empfohlene Bodenverbesserer aggregiert über alle Beete mit "
+            "mangelhafter Bodenprobe. Mengen sind Gesamtwerte — beim Einkauf "
+            "aufrunden und vor der Anwendung lokale Beratung einholen.",
+        "Substance": "Substanz",
+        "Total": "Gesamt",
+        "Beds": "Beete",
+        "Copy to clipboard": "In Zwischenablage kopieren",
+        "Close": "Schließen",
+        "No deficient beds found.": "Keine mangelhaften Beete gefunden.",
+        "Amendment plan copied to clipboard.": "Bodenverbesserungs-Plan in Zwischenablage kopiert.",
+        "Bed": "Beet",
+        "Add to Shopping List": "Zur Einkaufsliste hinzufügen",
+        "Shopping list not available.": "Einkaufsliste nicht verfügbar.",
+        # US-12.11: amendment-library panel
+        "Available amendments": "Verfügbare Bodenverbesserer",
+        "Prefer organic": "Organisch bevorzugen",
+        "When two substances cover the same deficits, pick the organic "
+        "one. Disable to let mineral compounds compete on equal footing.":
+            "Wenn zwei Substanzen die gleichen Mängel beheben, wird die "
+            "organische bevorzugt. Deaktivieren, damit mineralische Verbindungen "
+            "gleichberechtigt mitspielen.",
+        "Enable all": "Alle aktivieren",
+        "Organic": "Organisch",
+        "Mineral": "Mineralisch",
+        "Structural": "Strukturell",
+    },
+
+    # ── ShoppingListService (US-12.6) ──
+    "ShoppingListService": {
+        "Bed": "Beet",
+        "Unknown plant": "Unbekannte Pflanze",
+        "~{avg} cm spread": "~{avg} cm Wuchsbreite",
+        "plants": "Pflanzen",
+        "packet": "Tüte",
+        "Not in project seed inventory": "Nicht im Projekt-Saatgutbestand",
+        "g": "g",
+        "kg": "kg",
+        "Soil fill": "Bodensubstrat",
+        "m³": "m³",
+        "Mulch": "Mulch",
+        "m²": "m²",
+
+    },
+
+    # ── ShoppingListDialog (US-12.6) ──
+    "ShoppingListDialog": {
+        "Shopping List": "Einkaufsliste",
+        "Items needed to realise the current plan. Enter prices to "
+        "estimate the total cost — prices are saved with the project.":
+            "Artikel, die zur Umsetzung des aktuellen Plans benötigt werden. "
+            "Geben Sie Preise ein, um die Gesamtkosten zu schätzen — Preise "
+            "werden mit dem Projekt gespeichert.",
+        "Item": "Artikel",
+        "Quantity": "Menge",
+        "Unit": "Einheit",
+        "Size": "Größe",
+        "Price": "Preis",
+        "Total": "Gesamt",
+        "Notes": "Notizen",
+        "Plants": "Pflanzen",
+        "Seeds": "Samen",
+        "Materials": "Materialien",
+        "Shopping list is empty — place plants or run a soil test first.":
+            "Einkaufsliste ist leer — platzieren Sie zuerst Pflanzen oder führen Sie eine Bodenprobe durch.",
+        "Copy to clipboard": "In Zwischenablage kopieren",
+        "Export CSV…": "CSV exportieren…",
+        "Export PDF…": "PDF exportieren…",
+        "Close": "Schließen",
+        "Shopping list copied to clipboard.": "Einkaufsliste in Zwischenablage kopiert.",
+        "Export Shopping List as CSV": "Einkaufsliste als CSV exportieren",
+        "Export Shopping List as PDF": "Einkaufsliste als PDF exportieren",
+        "CSV files (*.csv)": "CSV-Dateien (*.csv)",
+        "PDF files (*.pdf)": "PDF-Dateien (*.pdf)",
+        "Export failed": "Export fehlgeschlagen",
+        "Wrote {count} rows to {path}": "{count} Zeilen nach {path} geschrieben",
+        "Wrote PDF to {path}": "PDF nach {path} geschrieben",
+        "Invalid price — ignored.": "Ungültiger Preis — ignoriert.",
+        "Grand total: {amount:.2f}": "Gesamtsumme: {amount:.2f}",
+        "Category": "Kategorie",
+        "Have": "Habe ich",
+        "Tick if you already have this item — excludes it from totals and exports.":
+            "Anhaken, wenn Sie diesen Artikel bereits besitzen — er wird dann von Summen und Exporten ausgenommen.",
+
+    },
+
+}
+
+
+# ── US-C1 harvest / yield log strings (#188) ─────────────────────────────────
+# Merged into TRANSLATIONS below so additions land on the *effective* (last-wins)
+# context dicts even where a context name appears more than once in the literal.
+_HARVEST_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "Commands": {
+        "Add harvest entry": "Ernte-Eintrag hinzufügen",
+        "Edit harvest entry": "Ernte-Eintrag bearbeiten",
+        "Delete harvest entry": "Ernte-Eintrag löschen",
+    },
+    "HarvestJournal": {
+        "Harvested {qty} {unit} of {name}": "{qty} {unit} {name} geerntet",
+        "Harvested {qty} {unit}": "{qty} {unit} geerntet",
+    },
+    "BedActions": {
+        "Log Harvest…": "Ernte erfassen…",
+    },
+    "CircleItem": {
+        "Log Harvest…": "Ernte erfassen…",
+    },
+    "GardenPlannerApp": {
+        "Harvest": "Ernte",
+        "Harvest recorded": "Ernte erfasst",
+        # Agent API (US-D1.1)
+        "Agent API running at {url}": "Agent-API läuft unter {url}",
+        "Agent API: port {port} is already in use":
+            "Agent-API: Port {port} wird bereits verwendet",
+        "Agent API failed to start (see log)":
+            "Agent-API konnte nicht gestartet werden (siehe Protokoll)",
+        "Cannot delete the layer because its replacement layer is locked.":
+            "Die Ebene kann nicht gelöscht werden, weil die Ersetzungsebene gesperrt ist.",
+    },
+    "HarvestLogDialog": {
+        "Edit Harvest Entry": "Ernte-Eintrag bearbeiten",
+        "Harvest Log — {name}": "Ernteprotokoll — {name}",
+        "Harvest Log": "Ernteprotokoll",
+        "Entry": "Eintrag",
+        "History": "Verlauf",
+        "Date": "Datum",
+        "Quantity": "Menge",
+        "Unit": "Einheit",
+        "Quality": "Qualität",
+        "e.g. excellent, sweet": "z. B. ausgezeichnet, süß",
+        "Notes": "Notizen",
+        "Attach Photo…": "Foto anhängen…",
+        "Remove Photo": "Foto entfernen",
+        "Save project first to attach photos": (
+            "Projekt zuerst speichern, um Fotos anzuhängen"
+        ),
+        "Past entries": "Frühere Einträge",
+        "No past entries": "Keine früheren Einträge",
+        "{year} — {totals}": "{year} — {totals}",
+        "Edit": "Bearbeiten",
+        "Delete": "Löschen",
+        "{date} — {qty} {unit}": "{date} — {qty} {unit}",
+        " ({quality})": " ({quality})",
+        "Delete the harvest entry from {date}?": (
+            "Ernte-Eintrag vom {date} löschen?"
+        ),
+        "Delete harvest entry": "Ernte-Eintrag löschen",
+        "Select photo": "Foto auswählen",
+        "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)": (
+            "Bilder (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
+        ),
+        "Photo attach failed": "Foto anhängen fehlgeschlagen",
+        "Could not copy photo: {err}": "Foto konnte nicht kopiert werden: {err}",
+        "(no photo)": "(kein Foto)",
+        "(unsaved)": "(nicht gespeichert)",
+        "(missing)": "(fehlt)",
+        "Click to open in image viewer": "Zum Öffnen im Bildbetrachter klicken",
+        "Zero quantity": "Menge null",
+        "Save entry with zero quantity?": "Eintrag mit Menge null speichern?",
+    },
+    "HarvestView": {
+        "Harvest": "Ernte",
+        "Export CSV…": "CSV exportieren…",
+        "Species": "Art",
+        "Year": "Jahr",
+        "Total": "Gesamt",
+        "Unit": "Einheit",
+        "Entries": "Einträge",
+        "No harvests logged yet. Right-click a plant → “Log Harvest…”.": (
+            "Noch keine Ernten erfasst. Rechtsklick auf eine Pflanze "
+            "→ „Ernte erfassen…“."
+        ),
+        "Export Harvest Totals as CSV": "Erntesummen als CSV exportieren",
+        "CSV files (*.csv)": "CSV-Dateien (*.csv)",
+        "Export failed": "Export fehlgeschlagen",
+        "Wrote {count} rows to {name}": "{count} Zeilen in {name} geschrieben",
+        "Unnamed": "Unbenannt",
+    },
+    "PdfReportService": {
+        "Harvest Summary": "Erntezusammenfassung",
+        "Species": "Art",
+        "Year": "Jahr",
+        "Total": "Gesamt",
+        "Unit": "Einheit",
+        "Entries": "Einträge",
+        "No harvests logged in this project.": (
+            "Keine Ernten in diesem Projekt erfasst."
+        ),
+        "Unnamed": "Unbenannt",
+    },
+    "PdfReportDialog": {
+        "Harvest summary": "Erntezusammenfassung",
+    },
+}
+
+for _ctx, _strings in _HARVEST_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── US-D1.6 AI client onboarding strings ─────────────────────────────────────
+_D16_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "GardenPlannerApp": {
+        "Connect AI Assistant…": "KI-Assistenten verbinden…",
+        "Register this plan's MCP server with your AI assistant":
+            "Den MCP-Server dieses Plans mit Ihrem KI-Assistenten registrieren",
+    },
+    "PreferencesDialog": {
+        "Connect AI Assistant…": "KI-Assistenten verbinden…",
+        "Show this URL and help register it with an AI assistant":
+            "Diese URL anzeigen und bei der Registrierung mit einem KI-Assistenten helfen",
+    },
+    "ConnectAiAssistantDialog": {
+        "Connect Your AI Assistant": "KI-Assistenten verbinden",
+        "The Agent API is currently disabled, so no AI assistant can "
+        "connect yet. Enable it in Preferences → Agent API first.":
+            "Die Agent-API ist derzeit deaktiviert, daher kann sich noch kein "
+            "KI-Assistent verbinden. Aktivieren Sie sie zuerst unter "
+            "Einstellungen → Agent-API.",
+        "The Agent API is enabled, but its server is not running — it "
+        "failed to start. The port may be in use by another program or "
+        "a second copy of this app. Try a different port in "
+        "Preferences → Agent API, then restart the application.":
+            "Die Agent-API ist aktiviert, aber ihr Server läuft nicht – er "
+            "konnte nicht gestartet werden. Möglicherweise wird der Port von "
+            "einem anderen Programm oder einer zweiten Kopie dieser App "
+            "verwendet. Versuchen Sie einen anderen Port unter "
+            "Einstellungen → Agent-API und starten Sie die Anwendung neu.",
+        "Close": "Schließen",
+        "Connect URL": "Verbindungs-URL",
+        "Copy URL": "URL kopieren",
+        "Transport: Streamable HTTP": "Übertragung: Streamable HTTP",
+        "Detected": "Erkannt",
+        "Not detected": "Nicht erkannt",
+        "Add to {client}": "Zu {client} hinzufügen",
+        "Show manual snippet": "Manuellen Code-Schnipsel anzeigen",
+        "Add this to your global Cursor MCP config file:":
+            "Fügen Sie dies zu Ihrer globalen Cursor-MCP-Konfigurationsdatei hinzu:",
+        # US-D2.0 follow-up (issue #253): CLI-independent Claude Code merge
+        # note, honest Claude Desktop redirect, and the reconnect hint.
+        "Merge this into your ~/.claude.json file:":
+            "Fügen Sie dies in Ihre ~/.claude.json-Datei ein:",
+        "Claude Desktop can't connect to a local server like this one — "
+        "its connectors are reached from Anthropic's cloud and reject "
+        "localhost URLs. Use Claude Code or Cursor for this local Agent "
+        "API instead.":
+            "Claude Desktop kann keine Verbindung zu einem lokalen Server wie "
+            "diesem herstellen – seine Connectors werden aus der Cloud von "
+            "Anthropic erreicht und lehnen localhost-URLs ab. Verwenden Sie "
+            "stattdessen Claude Code oder Cursor für diese lokale Agent-API.",
+        "Added to Claude Code. Start a new Claude Code session "
+        "(or restart it) to pick up the change.":
+            "Zu Claude Code hinzugefügt. Starten Sie eine neue Claude-Code-Sitzung "
+            "(oder starten Sie sie neu), um die Änderung zu übernehmen.",
+        "URL copied to clipboard.": "URL in die Zwischenablage kopiert.",
+        "Added to {client}.": "Zu {client} hinzugefügt.",
+        "Could not add to {client}: {detail}":
+            "Konnte nicht zu {client} hinzugefügt werden: {detail}",
+        # Appends the write path (and, for a merge, where the previous contents
+        # were backed up) to whatever the summary said. A backup that is made
+        # but never named is litter the user cannot find.
+        "{summary} {detail}": "{summary} {detail}",
+    },
+}
+
+for _ctx, _strings in _D16_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── US-D2.0: Agent write path — token gate + writes toggle ──
+_D20_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "PreferencesDialog": {
+        "Run a local MCP server so AI assistants can read this garden "
+        "plan. Binds to 127.0.0.1 (this computer) only. Editing stays "
+        "off unless you enable it below.":
+            "Einen lokalen MCP-Server ausführen, damit KI-Assistenten diesen "
+            "Gartenplan lesen können. Bindet nur an 127.0.0.1 (dieser Computer). "
+            "Bearbeiten bleibt aus, sofern Sie es unten nicht aktivieren.",
+        "Allow AI assistants to edit the plan":
+            "KI-Assistenten das Bearbeiten des Plans erlauben",
+        "Let connected assistants move and delete objects. Each edit is a "
+        "single undo step. Requires the token below; off by default.":
+            "Verbundene Assistenten dürfen Objekte verschieben und löschen. Jede "
+            "Änderung ist ein einzelner Rückgängig-Schritt. Erfordert das Token "
+            "unten; standardmäßig aus.",
+        "The access token an assistant must present to edit the plan. "
+        '"Connect AI Assistant…" hands it to the client for you.':
+            "Das Zugriffstoken, das ein Assistent zum Bearbeiten des Plans "
+            'vorlegen muss. „KI-Assistenten verbinden…“ übergibt es für Sie an '
+            "den Client.",
+        "Copy": "Kopieren",
+        "Regenerate": "Neu erzeugen",
+        "Replace the token; assistants using the old one must reconnect.":
+            "Das Token ersetzen; Assistenten mit dem alten Token müssen sich neu "
+            "verbinden.",
+        "Access token:": "Zugriffstoken:",
+        "Enable AI editing to generate a token":
+            "KI-Bearbeitung aktivieren, um ein Token zu erzeugen",
+        "The running server still uses the previous token until you "
+        "click Save — copying now won't work for a client yet.":
+            "Der laufende Server verwendet weiterhin das vorherige Token, bis Sie "
+            "auf Speichern klicken – ein jetzt kopiertes Token funktioniert für "
+            "einen Client noch nicht.",
+    },
+    "ConnectAiAssistantDialog": {
+        "AI editing is ON — clients added here can modify your plan. "
+        "Each edit is a single undo step. Turn it off in "
+        "Preferences → Agent API.":
+            "KI-Bearbeitung ist AN – hier hinzugefügte Clients können Ihren Plan "
+            "ändern. Jede Änderung ist ein einzelner Rückgängig-Schritt. "
+            "Schalten Sie sie unter Einstellungen → Agent-API aus.",
+        "Clients added here can read your plan but not edit it. To allow "
+        "editing, enable it in Preferences → Agent API.":
+            "Hier hinzugefügte Clients können Ihren Plan lesen, aber nicht "
+            "bearbeiten. Um die Bearbeitung zu erlauben, aktivieren Sie sie "
+            "unter Einstellungen → Agent-API.",
+    },
+}
+
+for _ctx, _strings in _D20_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── US-E3: sun & shade shadow overlay + time control (#258) ──
+_E3_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "GardenPlannerApp": {
+        "S&un && Shade Simulation": "S&onnen- && Schatten-Simulation",
+        "Simulate solar shadows for a chosen date and time of day":
+            "Sonnenschatten für ein gewähltes Datum und eine Uhrzeit simulieren",
+        "Set garden location first: File → Set Garden Location…":
+            "Zuerst Gartenstandort festlegen: Datei → Gartenstandort festlegen…",
+        "Night — the sun is below the horizon":
+            "Nacht — die Sonne ist unter dem Horizont",
+    },
+    "SunSimToolbar": {
+        "Sun & Shade Simulation": "Sonnen- & Schatten-Simulation",
+        "Date:": "Datum:",
+        "Simulation date": "Simulationsdatum",
+        "Time of day": "Uhrzeit",
+        "Animate": "Animieren",
+        "Animate the sun across the day":
+            "Sonnenverlauf über den Tag animieren",
+    },
+}
+
+for _ctx, _strings in _E3_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── US-E4: hours-of-sun heatmap (#259) ──
+_E4_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "SunSimToolbar": {
+        "Hours of Sun": "Sonnenstunden",
+        "Compute a full-day hours-of-sun heatmap for the shown date":
+            "Sonnenstunden-Heatmap für den ganzen angezeigten Tag berechnen",
+        "Computing…": "Berechne…",
+    },
+    "SunHeatmapController": {
+        # Hour label on the heatmap's topographic contour lines ("4 h").
+        "{n} h": "{n} h",
+    },
+}
+
+for _ctx, _strings in _E4_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── US-E6: 3D view MVP (#261) ──
+_E6_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "GardenPlannerApp": {
+        "&3D View…": "&3D-Ansicht…",
+        "Open a 3D view of the plan with solar lighting":
+            "3D-Ansicht des Plans mit Sonnenlicht öffnen",
+    },
+    "View3DWindow": {
+        "3D View": "3D-Ansicht",
+        "&Refresh": "&Aktualisieren",
+        "Rebuild the 3D scene from the current plan":
+            "3D-Szene aus dem aktuellen Plan neu aufbauen",
+    },
+}
+
+for _ctx, _strings in _E6_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── US-E7: first-person walkthrough (#262) ──
+_E7_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "View3DWindow": {
+        "&Walk": "&Rundgang",
+        "Walk the garden at eye level — WASD/arrow keys move, hold "
+        "the left mouse button to look around, Esc exits":
+            "Durch den Garten auf Augenhöhe gehen — WASD/Pfeiltasten bewegen, "
+            "linke Maustaste gedrückt halten zum Umschauen, Esc beendet",
+        "WASD/arrows move · hold left mouse to look · Esc exits":
+            "WASD/Pfeile bewegen · linke Maustaste zum Umschauen · Esc beendet",
+    },
+}
+
+for _ctx, _strings in _E7_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── Issue #277: graceful 3D-view failure + uncaught-exception backstop ──
+_I277_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "GardenPlannerApp": {
+        "3D View Unavailable": "3D-Ansicht nicht verfügbar",
+        "The 3D view could not be loaded: the 3D graphics "
+        "components are missing or incompatible. The rest of the "
+        "application is unaffected.\n\nDetails: {error}":
+            "Die 3D-Ansicht konnte nicht geladen werden: Die 3D-Grafik"
+            "komponenten fehlen oder sind inkompatibel. Der Rest der "
+            "Anwendung ist nicht betroffen.\n\nDetails: {error}",
+    },
+    "main": {
+        "Unexpected Error": "Unerwarteter Fehler",
+        "An unexpected error occurred. The application will keep "
+        "running so you can save your work.\n\nDetails: {error}":
+            "Ein unerwarteter Fehler ist aufgetreten. Die Anwendung läuft "
+            "weiter, damit Sie Ihre Arbeit speichern können.\n\nDetails: {error}",
+    },
+}
+
+for _ctx, _strings in _I277_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── Package 3c iconography + View-menu restructure (#310) ────────────────────
+_P3C_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "GardenPlannerApp": {
+        # German View-menu mnemonics must stay unique per menu (gated by
+        # tests/integration/test_icon_system.py::test_menu_mnemonics_are_unique_per_language):
+        # top level = Ver&größern, Ver&kleinern, An &Fenster anpassen, Ein&rasten,
+        # Overla&ys, S&onne && 3D, Voll&bildvorschau, &Design, &Sprache
+        "&Manage Seasons...": "Saisons &verwalten ...",
+        "Show P&revious Season Overlay": "&Vorherige Saison überlagern",
+        "&Snapping": "Ein&rasten",
+        "O&verlays": "Overla&ys",
+        "Fullscreen &Preview": "Voll&bildvorschau",
+        "S&un && 3D": "S&onne && 3D",
+        "Cursor position": "Cursorposition",
+        "Zoom level": "Zoomstufe",
+        "Selection": "Auswahl",
+        "Active tool": "Aktives Werkzeug",
+        "Garden location": "Gartenstandort",
+        "Season": "Saison",
+        "Sun & shade simulation": "Sonne-&-Schatten-Simulation",
+        "Typed coordinate input": "Koordinateneingabe",
+        "Soil Health Overlay": "Bodengesundheits-Overlay",
+        "Cancel": "Abbrechen",
+        "Set project location for accurate season dates.": "Projektstandort festlegen für genaue Saisondaten.",
+    },
+    "PlantSearchPanel": {
+        "Trees": "Bäume",
+        "Shrubs": "Sträucher",
+        "Perennials": "Stauden",
+    },
+    "CompanionPanel": {
+        "= already nearby in plan  (click to select)": "= bereits in der Nähe im Plan  (klicken zum Auswählen)",
+        # US-D3.1 (#319): the compatible-set action.
+        "Suggest a compatible set…": "Kompatible Kombination vorschlagen …",
+        "Find mutually compatible plant sets for this bed": "Finde gegenseitig kompatible Pflanzkombinationen für dieses Beet",
+    },
+    "CompatibleSetDialog": {
+        "Compatible Plant Sets": "Kompatible Pflanzkombinationen",
+        "Already in bed: {plants}": "Bereits im Beet: {plants}",
+        "{members}  (score: {score:.1f}) — {note}": "{members}  (Bewertung: {score:.1f}) — {note}",
+        "keeps all {count} already planted": "behält alle {count} bereits gepflanzten",
+        "keeps {count} of {total} already planted": "behält {count} von {total} bereits gepflanzten",
+        "replaces what is planted": "ersetzt die Bepflanzung",
+        "No compatible set found among the plants already in this bed and their companions.": "Keine kompatible Kombination unter den bereits in diesem Beet gepflanzten Pflanzen und ihren Begleitpflanzen gefunden.",
+        "{plant} clashes with {others} already in this bed.": "{plant} verträgt sich nicht mit {others}, die bereits in diesem Beet stehen.",
+        "{plant} is not part of any of these sets.": "{plant} ist in keiner dieser Kombinationen enthalten.",
+    },
+    "ConstraintListItem": {
+        "Coincident": "Deckungsgleich",
+        "Tangent": "Tangente",
+        "Fixed": "Fixiert",
+        "Equal": "Gleich",
+        "Symmetric": "Symmetrisch",
+        "{a} symmetric to {b} about the horizontal axis": "{a} symmetrisch zu {b} um die horizontale Achse",
+        "{a} symmetric to {b} about the vertical axis": "{a} symmetrisch zu {b} um die vertikale Achse",
+        "On edge": "Auf Kante",
+        "{a} lies on the edge of {b}": "{a} liegt auf der Kante von {b}",
+        "On circle": "Auf Kreis",
+        "{a} lies on the circle of {b}": "{a} liegt auf dem Kreis von {b}",
+        "Horizontal": "Horizontal",
+        "Vertical": "Vertikal",
+        "Parallel": "Parallel",
+        "Perpendicular": "Senkrecht",
+        "Angle {a}–{b}–{c}: {d:.1f}°": "Winkel {a}–{b}–{c}: {d:.1f}°",
+        "{a} to {b}: horizontal distance {d:.2f} m": "{a} zu {b}: horizontaler Abstand {d:.2f} m",
+        "{a} to {b}: vertical distance {d:.2f} m": "{a} zu {b}: vertikaler Abstand {d:.2f} m",
+        "{a} to {b}: {d:.2f} m": "{a} zu {b}: {d:.2f} m",
+    },
+    "JournalPanel": {
+        "{date} — {snippet}": "{date} — {snippet}",
+        "{date} — (empty)": "{date} — (leer)",
+    },
+    "SeasonManagerDialog": {
+        "[current]": "[aktuell]",
+    },
+    "PropertiesPanel": {
+        "Override frost sensitivity:\n"
+        "checked = always protect, unchecked = never protect, "
+        "indeterminate = use the plant database default":
+            "Frostempfindlichkeit überschreiben:\n"
+            "angehakt = immer schützen, nicht angehakt = nie schützen, "
+            "unbestimmt = Standard aus der Pflanzendatenbank",
+    },
+    "FixedConstraintTool": {
+        "Fix in place": "Fixieren",
+    },
+    "ShortcutsDialog": {
+        "Dashboard Tabs": "Dashboard-Tabs",
+        "Garden Plan tab": "Tab Gartenplan",
+        "Planting Calendar tab": "Tab Pflanzkalender",
+        "Seed Inventory tab": "Tab Saatgutbestand",
+        "Tasks tab": "Tab Aufgaben",
+        "Harvest tab": "Tab Ernte",
+    },
+}
+
+for _ctx, _strings in _P3C_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── Per-object stacking order: Arrange menu / context menu / Properties
+#    panel / undo descriptions (#338) ──────────────────────────────────────
+_ARRANGE_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "Commands": {
+        "Bring {count} item(s) to front": "{count} Objekt(e) ganz nach vorn",
+        "Bring {count} item(s) forward": "{count} Objekt(e) weiter nach vorn",
+        "Send {count} item(s) backward": "{count} Objekt(e) weiter nach hinten",
+        "Send {count} item(s) to back": "{count} Objekt(e) ganz nach hinten",
+    },
+    "CanvasView": {
+        "Select an object to arrange": "Ein Objekt zum Anordnen auswählen",
+        "Already at front": "Bereits ganz vorn",
+        "Already at back": "Bereits ganz hinten",
+        "No overlapping object in front": "Kein überlappendes Objekt davor",
+        "No overlapping object behind": "Kein überlappendes Objekt dahinter",
+    },
+    "ArrangeActions": {
+        "Arrange": "Anordnen",
+        "Bring to Front": "Ganz nach vorn",
+        "Bring Forward": "Weiter nach vorn",
+        "Send Backward": "Weiter nach hinten",
+        "Send to Back": "Ganz nach hinten",
+    },
+    "GardenPlannerApp": {
+        # German Edit-menu mnemonics must stay unique per menu (gated by
+        # tests/integration/test_icon_system.py::test_menu_mnemonics_are_unique_per_language):
+        # Edit menu top level already uses R/W/s/K/E/u/L/A/c/g/h/n (plus a
+        # space from the "Ausrichten && &Verteilen" && quirk) — &Anordnen
+        # picks the free letter 'o'. Inside the Arrange submenu, the four
+        # action mnemonics only need to be unique among themselves (v/w/h/i).
+        "Arra&nge": "An&ordnen",
+        "Bring to &Front": "Ganz nach &vorn",
+        "Bring the selected objects to the front of their layer": "Ausgewählte Objekte ganz nach vorn bringen",
+        "Bring F&orward": "&Weiter nach vorn",
+        "Bring the selected objects one step forward": "Ausgewählte Objekte einen Schritt nach vorn bringen",
+        "Send Back&ward": "Weiter nach &hinten",
+        "Send the selected objects one step backward": "Ausgewählte Objekte einen Schritt nach hinten bringen",
+        "Send to &Back": "Ganz nach h&inten",
+        "Send the selected objects to the back of their layer": "Ausgewählte Objekte ganz nach hinten bringen",
+    },
+    "ShortcutsDialog": {
+        "Up": "Auf",
+        "Down": "Ab",
+        "Bring to Front": "Ganz nach vorn",
+        "Bring Forward": "Weiter nach vorn",
+        "Send Backward": "Weiter nach hinten",
+        "Send to Back": "Ganz nach hinten",
+    },
+    "PropertiesPanel": {
+        "Arrange": "Anordnen",
+        "Bring to Front": "Ganz nach vorn",
+        "Bring Forward": "Weiter nach vorn",
+        "Send Backward": "Weiter nach hinten",
+        "Send to Back": "Ganz nach hinten",
+    },
+}
+
+for _ctx, _strings in _ARRANGE_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+# ── Issue #366: read-only URL by default, generic fallback, honest state ──
+_I366_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "ConnectAiAssistantDialog": {
+        # The security fix: the default copy hands out a READ-ONLY url, and
+        # the write url sits behind its own button that says the token is in
+        # it. Pasting a token-bearing url into a chat is how a live write
+        # credential ended up in a transcript in the first place.
+        "Copy read-only URL": "Lese-URL kopieren",
+        "Copy URL with edit token": "URL mit Bearbeitungstoken kopieren",
+        "Read-only URL copied to clipboard.":
+            "Lese-URL in die Zwischenablage kopiert.",
+        "This URL contains the token that lets an AI assistant edit "
+        "your plan. Do not paste it into a shared chat.":
+            "Diese URL enthält das Token, mit dem ein KI-Assistent Ihren Plan "
+            "bearbeiten kann. Fügen Sie sie nicht in einen gemeinsamen Chat ein.",
+        "URL with the edit token copied. Anyone holding it can change "
+        "your plan — do not share it in a chat or a public document.":
+            "URL mit dem Bearbeitungstoken kopiert. Wer sie besitzt, kann Ihren "
+            "Plan ändern – teilen Sie sie nicht in einem Chat oder einem "
+            "öffentlichen Dokument.",
+        # Per-client notes for the registry entries added in #366.
+        "Merge this into your ~/.config/opencode/opencode.jsonc file:":
+            "Fügen Sie dies in Ihre Datei "
+            "~/.config/opencode/opencode.jsonc ein:",
+        "Append this to your ~/.codex/config.toml file:":
+            "Hängen Sie dies an Ihre Datei ~/.codex/config.toml an:",
+        "Add this to your ~/.gemini/config/mcp_config.json file:":
+            "Fügen Sie dies zu Ihrer Datei "
+            "~/.gemini/config/mcp_config.json hinzu:",
+        # Honest registration state — a rotated token or a changed port
+        # otherwise leaves an entry that looks fine and cannot connect.
+        "Detected — not registered yet": "Erkannt – noch nicht registriert",
+        "Detected — registered and up to date":
+            "Erkannt – registriert und aktuell",
+        "Detected — registered with a different address; add again to update":
+            "Erkannt – mit einer anderen Adresse registriert; erneut hinzufügen, "
+            "um zu aktualisieren",
+        # One restart hint for every client that reads its config only at
+        # session start, instead of one hard-coded string per client.
+        "Added to {client}. Start a new {client} session (or "
+        "restart it) to pick up the change.":
+            "Zu {client} hinzugefügt. Starten Sie eine neue {client}-Sitzung "
+            "(oder starten Sie sie neu), um die Änderung zu übernehmen.",
+        # The vendor-agnostic route, always present.
+        "Other AI clients": "Andere KI-Clients",
+        "No button for your client? Use these with any MCP client that "
+        "reads a JSON config.":
+            "Keine Schaltfläche für Ihren Client? Verwenden Sie diese Angaben "
+            "mit jedem MCP-Client, der eine JSON-Konfiguration liest.",
+        'Add this to your client\'s "mcpServers" config:':
+            "Fügen Sie dies zur \"mcpServers\"-Konfiguration Ihres Clients hinzu:",
+        "Or run this command:": "Oder führen Sie diesen Befehl aus:",
+        "Or paste this read-only URL into your client:":
+            "Oder fügen Sie diese Lese-URL in Ihren Client ein:",
+    },
+}
+
+for _ctx, _strings in _I366_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
+
+
+def fill_translations() -> None:
+    """Fill in German translations in the .ts file."""
+    tree = ET.parse(TS_FILE)
+    root = tree.getroot()
+
+    # Set the target language
+    root.set("language", "de_DE")
+
+    # Track stats
+    filled = 0
+    missing = 0
+    added_contexts = 0
+
+    # Collect existing context names
+    existing_contexts = {ctx.find("name").text for ctx in root.findall("context")}
+
+    # Process existing contexts
+    for context_elem in root.findall("context"):
+        context_name = context_elem.find("name").text
+        context_translations = TRANSLATIONS.get(context_name, {})
+
+        for message_elem in context_elem.findall("message"):
+            source_elem = message_elem.find("source")
+            translation_elem = message_elem.find("translation")
+
+            if source_elem is None or translation_elem is None:
+                continue
+
+            source_text = source_elem.text or ""
+
+            if source_text in context_translations:
+                translation_elem.text = context_translations[source_text]
+                # Remove 'type="unfinished"'
+                if "type" in translation_elem.attrib:
+                    del translation_elem.attrib["type"]
+                filled += 1
+            else:
+                missing += 1
+                print(f"  MISSING [{context_name}]: {source_text[:60]!r}")
+
+    # Add missing contexts (ObjectType, GalleryData, CategoryDropdown,
+    # CategoryToolbar, GlobalSearchField — anything not picked up by
+    # pylupdate6 because it lives in helper modules).
+    for context_name, translations in TRANSLATIONS.items():
+        if context_name not in existing_contexts:
+            # Create new context
+            context_elem = ET.SubElement(root, "context")
+            name_elem = ET.SubElement(context_elem, "name")
+            name_elem.text = context_name
+
+            for source_text, german_text in translations.items():
+                message_elem = ET.SubElement(context_elem, "message")
+                source_elem = ET.SubElement(message_elem, "source")
+                source_elem.text = source_text
+                translation_elem = ET.SubElement(message_elem, "translation")
+                translation_elem.text = german_text
+                filled += 1
+
+            added_contexts += 1
+            print(f"  ADDED context '{context_name}' with {len(translations)} strings")
+        else:
+            # Check if there are extra strings to add to existing context
+            context_elem = None
+            for ctx in root.findall("context"):
+                if ctx.find("name").text == context_name:
+                    context_elem = ctx
+                    break
+
+            if context_elem is None:
+                continue
+
+            # Get existing source texts
+            existing_sources = set()
+            for msg in context_elem.findall("message"):
+                src = msg.find("source")
+                if src is not None and src.text:
+                    existing_sources.add(src.text)
+
+            # Add missing strings
+            for source_text, german_text in translations.items():
+                if source_text not in existing_sources:
+                    message_elem = ET.SubElement(context_elem, "message")
+                    source_elem = ET.SubElement(message_elem, "source")
+                    source_elem.text = source_text
+                    translation_elem = ET.SubElement(message_elem, "translation")
+                    translation_elem.text = german_text
+                    filled += 1
+                    print(f"  ADDED [{context_name}]: {source_text[:60]!r}")
+
+    # Write the result with proper XML formatting
+    ET.indent(tree, space="    ")
+    tree.write(TS_FILE, encoding="utf-8", xml_declaration=True)
+
+    # Post-process to add DOCTYPE
+    content = TS_FILE.read_text(encoding="utf-8")
+    content = content.replace(
+        '<?xml version=\'1.0\' encoding=\'utf-8\'?>',
+        '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE TS>',
+    )
+    TS_FILE.write_text(content, encoding="utf-8")
+
+    print(f"\nDone! Filled {filled} translations, {missing} missing, {added_contexts} new contexts added.")
+
+
+if __name__ == "__main__":
+    fill_translations()

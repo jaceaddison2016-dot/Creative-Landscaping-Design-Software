@@ -1,0 +1,1042 @@
+"""Circle item for the garden canvas."""
+
+import uuid
+from datetime import date
+from typing import Any
+
+from PyQt6.QtCore import QCoreApplication, QPointF, QRectF, Qt
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
+from PyQt6.QtWidgets import (
+    QGraphicsEllipseItem,
+    QGraphicsItem,
+    QGraphicsSceneContextMenuEvent,
+    QGraphicsSceneMouseEvent,
+    QMenu,
+    QStyleOptionGraphicsItem,
+    QWidget,
+)
+
+from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
+from open_garden_planner.core.furniture_renderer import is_furniture_type, render_furniture_pixmap
+from open_garden_planner.core.growth_model import grown_spread_cm
+from open_garden_planner.core.object_types import ObjectType, StrokeStyle, get_style
+from open_garden_planner.core.plant_renderer import (
+    PlantCategory,
+    is_plant_type,
+    render_plant_pixmap,
+)
+from open_garden_planner.core.plant_sizing import sizing_for_item
+
+from .garden_item import GardenItemMixin
+from .resize_handle import (
+    MINIMUM_SIZE_CM,
+    AnnotationLabel,
+    ResizeHandlesMixin,
+    RotationHandleMixin,
+    _format_coordinate,
+    _format_edge_length,
+    resize_rect_item_keeping_anchor,
+)
+
+
+def _show_properties_dialog(item: QGraphicsEllipseItem) -> None:
+    """Show properties dialog for an item (imported locally to avoid circular import)."""
+    from open_garden_planner.core.object_types import get_style
+    from open_garden_planner.ui.dialogs import PropertiesDialog
+
+    dialog = PropertiesDialog(item)
+    if dialog.exec():
+        # Apply name change
+        if hasattr(item, 'name'):
+            item.name = dialog.get_name()
+            # Update the label if it exists
+            if hasattr(item, '_update_label'):
+                item._update_label()  # type: ignore[attr-defined]
+
+        # Apply layer change — consolidated onto MoveToLayerCommand (issue
+        # #338); z is derived from the scene's normalized stacking order,
+        # not set directly here.
+        if hasattr(item, 'layer_id'):
+            new_layer_id = dialog.get_layer_id()
+            if new_layer_id is not None and new_layer_id != item.layer_id:
+                from open_garden_planner.core.commands import MoveToLayerCommand
+
+                scene = item.scene()
+                if scene is not None:
+                    target_layer = (
+                        scene.get_layer_by_id(new_layer_id)
+                        if hasattr(scene, 'get_layer_by_id')
+                        else None
+                    )
+                    layer_name = target_layer.name if target_layer else str(new_layer_id)
+                    cmd = MoveToLayerCommand([item], new_layer_id, scene, layer_name)
+                    command_manager = getattr(scene, '_command_manager', None)
+                    if command_manager:
+                        command_manager.execute(cmd)
+                    else:
+                        cmd.execute()
+                else:
+                    item.layer_id = new_layer_id
+
+        # Apply object type change (updates styling)
+        new_object_type = dialog.get_object_type()
+        if new_object_type and hasattr(item, 'object_type'):
+            item.object_type = new_object_type
+            # Update to default styling for new type
+            style = get_style(new_object_type)
+            pen = item.pen()
+            pen.setColor(style.stroke_color)
+            pen.setWidthF(style.stroke_width)
+            pen.setStyle(style.stroke_style.to_qt_pen_style())
+            item.setPen(pen)
+            # Apply pattern brush and store pattern
+            if hasattr(item, 'fill_pattern'):
+                item.fill_pattern = style.fill_pattern
+            brush = create_pattern_brush(style.fill_pattern, style.fill_color)
+            item.setBrush(brush)
+
+        # Apply custom fill color and pattern (overrides type default)
+        fill_color = dialog.get_fill_color()
+        fill_pattern = dialog.get_fill_pattern()
+        # Store the pattern and base color
+        if hasattr(item, 'fill_pattern'):
+            item.fill_pattern = fill_pattern
+        if hasattr(item, 'fill_color'):
+            item.fill_color = fill_color
+        brush = create_pattern_brush(fill_pattern, fill_color)
+        item.setBrush(brush)
+
+        # Apply custom stroke properties (overrides type default)
+        stroke_color = dialog.get_stroke_color()
+        stroke_width = dialog.get_stroke_width()
+        stroke_style = dialog.get_stroke_style()
+        # Store stroke properties
+        if hasattr(item, 'stroke_color'):
+            item.stroke_color = stroke_color
+        if hasattr(item, 'stroke_width'):
+            item.stroke_width = stroke_width
+        if hasattr(item, 'stroke_style'):
+            item.stroke_style = stroke_style
+        pen = item.pen()
+        pen.setColor(stroke_color)
+        pen.setWidthF(stroke_width)
+        pen.setStyle(stroke_style.to_qt_pen_style())
+        item.setPen(pen)
+
+
+class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGraphicsEllipseItem):
+    """A circle shape on the garden canvas.
+
+    Supports property object types with appropriate styling.
+    Supports selection, movement, resizing, and rotation.
+    """
+
+    def __init__(
+        self,
+        center_x: float,
+        center_y: float,
+        radius: float,
+        object_type: ObjectType = ObjectType.GENERIC_CIRCLE,
+        name: str = "",
+        metadata: dict[str, Any] | None = None,
+        fill_pattern: FillPattern | None = None,
+        stroke_style: StrokeStyle | None = None,
+        layer_id: uuid.UUID | None = None,
+    ) -> None:
+        """Initialize the circle item.
+
+        Args:
+            center_x: X coordinate of center
+            center_y: Y coordinate of center
+            radius: Radius of circle
+            object_type: Type of property object
+            name: Optional name/label for the object
+            metadata: Optional metadata dictionary
+            fill_pattern: Fill pattern (defaults to pattern from object type)
+            stroke_style: Stroke style (defaults to style from object type)
+            layer_id: Layer ID this item belongs to (optional)
+        """
+        # Get default pattern and color from object type if not provided
+        style = get_style(object_type)
+        if fill_pattern is None:
+            fill_pattern = style.fill_pattern
+        if stroke_style is None:
+            stroke_style = style.stroke_style
+
+        GardenItemMixin.__init__(
+            self, object_type=object_type, name=name, metadata=metadata,
+            fill_pattern=fill_pattern, fill_color=style.fill_color,
+            stroke_color=style.stroke_color, stroke_width=style.stroke_width,
+            stroke_style=stroke_style, layer_id=layer_id
+        )
+        # QGraphicsEllipseItem uses bounding rect (top-left corner + width/height)
+        # Convert center+radius to rect coordinates
+        x = center_x - radius
+        y = center_y - radius
+        diameter = radius * 2
+        QGraphicsEllipseItem.__init__(self, x, y, diameter, diameter)
+
+        self._center = QPointF(center_x, center_y)
+        self._radius = radius
+        self._plant_category: PlantCategory | None = None
+        self._plant_species: str = ""
+
+        # Initialize resize and rotation handles
+        self.init_resize_handles()
+        self.init_rotation_handle()
+
+        self._diameter_label: AnnotationLabel | None = None
+        self._center_label: AnnotationLabel | None = None
+
+        self._setup_styling()
+        self._setup_flags()
+        self.initialize_label()
+
+    def _setup_styling(self) -> None:
+        """Configure visual appearance based on object type."""
+        style = get_style(self.object_type) if self.object_type else get_style(ObjectType.GENERIC_CIRCLE)
+
+        # Plant and furniture types use SVG rendering — hide pen and brush
+        if is_plant_type(self.object_type) or is_furniture_type(self.object_type):
+            self.setPen(QPen(Qt.PenStyle.NoPen))
+            self.setBrush(QBrush())
+            return
+
+        # Use stored stroke properties if available, otherwise use style defaults
+        stroke_color = self.stroke_color if self.stroke_color is not None else style.stroke_color
+        stroke_width = self.stroke_width if self.stroke_width is not None else style.stroke_width
+        stroke_style = self.stroke_style if self.stroke_style is not None else style.stroke_style
+
+        pen = QPen(stroke_color)
+        pen.setWidthF(stroke_width)
+        pen.setStyle(stroke_style.to_qt_pen_style())
+        self.setPen(pen)
+
+        # Use stored fill_pattern and color if available, otherwise use style defaults
+        pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
+        color = self.fill_color if self.fill_color is not None else style.fill_color
+        brush = create_pattern_brush(pattern, color)
+        self.setBrush(brush)
+
+    def _setup_flags(self) -> None:
+        """Configure item interaction flags."""
+        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+
+    @property
+    def plant_category(self) -> PlantCategory | None:
+        """Plant category for SVG shape selection."""
+        return self._plant_category
+
+    @plant_category.setter
+    def plant_category(self, value: PlantCategory | None) -> None:
+        """Set the plant category and trigger repaint."""
+        self._plant_category = value
+        self.update()
+
+    @property
+    def plant_species(self) -> str:
+        """Plant species name for SVG lookup."""
+        return self._plant_species
+
+    @plant_species.setter
+    def plant_species(self, value: str) -> None:
+        """Set the plant species and trigger repaint."""
+        self._plant_species = value
+        self.update()
+
+    # Scale factor to fill the circle area (SVGs have organic internal padding)
+    _PLANT_FILL_SCALE = 1.15
+    # Companion highlight ring dimensions (cm)
+    _HIGHLIGHT_STROKE_WIDTH = 4.0
+    _HIGHLIGHT_MARGIN = 3.0  # half stroke + tiny gap
+    # Antagonist warning badge dimensions (cm); proportional to radius, capped
+    _WARNING_MAX_SIZE = 12.0
+    # Spacing circle rendering constants
+    _SPACING_STROKE_WIDTH = 1.5
+    _SPACING_FILL_GREEN = QColor(60, 200, 60, 40)
+    _SPACING_FILL_RED = QColor(220, 60, 60, 50)
+    _SPACING_FILL_NEUTRAL = QColor(100, 150, 200, 30)
+    _SPACING_STROKE_GREEN = QColor(60, 200, 60, 160)
+    _SPACING_STROKE_RED = QColor(220, 60, 60, 160)
+    _SPACING_STROKE_NEUTRAL = QColor(100, 150, 200, 120)
+
+    def boundingRect(self) -> QRectF:
+        """Return bounding rect, expanded for plant SVG overflow, shadow, and companion ring."""
+        base = super().boundingRect()
+        if is_plant_type(self.object_type):
+            rect = self.rect()
+            # Visual diameter may now differ from the footprint (issue #299).
+            # overflow is FLOORED at the pre-#299 value (never less), so a
+            # shrunk icon leaves boundingRect()/sceneBoundingRect() BYTE-
+            # IDENTICAL to before -- core/snapping.py and core/alignment.py
+            # both build snap targets and align/distribute anchors straight
+            # off sceneBoundingRect(), so a shrinking rect would silently
+            # move a "measured" plant's snap points relative to an otherwise
+            # identical unmeasured one (a real CAD-precision bug a #299
+            # review round caught: measured 45 cm of drift per edge on a
+            # 6 m tree). It still GROWS past the floor when a recorded
+            # current size exceeds the mature max_spread_cm -- else that
+            # oversized pixmap paints outside this advertised rect.
+            diameter = self._visual_plant_diameter_cm(rect.width())
+            mature_overflow = rect.width() * (self._PLANT_FILL_SCALE - 1.0) / 2.0
+            grown_overflow = (diameter * self._PLANT_FILL_SCALE - rect.width()) / 2.0
+            overflow = max(mature_overflow, grown_overflow)
+            base = base.adjusted(-overflow, -overflow, overflow, overflow)
+        m = self._shadow_margin()
+        if m > 0:
+            base = base.adjusted(-m, -m, m, m)
+        if self._companion_highlight is not None:
+            h = self._HIGHLIGHT_MARGIN
+            base = base.adjusted(-h, -h, h, h)
+        if self._antagonist_warning and is_plant_type(self.object_type):
+            # Badge overflows into the visual top-right corner.
+            # With the view's Y-flip, "visual top" = larger positive Y = rect.bottom().
+            # Expand right (+x) and bottom (+y, which is visual top).
+            s = min(self._radius * 0.45, self._WARNING_MAX_SIZE)
+            overflow = s * 0.3
+            base = base.adjusted(0, 0, overflow, overflow)
+        if (
+            self._spacing_circles_visible
+            and is_plant_type(self.object_type)
+            and (self.isSelected() or self._spacing_overlap is not None)
+        ):
+            spacing_r = sizing_for_item(self).spacing_ring_radius_cm
+            if spacing_r is not None:
+                extra = spacing_r - self._radius + self._SPACING_STROKE_WIDTH
+                base = base.adjusted(-extra, -extra, extra, extra)
+        return base
+
+    def _visual_plant_diameter_cm(self, footprint_diameter: float) -> float:
+        """The diameter (cm) the plant's SVG icon should render at today.
+
+        Deliberately distinct from ``footprint_diameter`` (this item's drawn
+        rect, which stays at the mature ``max_spread_cm`` for spacing/overlap
+        correctness -- see ``core/plant_sizing.py``'s "three legitimate sizes"
+        note). When the plant has both a planting date and a measured current
+        size, the icon instead reflects today's growth-interpolated spread
+        (``core/growth_model.grown_spread_cm``), so a young sapling LOOKS
+        smaller even though its reserved footprint doesn't shrink -- matching
+        the shadow, which already did this. Falls back to the footprint
+        diameter, unchanged, for a plant with no growth data set.
+        """
+        species = self.metadata.get("plant_species")
+        if not isinstance(species, dict):
+            return footprint_diameter
+        grown = grown_spread_cm(
+            species, self.metadata, date.today(), getattr(self.object_type, "name", "")
+        )
+        return grown if grown is not None else footprint_diameter
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionGraphicsItem,
+        widget: QWidget | None = None,
+    ) -> None:
+        """Paint the circle item.
+
+        For plant types (TREE, SHRUB, PERENNIAL), renders an illustrated
+        SVG plant shape instead of a flat colored ellipse. The SVG is
+        scaled up slightly so its organic edges touch/fill the circle
+        boundary rather than floating inside it.
+
+        For non-plant circles, delegates to the default ellipse painting.
+        """
+        rect = self.rect()
+        is_plant = is_plant_type(self.object_type)
+        # Resolved once and reused by both the decorative drop-shadow below
+        # and the SVG render further down -- computing it twice risked the
+        # two disagreeing, which is exactly how a prior cut of this left the
+        # drop-shadow drawn at the full mature footprint while the icon
+        # shrank (a young plant rendered as a large grey disc with a tiny
+        # sprite inside it, #299 review). Equals rect.width() when there is
+        # no growth data, so this is a no-op for every non-growth plant and
+        # every non-plant circle.
+        diameter = self._visual_plant_diameter_cm(rect.width()) if is_plant else rect.width()
+
+        # Draw painted shadow before the item itself
+        if self._shadows_enabled:
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.SHADOW_COLOR)
+            if is_plant and diameter != rect.width():
+                half = diameter / 2.0
+                center = rect.center()
+                shadow_rect = QRectF(
+                    center.x() - half, center.y() - half, diameter, diameter
+                ).translated(self.SHADOW_OFFSET_X, self.SHADOW_OFFSET_Y)
+            else:
+                shadow_rect = rect.translated(self.SHADOW_OFFSET_X, self.SHADOW_OFFSET_Y)
+            painter.drawEllipse(shadow_rect)
+            painter.restore()
+
+        if is_plant:
+            # Render at a larger size so organic shapes fill the circle
+            render_diameter = diameter * self._PLANT_FILL_SCALE
+
+            pixmap = render_plant_pixmap(
+                object_type=self.object_type,
+                diameter=render_diameter,
+                item_id=str(self._item_id),
+                species=self._plant_species,
+                category=self._plant_category,
+                tint_color=self.fill_color,
+            )
+
+            if pixmap is not None:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                # Centered on the footprint rect regardless of how far
+                # render_diameter has diverged from it (a young plant's icon
+                # can now be considerably smaller than the footprint, #298
+                # follow-up) -- equivalent to the old overflow-based offset
+                # when diameter == rect.width(), see _visual_plant_diameter_cm.
+                center = rect.center()
+                draw_rect = QRectF(
+                    center.x() - render_diameter / 2.0,
+                    center.y() - render_diameter / 2.0,
+                    render_diameter,
+                    render_diameter,
+                )
+                painter.drawPixmap(draw_rect.toAlignedRect(), pixmap)
+
+                # Draw selection highlight
+                if self.isSelected():
+                    pen = QPen(QColor(0, 120, 215, 180))
+                    pen.setWidthF(2.0)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(rect)
+
+                # Draw spacing circle (behind companion ring)
+                if self._spacing_circles_visible and (
+                    self.isSelected() or self._spacing_overlap is not None
+                ):
+                    spacing_r = sizing_for_item(self).spacing_ring_radius_cm
+                    if spacing_r is not None:
+                        center = rect.center()
+                        spacing_rect = QRectF(
+                            center.x() - spacing_r,
+                            center.y() - spacing_r,
+                            spacing_r * 2,
+                            spacing_r * 2,
+                        )
+                        if self._spacing_overlap == "overlap":
+                            fill_c = self._SPACING_FILL_RED
+                            stroke_c = self._SPACING_STROKE_RED
+                        elif self._spacing_overlap == "ideal":
+                            fill_c = self._SPACING_FILL_GREEN
+                            stroke_c = self._SPACING_STROKE_GREEN
+                        else:
+                            fill_c = self._SPACING_FILL_NEUTRAL
+                            stroke_c = self._SPACING_STROKE_NEUTRAL
+                        painter.save()
+                        pen = QPen(stroke_c)
+                        pen.setWidthF(self._SPACING_STROKE_WIDTH)
+                        pen.setStyle(Qt.PenStyle.DashLine)
+                        painter.setPen(pen)
+                        painter.setBrush(QBrush(fill_c))
+                        painter.drawEllipse(spacing_rect)
+                        painter.restore()
+
+                # Draw companion planting highlight ring
+                if self._companion_highlight is not None:
+                    ring_color = (
+                        QColor(80, 200, 80, 210)
+                        if self._companion_highlight == "beneficial"
+                        else QColor(220, 60, 60, 210)
+                    )
+                    ring_pen = QPen(ring_color)
+                    ring_pen.setWidthF(self._HIGHLIGHT_STROKE_WIDTH)
+                    painter.setPen(ring_pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    gap = self._HIGHLIGHT_STROKE_WIDTH / 2.0
+                    painter.drawEllipse(rect.adjusted(-gap, -gap, gap, gap))
+
+                # Draw permanent antagonist-neighbour warning badge (top-right corner).
+                # Canvas Y is flipped by the view: positive item-Y = visually UP.
+                # So visual top-right = (rect.right(), rect.bottom()) in item coords.
+                if self._antagonist_warning:
+                    s = min(self._radius * 0.45, self._WARNING_MAX_SIZE)
+                    h = s * 0.866  # equilateral triangle height
+                    # Badge centre: slightly inside the visual top-right of the circle
+                    cx = rect.right() - s * 0.3
+                    cy = rect.bottom() - s * 0.3
+                    # Equilateral triangle pointing upward (apex at larger Y = visually higher)
+                    triangle = [
+                        QPointF(cx, cy + h * 0.55),           # apex (visually top)
+                        QPointF(cx + s * 0.5, cy - h * 0.45), # base-right (visually bottom)
+                        QPointF(cx - s * 0.5, cy - h * 0.45), # base-left (visually bottom)
+                    ]
+                    painter.save()
+                    painter.setBrush(QColor(255, 200, 0, 230))
+                    warn_pen = QPen(QColor(180, 90, 0, 230))
+                    warn_pen.setWidthF(s * 0.08)
+                    painter.setPen(warn_pen)
+                    painter.drawPolygon(*triangle)
+                    # "!" mark: bar + dot using filled rectangles/ellipses
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(110, 50, 0, 240))
+                    bar_w = s * 0.09
+                    bar_h = s * 0.27
+                    # Bar: centred in upper portion of triangle (positive Y = visually up)
+                    bar_bot = cy + h * 0.07
+                    painter.drawRect(QRectF(cx - bar_w / 2, bar_bot, bar_w, bar_h))
+                    # Dot: below the bar (more negative Y = visually down)
+                    dot_r = bar_w * 0.75
+                    painter.drawEllipse(QPointF(cx, bar_bot - dot_r * 2.2), dot_r, dot_r)
+                    painter.restore()
+                return
+
+        if is_furniture_type(self.object_type):
+            rect = self.rect()
+            diameter = rect.width()
+            pixmap = render_furniture_pixmap(
+                object_type=self.object_type,
+                width=diameter,
+                height=diameter,
+            )
+            if pixmap is not None:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                # Undo the canvas/export Y-flip so the sprite reads upright
+                # (see RectangleItem.paint, #308 manual test: fire-pit flames).
+                painter.save()
+                painter.translate(rect.center())
+                painter.scale(1.0, -1.0)
+                painter.translate(-rect.center())
+                painter.drawPixmap(rect.toAlignedRect(), pixmap)
+                painter.restore()
+
+                # Draw selection highlight
+                if self.isSelected():
+                    pen = QPen(QColor(0, 120, 215, 180))
+                    pen.setWidthF(2.0)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(rect)
+                return
+
+        # Fall back to standard ellipse painting for non-plant/furniture circles
+        super().paint(painter, option, widget)
+
+        # Draw soil mismatch border for circular beds (US-12.10d)
+        self._draw_soil_mismatch_border(painter)
+
+        # Container over-capacity badge (US-C3)
+        self._draw_capacity_badge(painter)
+
+    @property
+    def center(self) -> QPointF:
+        """Get circle center point."""
+        return self._center
+
+    @property
+    def radius(self) -> float:
+        """Get circle radius."""
+        return self._radius
+
+    def set_radius_centered(self, new_radius: float) -> None:
+        """Resize the circle to ``new_radius`` while keeping its scene center fixed.
+
+        Used when applying a database species so the drawn footprint adopts the
+        plant's real size (diameter == ``max_spread_cm``) without drifting on the
+        canvas (issue #213). No-op when the radius is unchanged or non-positive.
+
+        Keeps the codebase's circle invariant intact: ``transformOriginPoint ==
+        center == rect.center()``. The serializer stores a circle's centre as
+        ``pos + center`` (rotation is a separate angle pivoting on the centre), so
+        the rotation origin **must** track the new centre — otherwise a rotated
+        plant resized here would save a displaced ``center_x/center_y`` and drift
+        on reload (and jump on the next rotation).
+
+        This keeps the *visual* centre (``mapToScene(rect().center())``) fixed
+        and snaps the serialized ``pos + center`` to it. Since #219 the rotation
+        pivot is always ``rect().center()`` (no longer the asymmetric
+        ``boundingRect().center()`` for a badged plant), so the two no longer
+        diverge beforehand and this resize simply preserves an already-consistent
+        centre.
+        """
+        if new_radius <= 0 or abs(new_radius - self._radius) < 1e-6:
+            return
+        # Scene-space centre of the current circle (correct under any rotation).
+        scene_center = self.mapToScene(self.rect().center())
+        diameter = new_radius * 2
+        new_center = QPointF(new_radius, new_radius)
+        # Keep the scene centre fixed: the centre-anchor case of the shared
+        # rotation-aware primitive (#218). It calls prepareGeometryChange(),
+        # applies the rect, re-pins the rotation origin onto the new centre,
+        # and repositions so the centre stays put — the pos + center invariant.
+        resize_rect_item_keeping_anchor(
+            self, QRectF(0, 0, diameter, diameter), scene_center, new_center
+        )
+        self._center = new_center
+        self._radius = new_radius
+        if hasattr(self, "update_resize_handles"):
+            self.update_resize_handles()
+        self._update_circle_annotations()
+        self._update_area_label()
+        self.update()
+
+    def itemChange(
+        self,
+        change: QGraphicsItem.GraphicsItemChange,
+        value: Any,
+    ) -> Any:
+        """Handle item state changes.
+
+        Shows/hides resize and rotation handles based on selection state.
+        """
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
+            if value:  # Being selected
+                self.show_resize_handles()
+                self.show_rotation_handle()
+                self._show_circle_annotations()
+            else:  # Being deselected
+                self.hide_resize_handles()
+                self.hide_rotation_handle()
+                self._hide_circle_annotations()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            self._update_circle_annotations()
+            self._update_area_label()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemSceneChange and value is None:
+            self.remove_rotation_handle()
+
+        return super().itemChange(change, value)
+
+    def _compute_area_cm2(self) -> float | None:
+        import math
+        return math.pi * self.radius ** 2
+
+    def _show_circle_annotations(self) -> None:
+        """Show diameter and center coordinate annotations."""
+        rect = self.rect()
+        diameter_cm = rect.width()
+        center_item = QPointF(rect.x() + rect.width() / 2, rect.y() + rect.height() / 2)
+        center_scene = self.mapToScene(center_item)
+
+        # Center coordinate label
+        if self._center_label is None:
+            self._center_label = AnnotationLabel(self)
+        self._center_label.set_text(_format_coordinate(center_scene.x(), center_scene.y()))
+        self._center_label.setPos(center_item.x(), center_item.y())
+        self._center_label.show()
+
+        # Diameter label at the right edge midpoint
+        right_mid = QPointF(rect.right(), rect.y() + rect.height() / 2)
+        if self._diameter_label is None:
+            self._diameter_label = AnnotationLabel(self)
+        self._diameter_label.set_text(f"\u2300 {_format_edge_length(diameter_cm)}")
+        self._diameter_label.setPos(right_mid.x(), right_mid.y())
+        self._diameter_label.show()
+
+    def _hide_circle_annotations(self) -> None:
+        """Hide diameter and center coordinate annotations."""
+        if self._center_label is not None:
+            self._center_label.hide()
+        if self._diameter_label is not None:
+            self._diameter_label.hide()
+
+    def _update_circle_annotations(self) -> None:
+        """Update annotations after resize."""
+        if self._center_label is None or not self._center_label.isVisible():
+            return
+
+        rect = self.rect()
+        diameter_cm = rect.width()
+        center_item = QPointF(rect.x() + rect.width() / 2, rect.y() + rect.height() / 2)
+        center_scene = self.mapToScene(center_item)
+
+        self._center_label.set_text(_format_coordinate(center_scene.x(), center_scene.y()))
+        self._center_label.setPos(center_item.x(), center_item.y())
+
+        right_mid = QPointF(rect.right(), rect.y() + rect.height() / 2)
+        if self._diameter_label is not None:
+            self._diameter_label.set_text(f"\u2300 {_format_edge_length(diameter_cm)}")
+            self._diameter_label.setPos(right_mid.x(), right_mid.y())
+
+    def _on_resize_start(self) -> None:
+        """Called when a resize operation starts. Store initial geometry."""
+        # Store the rect (not boundingRect) for accurate calculations
+        self._resize_initial_rect = self.rect()
+        self._resize_initial_pos = self.pos()
+
+    def _constrain_resize_size(
+        self,
+        new_width: float,
+        new_height: float,
+        *,
+        width_driven: bool,
+        height_driven: bool,
+    ) -> tuple[float, float]:
+        """Square the resize rect so the circle stays circular and tracks the cursor.
+
+        Interactive-resize hook (``ResizeHandle._apply_resize``). The diameter
+        follows whichever axis the dragged handle drives so the handle tracks
+        the cursor: a corner handle reaches the farther axis (``max``), an edge
+        handle follows its own axis (so a side handle can grow *or* shrink the
+        circle — the old ``min(w, h)`` capped growth). #218 follow-up.
+        """
+        if width_driven and height_driven:
+            diameter = max(new_width, new_height)
+        elif width_driven:
+            diameter = new_width
+        elif height_driven:
+            diameter = new_height
+        else:
+            # Unreachable for the 8 handle positions (each drives ≥1 axis);
+            # guards a hypothetical future centre handle.
+            diameter = self._radius * 2.0
+        diameter = max(diameter, MINIMUM_SIZE_CM)
+        return diameter, diameter
+
+    def _after_resize_geometry(self) -> None:
+        """Sync circle bookkeeping after the shared primitive set rect/pos/origin.
+
+        Interactive-resize hook. The geometry (rect, position, transform origin)
+        is already applied; this updates the derived ``_center``/``_radius``,
+        the dimension feedback, handles, labels and annotations.
+        """
+        r = self.rect()
+        self._center = QPointF(r.width() / 2.0, r.height() / 2.0)
+        self._radius = r.width() / 2.0
+        # Single dimension readout: the circle annotates its own diameter ("Ø")
+        # when annotations are visible, so only fall back to the handle's
+        # width×height box when they are not (avoids the double label, #218).
+        annotations_visible = (
+            self._center_label is not None and self._center_label.isVisible()
+        )
+        if (
+            not annotations_visible
+            and hasattr(self, '_dimension_display')
+            and self._dimension_display is not None
+        ):
+            self._dimension_display.update_dimensions(
+                r.width(), r.height(), self.mapToScene(r.bottomRight())
+            )
+        self.update_resize_handles()
+        self._position_label()
+        self._update_area_label()
+        self._update_circle_annotations()
+
+    def _on_resize_end(
+        self,
+        initial_rect: QRectF | None,
+        initial_pos: QPointF | None,
+    ) -> None:
+        """Called when resize operation completes. Registers undo command."""
+        if initial_rect is None or initial_pos is None:
+            return
+
+        scene = self.scene()
+        if scene is None or not hasattr(scene, 'get_command_manager'):
+            return
+
+        command_manager = scene.get_command_manager()
+        if command_manager is None:
+            return
+
+        # Get current geometry
+        current_rect = self.rect()
+        current_pos = self.pos()
+
+        # Only register command if geometry actually changed
+        if (initial_rect == current_rect and initial_pos == current_pos):
+            return
+
+        from open_garden_planner.core.commands import ResizeItemCommand
+
+        # US-D2.2: the canonical apply path, shared with the properties panel
+        # and the Agent API's resize_object (ui.canvas.geometry_apply). It does
+        # exactly what this local closure used to — prepareGeometryChange,
+        # setRect, the #218 origin re-pin, setPos, handles + label — but there
+        # is now only one copy of it to keep correct.
+        from open_garden_planner.ui.canvas.geometry_apply import (
+            apply_rect_like_geometry,
+        )
+
+        apply_geometry = apply_rect_like_geometry
+
+        old_geometry = {
+            'rect_x': initial_rect.x(),
+            'rect_y': initial_rect.y(),
+            'width': initial_rect.width(),  # Circles have equal width/height
+            'height': initial_rect.height(),
+            'center_x': initial_rect.x() + initial_rect.width() / 2.0,
+            'center_y': initial_rect.y() + initial_rect.height() / 2.0,
+            'radius': initial_rect.width() / 2.0,
+            'pos_x': initial_pos.x(),
+            'pos_y': initial_pos.y(),
+        }
+
+        new_geometry = {
+            'rect_x': current_rect.x(),
+            'rect_y': current_rect.y(),
+            'width': current_rect.width(),
+            'height': current_rect.height(),
+            'center_x': self._center.x(),
+            'center_y': self._center.y(),
+            'radius': self._radius,
+            'pos_x': current_pos.x(),
+            'pos_y': current_pos.y(),
+        }
+
+        # Collect EQUAL-constraint partner resize undo data
+        from open_garden_planner.core.tools.constraint_tool import (
+            _build_equal_resize_fn,  # noqa: PLC0415
+        )
+        partner_resizes = []
+        for p_item, old_size, apply_fn, p_anchor_type in getattr(self, '_equal_partner_pre_states', []):
+            new_size, _ = _build_equal_resize_fn(p_item, p_anchor_type)
+            if new_size is not None and old_size != new_size:
+                partner_resizes.append((p_item, old_size, new_size, apply_fn))
+
+        command = ResizeItemCommand(
+            self,
+            old_geometry,
+            new_geometry,
+            apply_geometry,
+            partner_resizes=partner_resizes or None,
+        )
+
+        # Add to undo stack without executing (geometry already applied)
+        command_manager.register_applied(command)
+
+    def _on_rotation_end(self, initial_angle: float) -> None:
+        """Called when rotation operation completes. Registers undo command."""
+        scene = self.scene()
+        if scene is None or not hasattr(scene, 'get_command_manager'):
+            return
+
+        command_manager = scene.get_command_manager()
+        if command_manager is None:
+            return
+
+        # Get current angle
+        current_angle = self.rotation_angle
+
+        # Only register command if angle actually changed
+        if abs(initial_angle - current_angle) < 0.01:
+            return
+
+        from open_garden_planner.core.commands import RotateItemCommand
+
+        # US-D2.2: the canonical rotate apply path (ui.canvas.geometry_apply),
+        # shared with the Agent API's rotate_object. Every item class had an
+        # identical private copy of this one-liner; a shared name means the
+        # agent and the drag handles provably rotate the same way.
+        from open_garden_planner.ui.canvas.geometry_apply import apply_rotation
+
+        command = RotateItemCommand(
+            self,
+            initial_angle,
+            current_angle,
+            apply_rotation,
+        )
+
+        # Add to undo stack without executing (rotation already applied)
+        command_manager.register_applied(command)
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        """Handle double-click to edit label inline."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.start_label_edit()
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        """Show context menu on right-click."""
+        # Select this item if not already selected
+        if not self.isSelected():
+            self.scene().clearSelection()
+            self.setSelected(True)
+
+        _ = QCoreApplication.translate
+        menu = QMenu()
+
+        # Move to Layer submenu (hidden when project has only one layer)
+        move_layer_menu = self._build_move_to_layer_menu(menu)
+
+        # Arrange submenu (Bring to Front / Forward / Send Backward / Back)
+        arrange_menu = self._build_arrange_menu(menu)
+
+        # Change Type submenu
+        from open_garden_planner.core.object_types import get_valid_types_for_shape
+        change_type_menu = self._build_change_type_menu(menu, get_valid_types_for_shape("circle"))
+
+        # Bed-specific actions are built centrally — see ADR-017 / §8.12.
+        # Circles can also be plants; for plant-type circles we only offer the
+        # pest/disease log (the bed builder otherwise covers it for bed types).
+        from open_garden_planner.core.object_types import is_bed_type, is_plant_parent_type
+        from open_garden_planner.ui.canvas.items.garden_item import BedMenuActions
+        bed_actions = BedMenuActions()
+        plant_pest_log_action = None
+        plant_harvest_log_action = None
+        if is_plant_parent_type(self.object_type):
+            bed_actions = self.build_bed_context_menu(
+                menu,
+                grid_enabled=self._grid_enabled,
+                supports_grid=False,
+                supports_soil=is_bed_type(self.object_type),
+            )
+        else:
+            menu.addSeparator()
+            plant_pest_log_action = menu.addAction(
+                _("CircleItem", "Log Pest/Disease…")
+            )
+            plant_harvest_log_action = menu.addAction(
+                _("CircleItem", "Log Harvest…")
+            )
+
+        # Show Area toggle
+        show_area_action = menu.addAction(_("CircleItem", "Show Area"))
+        show_area_action.setCheckable(True)
+        show_area_action.setChecked(self._area_label_visible)
+
+        menu.addSeparator()
+
+        # Delete action
+        delete_action = menu.addAction(_("CircleItem", "Delete"))
+
+        menu.addSeparator()
+
+        # Duplicate action
+        duplicate_action = menu.addAction(_("CircleItem", "Duplicate"))
+
+        # Linear array action
+        linear_array_action = menu.addAction(_("CircleItem", "Create Linear Array..."))
+
+        # Grid array action
+        grid_array_action = menu.addAction(_("CircleItem", "Create Grid Array..."))
+
+        # Circular array action
+        circular_array_action = menu.addAction(_("CircleItem", "Create Circular Array..."))
+
+        # Boolean operations (requires exactly 2 selected closed shapes)
+        boolean_union_action = None
+        boolean_intersect_action = None
+        boolean_subtract_action = None
+        array_along_path_action = None
+        selected = self.scene().selectedItems()
+        if len(selected) == 2:
+            from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
+            from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+            from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+
+            shape_types = (PolygonItem, RectangleItem, CircleItem)
+            if all(isinstance(s, shape_types) for s in selected):
+                menu.addSeparator()
+                _ = QCoreApplication.translate
+                bool_menu = menu.addMenu(_("CircleItem", "Boolean"))
+                boolean_union_action = bool_menu.addAction(_("CircleItem", "Union"))
+                boolean_intersect_action = bool_menu.addAction(_("CircleItem", "Intersect"))
+                boolean_subtract_action = bool_menu.addAction(_("CircleItem", "Subtract"))
+            if any(isinstance(s, PolylineItem) for s in selected):
+                array_along_path_action = menu.addAction(
+                    QCoreApplication.translate("CircleItem", "Array Along Path...")
+                )
+
+        # Execute menu and handle result
+        action = menu.exec(event.screenPos())
+
+        # Dispatch bed-specific actions via the shared mixin handler.
+        if self.dispatch_bed_action(action, bed_actions):
+            return
+
+        if action == plant_pest_log_action and plant_pest_log_action is not None:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views and hasattr(views[0], "request_pest_log"):
+                    views[0].request_pest_log(str(self.item_id), self.name)
+        elif action == plant_harvest_log_action and plant_harvest_log_action is not None:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views and hasattr(views[0], "request_harvest_log"):
+                    views[0].request_harvest_log(str(self.item_id), self.name)
+        elif action == show_area_action:
+            self.area_label_visible = not self._area_label_visible
+        elif action == delete_action:
+            self.scene().removeItem(self)
+        elif action == duplicate_action:
+            # Duplicate via canvas view
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "duplicate_selected"):
+                        view.duplicate_selected()
+        elif action == linear_array_action:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "create_linear_array"):
+                        view.create_linear_array()
+        elif action == grid_array_action:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "create_grid_array"):
+                        view.create_grid_array()
+        elif action == circular_array_action:
+            scene = self.scene()
+            if scene:
+                views = scene.views()
+                if views:
+                    view = views[0]
+                    if hasattr(view, "create_circular_array"):
+                        view.create_circular_array()
+        elif action is not None and action in (
+            boolean_union_action, boolean_intersect_action, boolean_subtract_action
+        ):
+            op_map = {
+                boolean_union_action: "union",
+                boolean_intersect_action: "intersect",
+                boolean_subtract_action: "subtract",
+            }
+            scene = self.scene()
+            if scene:
+                for v in scene.views():
+                    if hasattr(v, "boolean_operation"):
+                        v.boolean_operation(op_map[action])
+                        break
+        elif action == array_along_path_action and array_along_path_action is not None:
+            scene = self.scene()
+            if scene:
+                for v in scene.views():
+                    if hasattr(v, "create_array_along_path"):
+                        v.create_array_along_path()
+                        break
+        elif move_layer_menu and action and action.parent() is move_layer_menu:
+            self._dispatch_move_to_layer(action.data())
+        elif arrange_menu and action and action.parent() is arrange_menu:
+            self._dispatch_arrange(action.data())
+        elif change_type_menu and action and action.parent() is change_type_menu:
+            self._dispatch_change_type(action.data())
+
+    def to_dict(self) -> dict:
+        """Serialize the item to a dictionary for saving."""
+        return {
+            "type": "circle",
+            "id": self.item_id,
+            "center": {"x": self._center.x(), "y": self._center.y()},
+            "radius": self._radius,
+            "position": {"x": self.pos().x(), "y": self.pos().y()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CircleItem":
+        """Create a circle from a dictionary."""
+        center = data["center"]
+        item = cls(center["x"], center["y"], data["radius"])
+        item.setPos(data["position"]["x"], data["position"]["y"])
+        return item

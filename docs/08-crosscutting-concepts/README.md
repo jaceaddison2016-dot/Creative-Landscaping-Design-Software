@@ -1,0 +1,2402 @@
+# 8. Crosscutting Concepts
+
+## 8.1 Coordinate System
+
+**Origin**: Bottom-left corner of canvas (CAD convention)
+**Y-axis**: Increases upward (mathematical/CAD convention, not screen coordinates)
+**Units**: Centimeters internally, displayed as cm or m based on context
+
+```python
+@dataclass
+class Point:
+    x: float  # centimeters, positive = East/Right
+    y: float  # centimeters, positive = North/Up (CAD convention)
+    z: float = 0.0  # centimeters, elevation (unused in 2D, ready for 3D)
+```
+
+Qt's QGraphicsView uses Y-down screen coordinates. The canvas view applies a transform to flip the Y-axis for display while maintaining the CAD convention in the data model.
+
+## 8.2 Command Pattern (Undo/Redo)
+
+All modifications to the document are wrapped in command objects:
+
+```python
+class Command(ABC):
+    def execute(self) -> None: ...
+    def undo(self) -> None: ...
+
+class MoveObjectCommand(Command):
+    def __init__(self, obj: GardenObject, old_pos: Point, new_pos: Point): ...
+```
+
+- Every user action that modifies state creates a Command
+- Commands are pushed onto an UndoStack (QUndoStack)
+- Undo history clears on project close (standard behavior)
+- Each vertex operation, property change, etc. is a separate undoable command
+- The `CommandManager` is owned by `CanvasView` and shared with `CanvasScene` via `scene.get_command_manager()` so that `QGraphicsItem` subclasses can push commands directly when handling resize, rotation, or vertex-editing interactions
+- Operations that change both geometry and position (e.g. scaling from a left handle) must be captured in a single command to avoid requiring multiple undos
+- An **Arrange** gesture (Bring to Front/Forward, Send Backward/to Back — issue #338, ADR-043, §8.25) is one `ArrangeItemsCommand`, however many layers or block members it touches; a gesture that changes nothing (already at front/back, no overlapping object to step past) pushes **nothing** onto the undo stack — the seam reports the reason instead (`ui/canvas/arrange.py::build_arrange_command`).
+
+## 8.3 Internationalization (i18n)
+
+Uses Qt Linguist translation system:
+
+1. All user-facing strings wrapped in `self.tr()` or `QCoreApplication.translate()`
+2. Source strings extracted with `pylupdate6` into `.ts` XML files
+3. Translators edit `.ts` files (Qt Linguist tool or text editor)
+4. `.ts` files compiled to `.qm` binary with `lrelease`
+5. `QTranslator` loaded at app startup based on saved language preference
+
+**Shipped languages**: English (default), German
+**Extensible**: Community can add languages by creating new `.ts` files
+
+**Translation files location**:
+- `src/open_garden_planner/resources/translations/open_garden_planner_de.ts`
+- `src/open_garden_planner/resources/translations/open_garden_planner_en.ts`
+
+**Not translated**: Plant scientific names (Latin), file format identifiers
+
+### How to add translations when creating/modifying a widget
+
+1. **In code**: wrap every UI string with `self.tr("English text")`. The class name is the translation context automatically.
+
+2. **Update both `.ts` files** — add a `<context>` block (or extend an existing one) to both files:
+
+   ```xml
+   <context>
+       <name>MyWidget</name>
+       <message>
+           <source>English text</source>
+           <translation>Translated text</translation>
+       </message>
+   </context>
+   ```
+
+   Note: German file uses `<name>` with no extra indent, English file uses 4-space indent.
+
+3. **Recompile `.qm` files** after every `.ts` change:
+   ```bash
+   venv/Lib/site-packages/qt6_applications/Qt/bin/lrelease.exe \
+     src/open_garden_planner/resources/translations/open_garden_planner_de.ts \
+     src/open_garden_planner/resources/translations/open_garden_planner_en.ts
+   ```
+
+### Translation rules
+
+- **Always use `self.tr("string")`** for every user-visible string in any `QWidget` subclass.
+- Strings passed to `CollapsiblePanel(title, ...)` must use `self.tr("title")` at the **call site** (e.g. in `application.py`), because `CollapsiblePanel` is generic and has no context for the title string.
+- `QT_TR_NOOP("string")` marks strings for extraction without translating them at that point (used in module-level dicts). Translate them later with `QCoreApplication.translate("ContextClass", string)`.
+- Non-`QObject` contexts (e.g. module-level code) use `QCoreApplication.translate("ContextName", "string")`.
+
+### Context menu strings in QGraphicsItem subclasses
+
+`QGraphicsItem` subclasses (e.g. `CircleItem`, `PolygonItem`, `BackgroundImageItem`) are **not** `QObject` subclasses, so `self.tr()` is unavailable or incorrect. Use the shorthand alias at the top of every `contextMenuEvent()`:
+
+```python
+def contextMenuEvent(self, event):
+    _ = QCoreApplication.translate
+    action = menu.addAction(_("ClassName", "String"))
+```
+
+**Dynamic toggle labels** (e.g. "Lock Image" / "Unlock Image") must call `QCoreApplication.translate` on **both branches individually** so `pylupdate6` can extract both source strings:
+
+```python
+# CORRECT — both strings are extractable by pylupdate6
+lock_text = (
+    _("BackgroundImageItem", "Unlock Image")
+    if self._locked
+    else _("BackgroundImageItem", "Lock Image")
+)
+
+# WRONG — only one branch is extracted
+lock_text = _("BackgroundImageItem", "Unlock Image" if self._locked else "Lock Image")
+```
+
+This pattern was systematically applied across all item classes in issues #148/#149.
+
+## 8.4 Theme System
+
+**Single source of truth: [`ui/theme.py`](../../src/open_garden_planner/ui/theme.py)** (ADR-039). Two complete palettes (`ThemeColors.LIGHT`/`DARK`, key parity pinned by `tests/unit/test_theme.py`) feed one generated application stylesheet (`generate_stylesheet`); the preference (light/dark/system) persists in QSettings and applies live via `apply_theme()` — no restart.
+
+### 8.4.1 Color tokens & the no-hex rule
+
+Base/surface/text/border/accent/status tokens plus the #279 semantic additions: `success_bg`/`warning_bg`/`error_bg`/`info_bg` (tinted banner/card surfaces), `caution` ("this week" urgency yellow), and the `overlay_*` family (dynamic-input overlay — deliberately **constant across modes** because it floats over the always-light canvas). Canvas colors are identical in both modes by design (the garden always renders bright; pinned by `test_default_canvas_color`).
+
+**The no-hex rule**: widget code never hardcodes a chrome color. Styling comes either from the generated stylesheet (via the dynamic properties below) or from the live-palette helpers `theme_color()` / `theme_qcolor()` / `rgba(token, alpha)`. Enforced mechanically by `tests/unit/test_no_hardcoded_qss_colors.py` — the allowlist is EMPTY and stays that way without an ADR-039-documented reason.
+
+### 8.4.2 Typography & widget roles (dynamic properties)
+
+Styled centrally in the generated stylesheet, assigned via `theme.set_text_role(widget, role, color_role)` (which re-polishes, so post-polish changes apply — the §8.17.6 gotcha):
+
+- `QLabel[textRole="h1"/"h2"/"hint"/"small"/"placeholder"]` — size/weight/style
+- `QLabel[colorRole="success"/"warning"/"error"/"info"/"caution"/"disabled"/"secondary"]` — semantic text color (orthogonal to textRole; combinable)
+- `QPushButton[buttonRole="primary"/"secondary"]` — accent-branded dialog CTAs (welcome dialog)
+- `QLineEdit[inputError="true"]`, `QFrame[weatherCard="true"][frostSeverity="orange"/"red"]`
+- objectName rules: `#TaskReminderBar` (warning_bg banner), `#UpdateBar` (info_bg), `#constraintsDeleteAllBtn`
+
+> **Do not rename an objectName purely for styling.** For any widget the main window persists — every `QToolBar` — the objectName is also `QMainWindow.saveState()`'s persistence key, so renaming it silently resets that widget's saved layout for every existing user. Add a new selector instead. See §11.4 (#283).
+
+Weight uses `font-weight: 600` (support pinned by `test_theme_tokens.py`; documented fallback is `bold`).
+
+### 8.4.3 Theme propagation contract
+
+`apply_theme()` publishes the resolved palette FIRST (`current_colors()` / `is_dark_theme()` read it live), notifies `register_theme_listener` subscribers (the icon provider clears its cache), restyles via `app.setStyleSheet`, then walks `allWidgets()` duck-typed: widgets exposing `apply_theme_colors(colors)` get palette-driven redraws (CanvasView, dashboards — typically a debounced `schedule_refresh()`); widgets exposing `refresh_theme_icons()` re-request their icons (the three toolbars, the main window's tracked menu actions). New widgets opt in by defining one of the two hooks — no registration list.
+
+### 8.4.4 QSS capability limits
+
+No box-shadow, no transitions, no outline focus rings — focus is a 2 px border swap with 1 px padding compensation (no layout jump). Tabs are underline-style (documentMode: style `QTabBar::tab` directly, `::pane` is partially ignored). Outer popup frames (QMenu/QToolTip) stay square on Windows (rounded corners artifact); only inner menu-item pills get radii.
+
+## 8.5 Graphics Asset Pipeline
+
+### UI icons (chrome — `resources/icons/ui/`, ADR-039)
+- Line-icon set on a mechanical contract (24×24, `currentColor` + accent sentinel `#3D8B37`): 150 Tabler-vendored (MIT, pinned release) + 12 bespoke glyphs (#279 + #310)
+- Tinted at runtime by the central provider `ui/icons.py` — never fed to QSvgRenderer directly (see §8.21)
+- Gates: `scripts/normalize_icons.py` (idempotent canonicalizer) + `scripts/check_icon_conformance.py` + per-icon PROVENANCE — no entry, no merge
+
+### Plant SVGs (`resources/plants/`, ADR-040)
+- **Generated, never hand-edited**: all 108 species + 15 category sprites are emitted by `scripts/generate_plant_sprites.py` in the user-approved "Lush Sprite" style; committed files must byte-match regeneration (`--check` + determinism test). See §8.22.
+- Top-down, rotation-safe radial shading; QtSvg-subset only; contract in `resources/plants/README.md`, provenance in `resources/plants/PROVENANCE.md`
+- Consumed unchanged by `core/plant_renderer.py` (cached pixmaps, stable per-item rotation, optional tint)
+
+### Textures (`resources/textures/`, ADR-042 / #309)
+- **Generated, never hand-edited**: all 24 fill-pattern textures (grass, gravel, concrete, wood, water, soil, mulch, roof tiles, sand, stone, glass, hedge, brick, bark, wildflower, terracotta, pebbles, slate, lattice, compost, flagstone, clay, decking, corten) are emitted by `scripts/generate_asset_forge_textures.py` in the "Lush" texture language; committed PNGs must be pixel-identical to regeneration (`--check` + `tests/unit/test_texture_forge_conformance.py`). See §8.24.
+- 256×256 px RGB, **1 px = 1 cm** on the canvas (no LOD variants — Qt scales the brush); strictly top-down, no directional light; seamless by construction on a torus, gated by `scripts/check_texture_tileability.py` for every file
+- Loaded as `QPixmap` by `core/fill_patterns.py`, tinted with the user's fill colour at 80/255 alpha (`_tint_texture`) and applied via `QBrush` texture pattern; the tint-readability band is gated
+- Provenance: `resources/textures/PROVENANCE.md` (generator = provenance, one register row per file)
+
+### Object SVGs (`resources/objects/`, ADR-042 / #308)
+- **Generated, never hand-edited**: all 24 furniture + infrastructure sprites are emitted by `scripts/generate_object_sprites.py` in the "Lush Object" style (the man-made sibling of the plant art); committed files must byte-match regeneration (`--check` + determinism test). See §8.23.
+- Top-down, light from straight above, **no baked shadow** (the item-level painted shadow is the single source — furniture rotation is user-controlled); QtSvg-subset only; viewBox = nominal footprint in cm (gate-read table); contract in `resources/objects/README.md`, provenance in `resources/objects/PROVENANCE.md`
+- Consumed unchanged by `core/furniture_renderer.py` (cached pixmaps, stretched to the item rect); gallery thumbnails letterbox by viewBox aspect
+
+## 8.6 Development Workflow
+
+### Feature Development Process
+
+1. **Create feature branch**: `feature/US-X.X-short-description`
+2. **Read user story** from roadmap
+3. **Implement** with type hints
+4. **Write tests**, run lint (`pytest tests/ -v && ruff check src/`)
+5. **Write integration test** — see section 8.10; mandatory, no exceptions
+6. **Manual testing** by user
+7. **Commit** after approval: `feat(US-X.X): Description`
+8. **Push and create PR** via GitHub CLI
+9. **Merge with admin flag** (squash merge)
+10. **Switch back to master**: `git checkout master && git pull`
+
+### Code Quality Standards
+
+- **Type hints**: All functions must have type annotations
+- **Linting**: Code must pass ruff checks
+- **Test coverage**: New code must maintain >80% coverage
+- **Line length**: 110 characters (Black/ruff config)
+
+### Git Workflow
+
+- **master branch**: Always deployable, protected
+- **Feature branches**: `feature/US-X.X-short-description`
+- **Commits**: Small, atomic, conventional commit format
+- **PRs**: Required for all changes, must pass CI
+
+## 8.7 Error Handling
+
+- **Graceful degradation when APIs are unavailable**: external services (Google Maps, Trefle, Perenual, Permapeople) degrade quietly without blocking application workflow.
+- **Two-phase atomic project loading (AUD-040, TD-017, #403)**:
+  `ProjectManager.load()` deserializes and validates all items, layers, guides, and constraints in memory (Phase 1) before mutating or clearing the active `CanvasScene` (Phase 2). If Phase 1 raises, the current scene remains 100% intact. On any failure, `_current_file` is cleared (`None`), the document is marked dirty, and `_load_project_file` preserves any existing autosave file on disk, guaranteeing that subsequent Save/Ctrl+S actions cannot overwrite the previous plan file with empty or partial content.
+- **Missing or corrupt assets load as placeholders (AUD-043, TD-011, #397)**:
+  Background images with missing disk paths or invalid embedded image bytes load as non-rendering `BackgroundImageItem` placeholders (`is_placeholder=True`). On subsequent saves, the placeholder re-emits its original raw dictionary so external asset links survive across sessions instead of being silently deleted.
+- **Duplicate item UUID detection & re-minting (AUD-043, TD-011, #397)**:
+  If a corrupted or hand-edited `.ogp` file contains duplicate `item_id` values, the loader detects the collision, logs a warning, and re-mints a fresh UUID for colliding items, preserving scene graph integrity and unambiguous agent addressing.
+- **Undecodable item accounting**:
+  Malformed or unknown items in `.ogp` files are skipped with a logged warning, and the skipped count is tracked in `ProjectManager.last_load_skipped_items_count` for diagnostics reporting.
+- **Auto-save recovery on crash**:
+  Periodic autosaves write to `~autosave_...` next to the project file (or in temp for untitled plans). Autosaves are cleared only after a new file load succeeds.
+- **No silent failures**: all errors logged and shown to user where appropriate.
+
+## 8.8 Settings Storage — One Chokepoint (ADR-041)
+
+User state lives in a platform-native QSettings store (Windows: registry under
+`HKEY_CURRENT_USER\Software\cofade\Open Garden Planner`; Linux:
+`~/.config/cofade/Open Garden Planner.conf`; macOS: a plist), split across two
+wrappers over **one** backend:
+
+| Wrapper | Owns | Keys |
+|---------|------|------|
+| `app/settings.py` — `AppSettings` | user preferences: recent files, theme, language, auto-save interval, snap toggles, frost thresholds, Agent API port/token/write-toggle, API keys, last-used fillet/chamfer values | flat, grouped by domain (`canvas/`, `appearance/`, `agent_api/`, …) |
+| `app/ui_state.py` — `UiStateStore` | UI-only state: window geometry, `QMainWindow` state (toolbar layout), main splitter sizes | `UiState/` |
+
+Per-panel collapse/expand state is deliberately **not** persisted — the sidebar
+accordion starts fully collapsed every session (US-226, ADR-030, §8.17.7).
+
+**The rule: `app/settings.create_qsettings()` is the only place in the repo that
+may construct — or even name — `QSettings`.** Everything that persists state
+takes its backend from that factory. Enforced by an AST walk over `src/`,
+`tests/` and `scripts/` in `tests/unit/test_settings_chokepoint.py` (three test
+modules are exempt with stated reasons; `tests/` is in scope because the #283
+damage was observed from the test side, and `scripts/` because a dev script runs
+outside pytest where nothing isolates it — `installer/` is not scanned only
+because it has never touched settings), not by convention: `UiStateStore` built
+its own store until #285, which meant it escaped the test isolation layered on
+`AppSettings`, and every full-app test read *and overwrote* the developer's real
+window geometry and toolbar layout — 120 measured writes from a single test file
+(§11.4, ADR-041).
+
+**This section is the single specification of the mechanism.** ADR-041 records the
+decision and the alternatives; §11.4 and `CLAUDE.md` record the incident. Neither
+restates how it works, because three earlier attempts to keep a second copy in
+sync each drifted within one commit. Change the mechanism, change it here.
+
+Three further rules, each gated, each worth understanding before touching this:
+
+- The factory reads `ORGANIZATION_NAME` / `APPLICATION_NAME` from module globals
+  **on every call**, never captured at import. That is what lets the test suite
+  redirect every consumer at once, which `tests/conftest.py` does at its own
+  **import time** (module scope, not in a fixture — pytest imports the root
+  conftest before any test module, so even a store built during an import lands
+  in the test key; a fixture runs after collection and could not). Do not
+  "optimise" the names into a default argument, a module-level tuple or a
+  `functools.partial` — `test_rebinding_the_names_redirects_new_stores` will stop
+  you, and neither can they retarget an *existing* store (ADR-041).
+- **Prefer building a store at runtime over import time.** A module-level
+  `_STORE = create_qsettings()` (or one in a class body, decorator or default
+  argument) can be redirected by nothing at all once constructed.
+  `TestNoStoreIsBuiltAtImportTime` flags it; since the conftest redirection this
+  is belt-and-braces rather than load-bearing, and it reads names, so one level
+  of indirection defeats it.
+- **Never call `QSettings.setDefaultFormat()` or `QSettings.setPath()`** to set
+  anything up — not in `src/`, not in a test (both gated). They are process-global
+  statics Qt never reverts; a leaked `setPath` to a deleted `tmp_path` once
+  poisoned every store built later in the session and broke six unrelated tests
+  (§11.4). Redirect the factory instead. The single sanctioned call is
+  `isolate_qsettings`'s teardown, which restores the captured `defaultFormat()`
+  and then asserts it had not changed — a tripwire, not a silent repair.
+
+## 8.9 QGraphicsView Overlay Widget Patterns
+
+These rules apply whenever you add a **fixed overlay widget** on top of the canvas (minimap, toolbox, legend, etc.).
+
+### 8.9.1 Widget parenting — always parent to the QGraphicsView, never to its viewport
+
+```python
+# WRONG — viewport children scroll with scene content
+super().__init__(canvas_view.viewport())
+
+# CORRECT — QGraphicsView (QAbstractScrollArea) children stay fixed
+super().__init__(canvas_view)
+```
+
+`QGraphicsView.scrollContentsBy()` calls `viewport()->scroll()`, which physically moves every child widget of the viewport. Child widgets of the **QGraphicsView itself** are unaffected.
+
+### 8.9.2 Defer initial positioning with QTimer.singleShot(0, ...)
+
+At construction time the widget has not been shown or laid out, so `viewport().geometry()` may return a zero-size rect. Defer the first `_reposition()` call:
+
+```python
+QTimer.singleShot(0, self._reposition)   # fires after event loop iteration
+```
+
+Continue repositioning on view resize via `installEventFilter(self)` on the **view** (not the viewport).
+
+### 8.9.3 Use viewport().geometry() for positioning, not view.width()/height()
+
+`viewport().geometry()` is in the QGraphicsView's local coordinate space and already excludes scrollbars. Always use it as the bounding rect when computing overlay position.
+
+```python
+def _reposition(self) -> None:
+    vp = self._canvas_view.viewport().geometry()
+    x = vp.right()  - self.width()  - MARGIN
+    y = vp.bottom() - self.height() - MARGIN - extra_clearance
+    self.move(max(vp.left(), x), max(vp.top(), y))
+    self.raise_()
+```
+
+### 8.9.4 Account for viewport-drawn overlays (scale bar, rulers)
+
+The canvas draws a **scale bar** in the bottom-right corner and **rulers** along the top and left edges directly in the viewport's `paintEvent` — they are **not** separate widgets. Fixed overlays must clear their reserved space:
+
+| Drawn overlay | Location | Reserved space |
+|---------------|----------|----------------|
+| Rulers (top & left) | top 20 px, left 20 px | `CanvasView.RULER_SIZE = 20` |
+| Scale bar | bottom-right | `CanvasView.SCALE_BAR_RESERVED_PX = 40` |
+
+```python
+from open_garden_planner.ui.canvas.canvas_view import CanvasView
+
+sb = CanvasView.SCALE_BAR_RESERVED_PX if self._canvas_view.scale_bar_visible else 0
+y = vp.bottom() - self.height() - MARGIN - sb
+```
+
+### 8.9.5 Scene thumbnail rendering — Y-flip and item filtering
+
+`QGraphicsScene.render()` renders in raw scene coordinates (Y increases downward). The canvas view applies a Y-flip transform. Flip the resulting pixmap:
+
+```python
+pixmap = scene.render(painter, target, source_rect)
+thumbnail = pixmap.transformed(QTransform().scale(1, -1))
+```
+
+Before rendering, **hide screen-space overlay items** that would appear at wrong positions or wrong sizes in the thumbnail:
+
+```python
+hidden = []
+for item in scene.items():
+    if (item.isVisible() and (
+        bool(item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        or item.zValue() >= 100          # temporary tool overlays
+    )):
+        item.setVisible(False)
+        hidden.append(item)
+
+# ... render ...
+
+for item in hidden:
+    item.setVisible(True)
+```
+
+`ItemIgnoresTransformations` is set on: measurement/constraint text labels, dimension display handles, angle display handles. **Stale claim corrected (issue #338):** this section used to say "Z-value ≥ 100 is set on: active measure tool lines, constraint preview geometry", implying z ≥ 100 is itself a reserved overlay band. That was already an oversimplification once multi-layer plans existed — every layer occupies its own `[z_order*100, z_order*100+100)` band, so a perfectly ordinary document item on layer 2+ also carries z ≥ 100 — and it is now additionally imprecise because per-object stacking (§8.25) spreads items across that whole per-layer band rather than pinning them to its floor. z is not the right test for "is this a tool overlay"; see §8.25's reserved-z-bands table for the actual fixed overlay ranges (900 and up), and note the illustrative snippet above predates that table — the live overlay-hiding code (`ui/widgets/minimap_widget.py`) uses its own named threshold, not a bare `100`.
+
+**The hide/restore itself emits `scene.changed` — asynchronously — for transformable items.** A `setVisible()` on a transformable item queues `changed([rect])` and then a trailing `changed([])`, delivered on *two separate later event-loop turns* — both *after* the render method has returned; a `setVisible()` on an `ItemIgnoresTransformations` item emits nothing (measured, Qt 6.11 — every handle/label/badge in this app carries the flag, so in production only the curve-edit connector lines are affected). If the thumbnail refresh is (as it should be) driven by `scene.changed`, this is a self-sustaining loop: with a single transformable overlay item on the scene the minimap re-rendered the whole plan ~9×/s forever while idle (issue #305, §11.4). A plain in-call re-entrancy flag does **not** cover it, and a timing window (`singleShot(0)`) is both fragile across Qt versions and drops genuine changes that share the turn. The shipped pattern in `MinimapWidget` is **content-based**: `_do_update()` records `sceneBoundingRect()` of every *transformable* item it hid (the only ones that emit); the `changed` slot (`_on_scene_changed`) ignores an emission iff every rect lies inside one of those (an empty rect list is Qt's trailing no-op — measured, every genuine mutation carries ≥ 1 rect) and schedules a render otherwise. A toggled-off minimap early-returns before rendering at all.
+
+**Rule — every slot connected to `scene.changed` (directly or via a debounce timer it restarts) must be idempotent: compute the final state per item, then apply it once.** Never call `update()`, `setVisible()`, `prepareGeometryChange()`, or add/remove items from such a slot unless the underlying value actually changed, and never do a "clear everything, then set" pass — the item setters' early-return guards (`GardenItemMixin.set_companion_highlight()`/`set_spacing_overlap()`/`set_antagonist_warning()`) cannot help when the handler forces the value through `None` each tick. Both patterns were live in #305: `CanvasView._update_soil_mismatches()` with an unconditional `item.update()` (one bed → loop), and `_update_spacing_overlaps()`/`_update_companion_highlights()` with a clear pass (one gallery-dropped plant → loop). `_update_container_capacity()` is the model to copy. To check a change for a new loop: settle the app for 1.5 s, then assert 0 `scene.changed` emissions and 0 `QGraphicsScene.render` calls over the next 2 s (`tests/integration/test_idle_scene_quiescence.py`).
+
+### 8.9.6 Coordinate mapping with Y-flip
+
+Minimap Y=0 is the **visual top** of the canvas, which corresponds to **scene Y = canvas_height** (max scene Y). All coordinate conversions must invert Y:
+
+```python
+# minimap pixel → scene
+sx = canvas_rect.x() + (mx / w) * canvas_rect.width()
+sy = canvas_rect.y() + canvas_rect.height() * (1.0 - my / h)   # inverted
+
+# scene → minimap pixel (for viewport rect overlay)
+ry = (canvas_rect.height() - (scene_max_y - canvas_rect.y())) * scale_y
+```
+
+### 8.9.7 Thumbnail aspect ratio — size the widget, don't letterbox
+
+Never stretch a canvas thumbnail into a fixed aspect-ratio widget — this produces gray bars when the canvas has a different proportion. Instead, **resize the overlay widget** to match the canvas aspect ratio within maximum dimensions:
+
+```python
+if canvas_w / canvas_h > MAX_W / MAX_H:
+    w, h = MAX_W, int(MAX_W * canvas_h / canvas_w)
+else:
+    h, w = MAX_H, int(MAX_H * canvas_w / canvas_h)
+self.setFixedSize(w, h)
+self._reposition()
+```
+
+### 8.9.8 Rotatable-item geometry invariant — keep `transformOriginPoint == rect().center()`
+
+Rect-bearing items (`CircleItem`/`RectangleItem`/`EllipseItem`) serialize their position as `pos + rect.center()` with rotation stored as a *separate* angle pivoting on the centre (`core/project.py`). Every geometry mutation on such an item — rotate, programmatic resize, interactive drag-resize, and the undo/redo of any of them — **must end with `transformOriginPoint() == rect().center()`**, or a rotated item's saved centre diverges from its on-screen centre and it drifts on reload / jumps on the next rotation. Do not re-derive this per gesture. **Route every rect-backed resize through `ui/canvas/geometry_apply.py`** (US-D2.2): `apply_rect_like_geometry` is the `apply_func` every `ResizeItemCommand` must be given, and the `build_*_resize` helpers compute the target geometry for either anchor policy. Its module docstring is the authoritative list of callers and exceptions. Below it sit the two lower-level primitives, a coupled pair rather than pick-and-choose: `resize_handle.resize_rect_item_keeping_anchor(item, new_rect, scene_anchor, local_anchor)` (mutating: `prepareGeometryChange()`, apply rect, re-pin origin, reposition so a chosen scene point stays fixed), whose `scene_anchor` must come from the pure forward transform `scene_point_of` — never hand-derived — and `anchored_position`, the inverse form the `geometry_apply` builders solve `pos` through. **Never hand-derive a position beside a re-pin** — `anchored_position` bakes in `O = new_rect.center()`, so a `pos` computed by hand under the *old* origin and then combined with a re-pin is two half-solutions to one transform: that combination slid a rotated rectangle 671 cm out from under the cursor (§11.4). Rotation goes through `geometry_apply.apply_rotation`, the only definition in the codebase (it delegates to `RotationHandleMixin._apply_rotation`, which pivots on `rect().center()`). Note `ResizeItemCommand` accepts **two** callables — `apply_func` and each `partner_resizes` entry's — and both must obey this. For rect-backed items, the interactive `ResizeHandle._apply_resize` takes the fixed corner/edge **authoritatively from the handle position**, never inferred from scene-space, which disagrees with the item frame under rotation. It lets the item normalise the rect (`CircleItem._constrain_resize_size` squares it so the dragged handle tracks the cursor — never `min(w,h)`, which collapses under rotation), then refreshes via `_after_resize_geometry()`. The non-rect fallback (PolygonItem) is exact compensation, not an alignment accident: it rotates the local delta into scene space (`pos_dx * cos_a - pos_dy * sin_a`) before applying it, so the dragged edge tracks the cursor and the opposite edge stays fixed under rotation too. The pivot must come from the *geometric* `rect()`, never the decoration-expanded `boundingRect()` (a runtime-only badge expands the latter asymmetrically); and any shrink of a custom `boundingRect()` must `prepareGeometryChange()` or Qt leaves a stale "ghost". See ADR-028 and §11.4 (#218/#219). Sizing precedence (footprint vs. spacing override vs. DB `max_spread_cm`) likewise has one home: the Qt-free `core/plant_sizing.py` resolver.
+
+## 8.10 Integration Test Policy
+
+**Every user story (US) must ship with at least one end-to-end integration test. No merge without it. No exceptions.**
+
+### Rationale
+
+Unit tests and widget tests protect individual components but cannot catch regressions in the interaction between tools, canvas, and scene — the most failure-prone area of the app. Integration tests lock in observed behavior so that refactoring and feature additions don't silently break existing workflows.
+
+### Test location
+
+All integration tests live in `tests/integration/`. Shared fixtures are in `tests/integration/conftest.py`.
+
+### Per-test timeout (hang guard)
+
+Every test runs under `pytest-timeout` (`timeout = 180` in `pyproject.toml`; dev dependency). A hung full-app test therefore fails loudly instead of silently freezing the battery (§11.4, 2026-08-17). If a legitimate test needs longer, mark it `@pytest.mark.timeout(N)` with a comment saying why — do not raise the global value.
+
+### Minimum requirement per US
+
+Each US must have at least one test that exercises its **primary workflow** end to end:
+
+1. Activate the relevant tool (if applicable)
+2. Simulate the user gesture (mouse press → move → release)
+3. Assert the resulting scene state (item created, property changed, item removed, etc.)
+
+### How tool interaction is tested
+
+Tools expose a direct API that bypasses the Qt event pipeline while still testing real business logic:
+
+```python
+tool.mouse_press(event, scene_pos: QPointF)
+tool.mouse_move(event, scene_pos: QPointF)
+tool.mouse_release(event, scene_pos: QPointF)
+```
+
+- `event`: `MagicMock(spec=QMouseEvent)` with `event.button.return_value = Qt.MouseButton.LeftButton`
+- `scene_pos`: Qt Y-down scene coordinates (not canvas Y-up coordinates)
+- Always disable snapping in tests: `view.set_snap_enabled(False)`
+
+### Standard fixture pattern
+
+```python
+@pytest.fixture
+def canvas(qtbot):
+    scene = CanvasScene(width_cm=5000, height_cm=3000)
+    view = CanvasView(scene)
+    qtbot.addWidget(view)
+    view.set_snap_enabled(False)
+    return view
+```
+
+### Coordinate system reminder
+
+> **Framing note.** The "Y-down / (0,0) top-left" label below is Qt's *abstract*
+> convention for the raw scene numbers, kept here for test-authoring mechanics (a
+> tool test passes raw `scene_pos` numbers and the compass doesn't matter). OGP's
+> view applies `scale(zoom, -zoom)`, so those *same* raw coordinates render
+> **Y-up**: a larger scene y is visually higher = **north** (§11.4 "Canvas Y-axis
+> flip" is the operative rule). That is why the Agent API — which reports the
+> identical raw scene y — describes the frame as "origin bottom-left, +y north."
+> Both statements are true of the same numbers; they differ only in whether they
+> name Qt's storage convention or the on-screen compass.
+
+- **Scene coordinates** (Y-down abstract convention, what tools receive): `(0, 0)` is top-left
+- **Canvas coordinates** (Y-up, what the user sees): `(0, 0)` is bottom-left, +y north
+- Pass scene coordinates to tool methods; use `view.scene_to_canvas()` / `view.canvas_to_scene()` when conversion is needed
+
+### What integration tests cover
+
+| Category | File | Tests |
+|----------|------|-------|
+| Drawing workflows | `test_drawing_workflows.py` | Rectangle, Circle, Polygon, Text, cancel |
+| Tool switching | `test_tool_switching.py` | Default tool, switch, cancel-on-switch, Escape |
+| Selection & resize | `test_selection_and_resize.py` | Select, deselect, move, mid-edge constraint, corner |
+| Undo/Redo | `test_undo_redo.py` | Draw→undo, draw→undo→redo, move→undo, multi-action stack |
+
+### CI
+
+Integration tests run automatically in CI (`ci.yml`) alongside unit and widget tests. Qt rendering uses `QT_QPA_PLATFORM=offscreen` — no display server required.
+
+### Render tier (opt-in, Phase 17)
+
+The `offscreen` platform plugin selects Qt Quick's *software* scene graph, which renders no 3D at all — an empty frame, not a wrong one. Tests that must see a real Qt Quick 3D frame therefore form an opt-in **render tier**, skipped unless `OGP_RENDER3D=1` and a display are present:
+
+```bash
+OGP_RENDER3D=1 QSG_RHI_BACKEND=opengl QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
+  xvfb-run -a -s "-screen 0 1920x1080x24" \
+  venv/bin/python -m pytest tests/integration/test_spike_q3d_render.py
+```
+
+The tier is **Linux/X11-only**: it forces `xcb` + OpenGL and is skipped without `DISPLAY` (Mesa llvmpipe in a container needs `libegl1` and `libxcb-cursor0`). On Windows the same probes run through the spike itself — `--spike-q3d … --iou --orient --pick …` in the dev venv or the frozen exe — and are judged from its `metrics.json`. Its module fixtures run a full render subprocess, which outlasts the global 180 s per-test timeout, so the tier carries its own `pytest.mark.timeout`. The render runs in a subprocess, and its assertions are about **meaning, never pixel-exact goldens**: shadow-map footprint vs the analytic shadow (IoU ≥ 0.85), north-up ground, the sky's sun at the solar azimuth, 20/20 picks against a CPU oracle, WebEngine and 3D drawing in one process, a clean exit while animating. Headless render tooling writes its own timestamped log and per-phase metrics and arms a watchdog, because a frozen GUI exe has no stdout (§11.4.5). A permanent CI job for this tier is planned with the production engine package (Phase 17, L1.2).
+
+### 8.10.1 Gating our own documentation's shell commands
+
+`tests/unit/test_gate_commands.py` is a static guard over the **commands our
+documentation tells people to run** — a category distinct from both unit and
+integration tests, and added after a self-inflicted defect worth recording.
+
+The frozen-exe `--selftest` gate was written into several documents at once and
+was wrong twice in two commits: first as a naked call PowerShell does not wait
+on (returns in ~6 ms with an empty exit code — the gate passes unconditionally),
+then with the outer string double-quoted so **bash** expanded `$p` before
+PowerShell saw it (`= Start-Process …; exit .ExitCode` — the gate fails
+unconditionally, and never launches the exe). Four review rounds used the word
+"verified" before anyone executed it.
+
+**What the guard does.** Two rules. **(1)** The command literal may live only in
+`SANCTIONED_HOMES` — the canonical definition (`ogp-change-control` §2.8), its
+mechanics (`ogp-build-and-run`) and the `CLAUDE.md`/`AGENTS.md` Quick Reference;
+every other document must **cite §2.8 by name**. **(2)** Wherever it does appear,
+the command must actually work: no `$`/backtick construct bash would expand
+first, and a shape (`$p = Start-Process … -Wait -PassThru … exit $p.ExitCode`)
+that makes the gate capable of failing.
+
+Rule 1 exists because the first version of this guard did the opposite. Told that
+eight documents prescribed a weaker gate, it copied the corrected command into
+ten more and policed eighteen copies — in a change whose stated thesis is that a
+second copy of a gate list is how a gate goes missing.
+
+**How to test this pattern.** Three rules, each bought with a failure:
+
+1. **Model the shell, not the tokens.** The first implementation used
+   `shlex.split(posix=True)` and passed on the known-broken line — `shlex` models
+   quoting but not `$`-expansion.
+2. **Cover substitution, not just `$NAME`.** The second version was bypassed with
+   PowerShell's `$?` idiom, where bash substitutes its own exit status and
+   PowerShell then evaluates a constant. `$(…)`, backticks and the special
+   parameters all belong in the model.
+3. **Pin the teeth against the real defects.** The guard carries the literal
+   shipped-broken lines as test cases, so a later simplification cannot quietly
+   regress it to a version that passed on them.
+
+Verify a guard of this kind by reintroducing the defect and watching it go red;
+a guard that has never been observed failing is an assertion, not a test.
+
+**Documentation identifiers are gated like code.** `tests/unit/test_skill_citations.py`
+(`scripts/check_skill_citations.py`, issue #336) resolves every `§N.M`/`section N.M`,
+`ADR-0NN`, `FR-*`, and `#NNN` citation in the `SKILL.md` files (both `.claude/skills/`
+and `.agents/skills/`) plus `CLAUDE.md`/`AGENTS.md` against the real headings, ADR
+index, FR index, and a committed GitHub snapshot (`tests/data/issue_registry.json`,
+refreshed via `scripts/refresh_issue_registry.py`) — plus every `` `file.py:line` ``
+citation that is actually spelled in the gated form: `` `path.py:N` `` immediately
+followed on the same line by a backtick-quoted symbol, e.g. `` `core/object_types.py:671`
+`is_bed_type` ``. **A `file.py:line` citation with no trailing symbol is rejected
+outright** — an earlier version of this gate made the symbol optional and fell back
+to a line-count-only check, which is how that same citation, then wrong by 76 lines
+(`core/object_types.py:595/608/622`), sat undetected even after the gate shipped (see
+§11.4). A citation spelled out in prose, or as a markdown link (`` [text](path.py#L123) ``),
+is invisible to this gate entirely — the same blind spot the i18n gate has for a
+string that never reaches `tr()`; normalize a citation into the gated form to bring
+it under the gate. It resolves *identifiers*, not *claims* — a citation only has to
+point at something that still exists, tolerantly (a `file.py:line` citation passes
+if its named symbol, plus any string literal alongside it, is found within 20 lines
+of the cited line — small enough to catch every drift incident measured so far,
+generous enough that trivial churn doesn't cry wolf). It is **not** a check on how
+*selective* the named symbol is: a citation naming a short, common identifier in a
+large file (e.g. `execute` in a 2800-line command module) still resolves against a
+large fraction of that file's possible line numbers — real but weak protection,
+tracked as a named residual rather than a false "resolved" claim (§11.4). §11.4 also
+records the rot rate that motivated the gate.
+
+## 8.11 Security Scanning (SAST)
+
+**Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
+
+**CI enforcement:** The `security` job in `ci.yml` runs `bandit -r src/ --severity-level high` on every push. CI fails only on HIGH-severity findings. MEDIUM and LOW findings are printed in the log for awareness but do not block merges.
+
+**Local use:**
+```bash
+venv/Scripts/python.exe -m bandit -r src/ --severity-level high
+
+# See ALL findings (MEDIUM + LOW) for awareness:
+venv/Scripts/python.exe -m bandit -r src/
+```
+
+**Suppressing a false positive** (use sparingly — always add a justification comment):
+```python
+result = subprocess.run(cmd)  # nosec B603 — cmd is constructed internally, never from user input
+```
+
+**Scope:** `src/` only. Test files are excluded — `assert` statements and test helpers are intentional and not security-relevant.
+
+**Agent API exposure (US-D1.1, §8.19):** the embedded MCP server is a network listener. It is **on by default but read-only** and **bound to `127.0.0.1` only** (never `0.0.0.0`/LAN — so Bandit's B104 does not apply); a Preferences toggle disables it. Default-on is acceptable while read-only (a garden layout isn't sensitive) and removes the discovery friction for AI clients. Reads have no auth (loopback trust). **Writes (US-D2.0 through D2.6, including `undo`/`redo`) are token-gated**: the scene-mutating tools ship only when the user enables editing (off by default) AND require the token — presented in the connect URL as a `?token=` query param (the reliable route; some clients don't transmit auth headers on tool calls) or as an `Authorization: Bearer <token>` header — checked with constant-time comparison. A default-on, unauthenticated *mutate* surface reachable by any local process is exactly what this prevents (ADR-036, §8.19); delivering the token in the URL keeps that protection (a caller still needs the secret) at the cost of a URL-borne secret — mitigated by disabling the uvicorn access log and stripping the `token` param from the request scope right after extraction, so the residual exposure is the client's own config. The gate is per-tool so read-only clients are unaffected. The pre-bind port check uses a plain `socket.bind` and is not a high-severity finding.
+
+**Browser reachability (DNS rebinding) — #396, ADR-033 addendum.** Loopback binding and token gating reason about a *local process* (an MCP client the user launched). They do not cover a **browser**, which is a local process acting for a remote page: a page on `evil.example` can reach `http://127.0.0.1:8765/mcp`, and loopback binding does not stop it because the request originates on this machine. The only barrier is the transport's `Host`/`Origin` validation, so that guard is now **explicitly configured by OGP** rather than inherited from the mcp SDK:
+
+- `agent_api/server.py::build_server(..., host=..., port=...)` constructs `TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=[...], allowed_origins=[...])` and passes it to `FastMCP(transport_security=...)`. The lists name the **exact** `host:port` pairs (bind address, `127.0.0.1`, `localhost`, the IPv6 loopback literal) with **no `:*` port wildcard** — the port is fixed for the server's life, so a wildcard would only restore the breadth of the SDK default being replaced.
+- A hostile `Host` is answered **421**; a hostile `Origin` **403**. Verified against the frozen exe, not only in pytest: loopback `Host` 200, `localhost` 200, `evil.example` 421, loopback `Origin` 200, `http(s)://evil.example` 403.
+- **The `mcp>=1.23` dependency floor is a security control, not a version bump.** 1.23.0 is the first release whose FastMCP auto-enables the loopback guard. Measured: under the previous floor (`>=1.12`) a 1.22.0 wheel answered a crafted `Host: evil.example` initialize with **HTTP 200 and a full MCP result**, across all six hostile variants, where 1.30.0 answers 421/403. No shipped exe is known to be exposed — every release happened to bundle a 1.30-era wheel — but the exposure was a property of *whichever wheel resolved at build time* rather than of the product.
+- **Test-design consequence.** The black-box 421/403 tests are necessary but not sufficient: with mcp 1.30.0 installed they pass *even with the explicit settings deleted*, and so does a naive "settings object is not None and the flag is True" assertion, because the SDK auto-enable returns exactly such an object. `tests/integration/test_agent_api_dns_rebinding.py` therefore also asserts what the SDK default cannot satisfy — that `allowed_hosts` names the **bound port**, and that nothing is a wildcard. Deleting the `transport_security=` argument fails 3 of its 4 object-level tests.
+- **Reads remain unauthenticated** (loopback trust, the audit's challenged decision C2). This closes the *browser* vector; it does not re-open that one. The #355 input boundary additionally rejects non-finite/null/oversized callout offsets before Qt construction, so an authenticated caller cannot turn a write token into unbounded scene geometry. D2.6 reuses the same finite/canvas-relative reachability check for absolute positions and vertices before constructing `QPointF` geometry.
+
+## 8.12 Constraint Solver Architecture
+
+The constraint solver lives in [`core/constraints.py`](../../src/open_garden_planner/core/constraints.py) and [`core/constraint_solver_newton.py`](../../src/open_garden_planner/core/constraint_solver_newton.py). It supports 16 constraint types and runs in two phases.
+
+### 8.12.1 Constraint types
+
+Defined in `ConstraintType`. Grouped by the invariant they express:
+
+| Category | Types |
+|---|---|
+| Dimensional (scale-sensitive) | `EDGE_LENGTH`, `DISTANCE`, `HORIZONTAL_DISTANCE`, `VERTICAL_DISTANCE`, `POINT_ON_CIRCLE`, `ANGLE` |
+| Positional | `COINCIDENT`, `POINT_ON_EDGE`, `SYMMETRY_HORIZONTAL`, `SYMMETRY_VERTICAL`, `FIXED` |
+| Orientation (scale-invariant) | `HORIZONTAL`, `VERTICAL`, `PARALLEL`, `PERPENDICULAR`, `EQUAL` |
+
+### 8.12.2 Two-phase solve
+
+Every `solve_anchored` call runs in two phases:
+
+1. **Gauss-Seidel warm start** — each constraint is resolved by a 1D projection along its own direction. Cheap, robust for decoupled systems, converges in O(N) iterations when the constraints don't share variables in geometrically independent directions.
+2. **Newton-Raphson refinement** — runs when the Gauss-Seidel residual exceeds tolerance. Treats the free variables as a single vector `x`, builds a residual vector `F(x)` from all non-orientation constraints, and takes damped Newton steps on `J · Δx = −F`. The Jacobian is computed numerically via central differences (`h = 1e-3 cm`); the step uses `numpy.linalg.lstsq` so rank-deficient systems yield a minimum-norm step. Armijo backtracking (α halves per failed step) accepts only moves that strictly reduce `max|F|`.
+
+Convergence criterion: `max|F| ≤ tolerance` (default 0.1 cm; 1.0 cm for drag-time solves where cm-level drift is invisible). Caps: 20 Gauss-Seidel iterations, 25 Newton iterations, 15 backtrack steps.
+
+### 8.12.3 Why two phases
+
+Gauss-Seidel alone fails on coupled systems — the canonical case is two `EDGE_LENGTH` constraints sharing a vertex. The feasible vertex position is the intersection of two circles, which cannot be reached by alternating 1D projections. Newton handles the 2D move. In the non-coupled majority case, Newton returns immediately because Gauss-Seidel already hit tolerance.
+
+### 8.12.4 Geometric fast path
+
+For the shared-vertex EDGE_LENGTH case, `two_circle_intersection()` in `constraint_solver_newton` provides a closed-form solution. Returns the intersection root nearest the current vertex; returns `None` for non-intersecting circles so the caller can fall back to Newton.
+
+### 8.12.5 Live vertex drag projection
+
+`ConstraintGraph.project_to_feasible()` is called from the vertex-drag `mouseMove` path. It pins every variable except the moving vertex, runs Newton on just the constraints touching that vertex, and returns the closest feasible point to the raw cursor position. Short-circuits when no constraint touches the vertex — zero cost for unconstrained drags.
+
+### 8.12.6 Scale handle blocking
+
+`_has_blocking_constraints()` in `ui/canvas/items/resize_handle.py` guards bounding-box resize handles. Orientation-only constraint types (`HORIZONTAL`, `VERTICAL`, `PARALLEL`, `PERPENDICULAR`, `EQUAL`) are scale-invariant and permit resize; any other constraint — including `FIXED`, `EDGE_LENGTH`, `DISTANCE`, `ANGLE`, `SYMMETRY_*`, `COINCIDENT`, `POINT_ON_*` — blocks the drag and emits a translated status-bar hint.
+
+### 8.12.7 Conflict detection on add
+
+Before executing an `AddConstraintCommand`, the canvas view trial-runs the solver with the proposed constraint via `ConstraintGraph.find_conflicting_constraints()`. Existing constraints whose post-solve residual exceeds 1.0 cm are flagged. The user is shown a `ConstraintConflictDialog` (Override / Cancel) rather than letting the solver silently distort existing geometry.
+
+### 8.12.8 Residual formulas (per type, scaled to cm)
+
+| Type | Residual |
+|---|---|
+| `EDGE_LENGTH`, `DISTANCE`, `POINT_ON_CIRCLE` | `|P_a − P_b| − L` |
+| `HORIZONTAL` | `a_y − b_y` |
+| `VERTICAL` | `a_x − b_x` |
+| `HORIZONTAL_DISTANCE` | `(b_x − a_x) − sign · L` |
+| `VERTICAL_DISTANCE` | `(b_y − a_y) − sign · L` |
+| `COINCIDENT` | `(a_x − b_x, a_y − b_y)` — 2 residuals |
+| `SYMMETRY_HORIZONTAL` | `(b_x − a_x, a_y + b_y − 2·axis_y)` |
+| `SYMMETRY_VERTICAL` | `(b_y − a_y, a_x + b_x − 2·axis_x)` |
+| `POINT_ON_EDGE` | perpendicular distance from point to edge |
+| `ANGLE` | `(acos(ba·bc / (|ba|·|bc|)) − θ_target) · min(|ba|, |bc|)` |
+| `PARALLEL`, `PERPENDICULAR`, `EQUAL`, `FIXED` | handled in warm-start; Newton skips |
+
+**Adding new checks:** If a feature introduces a new code pattern that warrants attention (e.g. cryptography, XML parsing, network server code), review the relevant Bandit rule IDs and verify the CI job covers them.
+
+## 8.13 Soil Health Tracking (US-12.10)
+
+Per-bed soil tests are stored on the project itself, not on individual canvas items, so that historical records survive bed deletion and rotation. The model is intentionally minimal in 12.10a — entry + persistence — and is extended by 12.10b–e (canvas overlay, amendment calculator, plant-soil warnings, history sparklines).
+
+### 8.13.1 Data hierarchy
+
+```
+.ogp file
+└── "soil_tests" : { target_id → SoilTestHistory }
+                    target_id ∈ { <bed-uuid>, "global" }
+```
+
+Effective record for a bed = bed's latest record → falls back to global latest → `None`. The fallback chain is implemented in `SoilService.get_effective_record` (`src/open_garden_planner/services/soil_service.py`) and used by every consumer (overlay, amendment calc, mismatch warnings).
+
+### 8.13.2 Rapitest categorical scale
+
+| Field | Range | Labels |
+|---|---|---|
+| `n_level`, `p_level` | 0–4 | Depleted / Deficient / Adequate / Sufficient / Surplus |
+| `k_level` | 1–4 | (no K0 on the kit) — Deficient / Adequate / Sufficient / Surplus |
+| `ca_level`, `mg_level`, `s_level` | 0–2 | Low / Medium / High |
+
+Lab-mode ppm values (`*_ppm`) are stored alongside the categorical fields so they survive between sub-stories without a second data migration; conversion ppm → categorical lands in 12.10c.
+
+### 8.13.3 Persistence & file version
+
+The dedicated top-level `"soil_tests"` key was introduced with file version **1.3**. Older v1.2 files load with `soil_tests = {}`; re-saving silently upgrades the file to v1.3. There is no automatic downgrade — opening a v1.3 file in an older binary fails the version gate (existing convention).
+
+### 8.13.4 Undo integration
+
+`AddSoilTestCommand` (in `core/commands.py`) snapshots the prior history dict for the target and restores it on undo. This means undoing the very first record for a bed deletes the `target_id` key entirely, while undoing an N-th record restores history of length N-1.
+
+### 8.13.5 Canvas overlay (US-12.10b)
+
+The toggleable soil-health overlay tints each bed by a chosen parameter (Overall / pH / N / P / K). It is painted in `CanvasView.drawForeground` — **never** in `CanvasScene.drawForeground` — so it is automatically excluded from PNG / SVG / PDF / print exports, all of which call `scene.render()` (which only invokes scene-level draw hooks). This mirrors how the grid and ruler-guide overlays are scoped.
+
+Bed shapes are mapped via `item.mapToScene(item.shape())` so rotated beds stay correctly tinted (a `boundingRect()`-based path would over-paint).
+
+The colour mapping lives in `SoilService.health_level(record, parameter)` and `SoilService.overlay_rgba(level)`:
+
+| Level | RGBA tint | Trigger |
+|---|---|---|
+| GOOD | (100, 200, 100, 80) | pH 6.0–7.0; NPK ≥ 3 |
+| FAIR | (255, 200, 0, 80) | pH 5.5–<6.0 / >7.0–7.5; NPK = 2 |
+| POOR | (220, 60, 60, 80) | otherwise |
+| UNKNOWN | grey `DiagCrossPattern` (alpha 40) | no record at all |
+
+For `"overall"`, the worst non-unknown level across pH/N/P/K wins (all-unknown stays unknown).
+
+The `SoilService` is a single long-lived instance owned by `GardenPlannerApp` and injected into `CanvasView` via `set_soil_service`. The soil-test-entry dialog reuses the same instance, so dialog edits and overlay tint stay consistent without re-querying `ProjectManager.soil_tests`.
+
+### 8.13.6 Amendment calculation (US-12.10c)
+
+`SoilService.calculate_amendments(record, target_ph, target_n, target_p, target_k, bed_area_m2, loader)` is a **pure static method** — no I/O, no service state. Tests assert quantities trivially; the canvas overlay (8.13.5) and the amendment dialogs share the exact same code path.
+
+**Formula** (from roadmap §1976-2030):
+
+```
+pH:  qty_g = |target_ph - current_ph| / |effect_per_100g_m2| * 100 * area_m2
+NPK: qty_g = (target_level - current_level) * application_rate_g_m2 * area_m2
+```
+
+**Priority walk** (one pass, each substance picked at most once):
+
+1. pH (only if `|delta| ≥ 0.1` — below this is measurement noise).
+2. N → P → K (any deficit ≥ 1 Rapitest step).
+3. Ca → Mg → S, but only if the pH/NPK picks didn't already supply them — e.g. dolomite lime decrements both Ca and Mg deficits before gypsum is considered.
+
+Returns `[]` for `record is None`, `bed_area_m2 <= 0`, or no deficits.
+
+**Data file**: `src/open_garden_planner/resources/data/amendments.json` (12 substances). Loaded once by `AmendmentLoader`, eagerly validated; corrupt JSON raises at startup rather than mid-dialog.
+
+**Two surfaces** consume the same calculator:
+
+| Surface | File | Behaviour |
+|---|---|---|
+| Inline per-bed list | `SoilTestDialog._refresh_amendments` | Hidden when `bed_area_m2 == 0` (i.e. global default test). Recomputes live as the form values change. |
+| Cross-bed plan | `AmendmentPlanDialog` | Walks every bed, groups by substance, sums grams. "Copy to clipboard" is the fallback for US-12.6 shopping-list integration. |
+
+**Targets** default to the same "ideal" definition the canvas overlay (8.13.5) uses for GOOD: `pH 6.5`, `N=P=K=3`. Per-bed overrides are not persisted — 12.10d will derive plant-aware targets from species in the bed.
+
+**EllipseItem note**: `core.measurements.calculate_area_and_perimeter` does not yet support `EllipseItem`. Beds drawn as ellipses are skipped (the calculator returns `[]` for `area=0`). This is a pre-existing gap, tracked separately.
+
+### 8.13.7 Plant-soil compatibility warnings (US-12.10d)
+
+`SoilService.get_mismatched_plants(record, plant_specs)` is a pure static method that compares the effective bed record against each hosted plant's pH window (with a ±0.05 tolerance — only enough to absorb float-rounding from the dialog's 0.1-step pH spinbox) and "high" NPK demand. It returns `[(spec, [reason, …]), …]`. The view layer (`CanvasView._update_soil_mismatches`, debounced 500 ms on `scene.changed`) walks every bed, calls the calculator, and sets `_soil_mismatch_level` on the bed item: `"warning"` for exactly one reason across all hosted plants, `"critical"` for ≥2. `GardenItemMixin._draw_soil_mismatch_border` paints an amber or red border (4 px) outside the rotation ring; a tooltip joins the per-plant reasons. The Dashboard mirrors the warnings via `PlantingCalendarView._inject_soil_mismatch_tasks` (one amber card per mismatched bed). Plant species expose `n_demand`/`p_demand`/`k_demand`; legacy `nutrient_demand="heavy"` falls back to `high` for all three macros via `_effective_demand`.
+
+### 8.13.8 History sparklines & seasonal reminder badge (US-12.10e)
+
+The `SoilTestDialog` is split into two tabs (`QTabWidget`):
+
+| Tab     | Content |
+|---------|---------|
+| Entry   | Existing form (date, mode, pH, Kit/Lab nutrient panel, amendments, notes). |
+| History | Past tests listed date-descending + four `SoilSparklineWidget` charts (pH, N, P, K). Ca/Mg/S still appear in the past-tests list but get no sparkline. |
+
+`SoilSparklineWidget` is a single-parameter QPainter line chart with an auto-scaled y-range bounded to parameter semantics (pH 0–14, NPK 0–4). 0 records → "No history yet" placeholder; 1 record → centred dot; ≥2 → polyline + dots with min/max-y labels and first/last-date labels.
+
+**Seasonal reminder.** `SoilService.is_test_overdue(history, today)` is pure: returns `True` only when `today.month ∈ {3, 4, 9, 10}`, the bed has been tested before, and the latest record is older than 180 days (or its date is unparseable). Untested beds (None / empty history) are deliberately *not* flagged — the badge nudges re-testing, not first-testing.
+
+**Badge.** `SoilBadgeItem` is a `QGraphicsObject` (so it can carry a `pyqtSignal`) with `ItemIgnoresTransformations` so it stays 16 × 16 px regardless of zoom. It anchors to the bed's top-right corner (8 px screen-fixed offset, view-scale-aware just like `RotationHandle`). Click → `clicked = pyqtSignal(str)` carrying the bed UUID; `CanvasView` re-emits as `soil_test_badge_clicked`, which the `Application` wires into the same `_open_soil_test_dialog` flow used by the bed context menu.
+
+Lifecycle: the existing 500 ms debounce timer in `CanvasView.set_soil_service` (introduced for 12.10d mismatch borders) was extended — its `timeout` now calls `_on_soil_debounce_tick` which runs both `_update_soil_mismatches()` and `_update_soil_badges()`. After a soil-test save, `Application._open_soil_test_dialog` calls `refresh_soil_badges()` for an immediate clear (so the badge disappears before the debounce window elapses).
+
+## 8.14 Bed-Specific Features Across All Shape Items (US-12.8 follow-up)
+
+**Why this section exists.** Bed-capable shapes are not one class but four — historical reasons:
+
+| Shape class    | Default bed object_type | Tool that creates it |
+|----------------|-------------------------|----------------------|
+| `RectangleItem`| `RAISED_BED`            | `Raised Bed` tool    |
+| `PolygonItem`  | `GARDEN_BED`            | `Garden Bed` tool    |
+| `EllipseItem`  | `GARDEN_BED`            | Generic ellipse → change type |
+| `CircleItem`   | `GARDEN_BED`            | Generic circle → change type  |
+
+Twice in three months a new bed-only feature shipped missing from one or more shapes (Pest log on PolygonItem/EllipseItem — fixed in #173; Plan Anbaufolge on all three non-rectangle shapes — fixed post-US-12.8). Root cause: each shape's `contextMenuEvent` hand-rolled its own bed-action block, and there was no test that caught a missed shape.
+
+**Central pattern.** Bed-specific actions are built by **one** method on `GardenItemMixin`:
+
+```python
+# garden_item.py
+@dataclass(slots=True)
+class BedMenuActions:
+    toggle_grid: QAction | None = None
+    add_soil_test: QAction | None = None
+    log_pest_disease: QAction | None = None
+    log_harvest: QAction | None = None        # US-C1
+    plan_succession: QAction | None = None
+
+def build_bed_context_menu(
+    self, menu: QMenu, *, grid_enabled: bool,
+    supports_grid: bool = True, supports_soil: bool = True,   # supports_soil: US-C3b
+) -> BedMenuActions: ...
+
+def dispatch_bed_action(self, action: QAction | None, actions: BedMenuActions) -> bool: ...
+```
+
+`supports_grid=False` drops the grid toggle (round/vertical shapes); `supports_soil=False` drops **only** the soil-test action (the trellis — a plant-parent that holds no soil — keeps pest/harvest/succession). Every **plant-parent** shape's `contextMenuEvent` follows the same skeleton (the guard is `is_plant_parent_type`, not `is_bed_type`, so the trellis is included — US-C3b):
+
+```python
+bed_actions = BedMenuActions()
+if is_plant_parent_type(self.object_type):
+    soil = is_bed_type(self.object_type)   # trellis → False; beds/containers → True
+    bed_actions = self.build_bed_context_menu(
+        menu, grid_enabled=self._grid_enabled,
+        supports_grid=soil,                # round shapes pass False regardless
+        supports_soil=soil,
+    )
+# ...assemble the rest of the menu...
+action = menu.exec(event.screenPos())
+if self.dispatch_bed_action(action, bed_actions):
+    return
+# ...handle shape-specific actions...
+```
+
+**Why a mixin method, not a base class.** `GardenItemMixin` is already shared by all four shapes; adding methods there avoids a deeper refactor and keeps the change minimal. The mixin handles `request_soil_test`, `request_pest_log`, `request_harvest_log`, `request_succession_plan` view dispatch and the grid-toggle side effect (`scene.selectionChanged.emit()`) so each shape only has to translate its surrounding non-bed menu items.
+
+**Regression test (the part that prevents recurrence).** `tests/integration/test_bed_context_menu.py` parametrises across every plant-parent shape (incl. containers + trellis) and asserts the soil-test is present iff `supports_soil`:
+
+```python
+@pytest.mark.parametrize("factory,supports_grid,supports_soil", BED_SHAPES)
+def test_bed_context_menu_has_all_features(factory, supports_grid, supports_soil, qtbot):
+    item = factory()
+    menu = QMenu()
+    actions = item.build_bed_context_menu(
+        menu, grid_enabled=False, supports_grid=supports_grid, supports_soil=supports_soil)
+    assert actions.log_pest_disease is not None
+    assert actions.log_harvest is not None
+    assert actions.plan_succession is not None
+    assert (actions.add_soil_test is not None) == supports_soil   # trellis → None
+    assert (actions.toggle_grid is not None) == supports_grid
+```
+
+**Adding a future bed feature** (the playbook):
+
+1. Add a `QAction | None` field to `BedMenuActions`.
+2. Add `actions.<new_field> = menu.addAction(...)` in `build_bed_context_menu`.
+3. Add a routing branch in `dispatch_bed_action` that calls a `request_*` method on the canvas view.
+4. Add the matching `request_*` method + signal on `CanvasView`.
+5. Wire the signal in `Application.__init__`.
+6. **Extend `test_bed_context_menu.py` with one new `assert actions.<new_field> is not None` line per parametrised shape.**
+
+If you forget step 1–5 the existing test still passes; if you forget step 6 the test will not catch a future regression. The single-line addition in step 6 is the linchpin — treat it as mandatory.
+
+**Upright text badges on the Y-flipped canvas.** Related lesson from the same bug batch: text drawn via `painter.drawText()` inside an item's `paint()` inherits the view's `scale(zoom, -zoom)` and renders **upside-down**. Use `QGraphicsSimpleTextItem` (or a custom `QGraphicsItem` subclass) as a **child** of the item with `ItemIgnoresTransformations`. See `SuccessionBadgeItem` in `garden_item.py` for the multi-line-with-pill-background example; bed name labels (`_label_item`) use `QGraphicsSimpleTextItem` for the simple single-line case.
+
+Cross-references: ADR-017 (decision rationale), `tests/integration/test_bed_context_menu.py` (enforcement), `tests/integration/test_succession.py::TestSuccessionBadgeIndicator` (badge state machine).
+
+**Update (US-C3 — containers join the soil predicate).** `is_bed_type()` is now the **soil-capable** predicate, not literally "bed": it returns true for `GARDEN_BED`, `RAISED_BED`, **and** the container types `CONTAINER`/`CONTAINER_ROUND`/`WALL_PLANTER`. So containers ride the same `build_bed_context_menu` path and bed-feature playbook above with no extra work. The parent/relationship behaviour (reparenting, drag/copy propagation, "Contained Plants", **and the bed-style context menu**) gates on a second predicate `is_plant_parent_type()` = soil containers **plus** `TRELLIS` (a plant-parent that holds no soil). When adding a feature, pick the predicate by seam: soil → `is_bed_type`; parent/relationship → `is_plant_parent_type`. The four shape items call `build_bed_context_menu(..., supports_grid=…, supports_soil=…)` under an `is_plant_parent_type` guard; for the trellis both flags are `False` (via `is_bed_type(self.object_type)`), so it shows **Pest / Harvest / Succession** but no Grid / Soil-test (US-C3b). The **grid overlay** stays purely on `is_bed_type` — a grid on a vertical surface is meaningless. Container fill is measured by height in litres via the Qt-free `core/container_model.py` (not bed soil-depth). See ADR-031.
+
+## 8.15 Google Maps API Key for the Satellite Background Picker (ADR-019)
+
+**Worker shutdown.** `MapPickerDialog` must never call `QThread.wait()` for the Static Maps worker: a single `requests.get(timeout=10)` cannot observe interruption until the response or timeout. The dialog's `reject()` and `closeEvent()` paths share one asynchronous cancellation request and the dialog rejects only from the worker's terminal signal; `GardenPlannerApp` tracks the modal picker so application shutdown enters the same path. Unexpected exceptions are logged only after formatting and `_scrub_key()` redaction; the user-facing message remains generic. `tests/integration/test_map_picker_dialog.py::TestFetchFlow::test_close_does_not_block_on_in_flight_worker` pins the non-blocking lifecycle and `test_worker_logs_scrubbed_traceback_for_unexpected_failure` pins secret exclusion.
+
+**What needs the key.** The "File → Load Satellite Background…" menu opens `MapPickerDialog`, which uses two Google Maps Platform APIs:
+
+| API | Used for | Free tier |
+|-----|----------|-----------|
+| Maps JS API | The embedded picker map (display + drawing + Places Autocomplete) | Free for display in apps (no $200 credit deduction) |
+| Static Maps API | The final satellite image fetch (1–9 calls per import, depending on bbox size) | $200/month credit → ~100k calls free |
+
+**Key location, in priority order:**
+
+1. A non-empty key in `Preferences`, stored at `api_keys/google_maps_key` in the application's per-user QSettings store.
+2. `OGP_GOOGLE_MAPS_KEY` from the process environment. In a source checkout, `main.py` loads this from the project-root `.env`; a packaged build also supports an adjacent `.env` next to the executable.
+
+Preferences takes precedence. Leaving the Preferences field blank keeps the environment/`.env` fallback active; clearing a previously saved value therefore restores that fallback. The key is never copied from the environment into QSettings.
+
+When the key is absent, the menu item is disabled and its tooltip explains where to set it. There is no fallback to a different provider — the dialog is unavailable until the user provides a key.
+
+**One-time setup (developer):**
+
+1. Sign in to <https://console.cloud.google.com/> with the Google account that should pay for any overage.
+2. Create a project ("Open Garden Planner Dev").
+3. Enable the three APIs the dialog needs: **Maps JavaScript API**, **Places API**, **Maps Static API**.
+4. *Billing → Budgets & alerts*: create a budget alert at €1/month so you get pinged if anything ever escapes the $200 free credit.
+5. *APIs & Services → Credentials*: create an API key. Restrict it: **API restrictions** = the three APIs above only. **Application restrictions** can stay on "None" for desktop use (HTTP-referrer/IP/Android-package restrictions don't apply to a `.exe`).
+6. Put the key in Preferences, or use the environment fallback. For a source checkout, the latter can be the project-root `.env`; for a packaged build, place `.env` next to the executable:
+
+   ```dotenv
+   OGP_GOOGLE_MAPS_KEY=AIza...
+   ```
+
+**Never bundle the key into the release `.exe`.** Anything pinned into the PyInstaller binary can be extracted with `strings` and abused on your bill. Specifically:
+
+- The CI release workflow must NOT inject the secret into the build artifact.
+- A GitHub-Action secret is only safe if it stays in CI (e.g. for an integration test) and never ends up in the shipped `.exe`.
+- Distributing the key to other users requires them to obtain their own (cheap, ~5 minutes via the steps above).
+
+**Mosaic vs single call.** The Static Maps API caps a single image at 640×640 base × 2 scale = 1280×1280 effective pixels. For typical garden-sized bboxes (≤ ~200 m on a side at high latitudes) one call is enough; for larger areas `google_maps_service.fetch_bbox` falls back to a 2×2 or 3×3 mosaic at the highest zoom that fits the configured `_MAX_GRID = 3` budget (`pick_zoom_and_grid`). Resulting image is stitched with Pillow before reaching the canvas as a single `BackgroundImageItem`.
+
+**Pixel→meter scale is analytical.** Because Static Maps uses Web-Mercator with a known tile pixel size, the scale of the returned image is `mpp = cos(lat) × 2π × 6378137 / (256 × 2^zoom)`. The new `BackgroundImageItem(geo_metadata=…)` constructor reads `meters_per_pixel` from this dict and sets `_scale_factor = 0.01 / mpp` (px-per-cm) automatically — no calibration click. The existing manual calibration (`Calibrate Scale…` context menu) is still available as an override; on reload, a saved `scale_factor` wins over the geo-derived one.
+
+### 8.15.1 Manual background-image calibration and exact dimensions
+
+Manual calibration is available on the imported image itself, not on the
+empty canvas. After importing an image, right-click the image and choose
+**Calibrate Scale…**. Click the two endpoints of a feature whose real distance
+is known, enter that distance in centimetres, and press **Enter** to apply the
+scale. Press **Esc** to cancel the inline calibration instead.
+
+For exact geometry, use the numeric fields in the **Properties** panel:
+
+- rectangles: **Size (W/H)**;
+- circles: **Diameter**;
+- ellipses: **Semi-axes X** and **Y** (the corresponding width and height are
+  twice those values).
+
+Polygons and polylines currently do not have an overall numeric width/height
+editor. For those shapes, use typed coordinates or edge-length constraints
+when precision matters. These workflows complement manual image calibration:
+calibrate the background first, then enter exact geometry values or constrain
+the relevant edges.
+
+**QtWebEngine import timing.** `from PyQt6 import QtWebEngineWidgets` must run *before* `QApplication(...)` is created — Qt enforces this so it can configure OpenGL sharing. `main.py` does this at module level. Tests that exercise the dialog must either match the same ordering or use a `QWidget` stand-in for `QWebEngineView` (see `tests/integration/test_map_picker_dialog.py::_DummyWebView`).
+
+
+## 8.16 Typed Coordinate Input + Unified Snap Engine (Package A — ADRs 020 + 021)
+
+This concept covers four user stories that ship together in Phase 13: relative input `@dx,dy`, polar input `@dist<angle`, midpoint + intersection snap, and the Dynamic Input cursor overlay. The architecture decisions live in **ADR-020** (snap engine) and **ADR-021** (input pipeline); this section captures the cross-cutting *rules* a developer must follow when extending either system.
+
+### 8.16.1 Snap engine layering
+
+* `core/snap/` is the orchestration layer. It does **not** own any geometry — every provider delegates to `measure_snapper.get_anchor_points` or to `core/snap/geometry.item_edges`. Do not duplicate point enumeration; if a new anchor type is needed, add it to `AnchorType` first and a provider second.
+* Every provider has a `priority`. Lower wins on ties. Defaults: endpoint 10, intersection 15, center 20, midpoint 30, edge 40. When tuning, remember that two candidates within sub-pixel distance frequently exist (e.g. a corner is also two edge endpoints).
+* The `QuadTree` is rebuilt lazily by `CanvasView._ensure_snap_index()` on the first snap query after `QGraphicsScene.changed` fires. Do **not** rebuild eagerly on every signal — for thousand-item gardens the build cost (~3 ms) dominates if you do.
+* Items spanning multiple quadrants are inserted into every overlapping child rather than parked at the parent; `_query` collects them via an `id()` set so duplicates never surface. Keep this in mind when changing `_insert_into_children` — switching to a "store at parent" strategy is also valid but must be paired with removing the dedup set.
+* `PointSnapper.snap()` widens the query window to `4 × threshold` so that intersection candidates from edges starting outside the cursor area still surface. If you raise the threshold drastically, also revisit `MAX_SEGMENTS_PER_QUERY = 60` in `providers/intersection.py` — the O(n²) intersection step is the soft ceiling.
+
+### 8.16.2 Drawing-tool integration
+
+* `CanvasView._maybe_apply_anchor_snap(tool, scene_pos)` is the single entry point. It runs *before* the tool's `mouse_press/move/release`. Tools that own their anchor logic — `SelectTool`, `MeasureTool`, every `ConstraintTool` family member — set `BaseTool.skip_anchor_snap = True` to opt out (the previous string-prefix match on `tool_type.name` is gone). When adding a new tool that does its own anchor picking, set the flag; otherwise leave it `False` and the dispatcher will apply Package A point snap automatically.
+* **Composition rule with grid snap**: `CanvasView.snap_point()` short-circuits the grid-rounding step when `_current_snap is not None`, so an anchor-snap match always wins over grid snap on the click path. Tools may still call `view.snap_point(scene_pos)` defensively — when the dispatcher matched a midpoint/intersection/endpoint, that call is a no-op apart from the canvas-bounds clamp. Do NOT short-circuit the snap inside the tool: the dispatcher is the single owner of this decision.
+* The current snap candidate is rendered by `_draw_point_snap_glyph` in `drawForeground`. Glyph mapping is intentionally pictographic and lives in one switch: square = endpoint, circle = center, triangle = midpoint, X = intersection, dot = edge. Add a new kind by extending `SnapCandidateKind` *and* `_draw_point_snap_glyph`; reviewers will reject a half-done mapping.
+
+### 8.16.3 Typed-input invariants
+
+* There is exactly **one** `CoordinateInputBuffer` per `CanvasView`. Both the status-bar field and the Dynamic Input overlay subscribe to its signals; they must never own buffer state of their own. If you add a third surface (e.g. a command palette), wire it the same way.
+* The buffer's `anchor` is refreshed by `CanvasView.refresh_input_anchor()`. It is called after every `set_active_tool`, `mouse_press`, `mouse_release`, `mouse_double_click` and `key_press`. Add a new lifecycle hook? Add the refresh call.
+* The Y-flip lives **only** in `parser.py`. The user-entered Y is math-positive (up); the parser converts to scene Y (down). Adding a second flip site elsewhere will break relative input in subtle, locale-specific ways.
+* The smart decimal/separator rules (A–F) in the parser docstring are not negotiable per call site — they are global. When extending the grammar (e.g. a future `@3,4@2` array-along-path syntax), add a new rule **before** D and write a regression test that covers the same ambiguous input under both old and new rules.
+
+### 8.16.4 Adding typed-coordinate support to a new drawing tool
+
+Three steps, no more:
+
+1. Override `last_point` to return the current anchor (`None` outside an active draw sequence).
+2. Override `commit_typed_coordinate(point)` to perform the same action a left click at `point` would, **without** re-applying grid snap (the user has typed exact coords).
+3. If the tool finalises on the second click (rectangle/circle/ellipse pattern), call `_reset_state()` and return `True` from `commit_typed_coordinate` after finalisation so `last_point` becomes `None` again.
+
+The integration tests in `tests/unit/test_tool_typed_input.py` cover this contract; a new tool must add a similar parametrised test case.
+
+### 8.16.5 Dynamic Input overlay visibility — three hard rules
+
+The floating overlay is *visible* only when **all** of:
+
+1. `dynamic_input_enabled` is True (View menu / settings).
+2. The active tool exists and is not SELECT.
+3. The tool's `last_point` is **not** `None` (no anchor → no polar/relative makes sense).
+
+Any other state must hide the overlay. The implementation lives in `CanvasView._update_dynamic_overlay`. If you add a new hide-condition, do it there; do not add visibility logic inside the overlay widget itself — it has no knowledge of the active tool by design.
+
+## 8.17 Sidebar Accordion — Hover-Peek + Click-to-Toggle (ADR-030, issue #226)
+
+The right sidebar is an accordion owned by `SidebarController` (`ui/widgets/panel_stack.py`). It is the single source of truth for every panel's state; `CollapsiblePanel` is a dumb show/hide-and-tween primitive underneath it.
+
+> The first cut used a bottom `QSplitter` that pinned panels *reparented* into (equal-share, draggable). It failed manual testing — opening a panel made it jump to the bottom (reorder), there was no animation, and selection-opened panels were unclosable. This section documents the **revised** model (ADR-030 addendum): one scrollable layout, no reparenting, animated, click-toggles.
+
+### 8.17.1 The state machine
+
+Each panel is `COLLAPSED`, `PEEKING`, or `PINNED`, with a `PinSource` of `USER` or `SELECTION` when open:
+
+- **COLLAPSED** — content hidden; `setMinimumHeight(0)` **then** `setMaximumHeight(header_height())`. Reset the minimum *before* clamping the max.
+- **PEEKING** — hover-opened (auto-collapses on leave); content grows to its size.
+- **PINNED** — click- or selection-opened; stays open until the title is clicked again. `USER` (click) survives a selection clear; `SELECTION` (auto) is collapsed when the selection no longer matches.
+
+`is_open(key)` ⇔ state ∈ {PEEKING, PINNED}. Clicking the title of **any** open panel collapses it (see §8.17.5).
+
+### 8.17.2 Layout: one scrollable stack, no reparenting
+
+```
+SidebarController → QVBoxLayout
+  └── QScrollArea (setWidgetResizable, h-scrollbar off)
+        └── inner QWidget → QVBoxLayout(spacing 2)
+              ├── CollapsiblePanel × 9   # ALWAYS here, fixed canonical order
+              └── addStretch()           # last; keeps bars top-aligned when short
+```
+
+**Panels are never reparented** — a state change only adjusts the panel's height clamp, so opening/closing one can never reorder the list (the reported bug). There is no splitter and no draggable divider.
+
+**Open panels fill the surplus space.** An open panel's floor is its content height (`setMinimumHeight(sizeHint)`, set on open) and it carries a **content-weighted layout stretch factor** (`setStretchFactor(panel, sizeHint().height())`); collapsed panels have stretch 0 and are clamped to the header. So:
+- One panel open → it absorbs all the surplus and fills the sidebar (no empty gap at the bottom — the reported polish item). A panel with an internal scroll area (e.g. Plant Details) thus reveals more of its content.
+- Several open → each gets at least its content height, and the leftover surplus is shared **weighted by content size** (the panel with more to show gets proportionally more, instead of an equal half a light panel can't fill).
+- Combined content exceeds the viewport → the `QScrollArea` scrolls (the minimum heights force the inner widget past the viewport; the trailing `addStretch()` contributes 0 height, so scroll engages) and each panel sits at its content height.
+
+The stretch is set **after** the content is revealed (`set_expanded(True)` first) so `sizeHint()` reflects the content, not the header-only collapsed height. The minimum is set only **after** the open animation finishes (during the tween it stays 0, else a min above the animating `maximumHeight` would jump the panel).
+
+### 8.17.3 Animation (organic expand/collapse)
+
+Each panel owns a lazy `QPropertyAnimation` on `maximumHeight` (`CollapsiblePanel.animate_expand`/`animate_collapse`, ~160 ms `InOutCubic`):
+- **Expand**: `set_expanded(True)` first so the content is visible and `sizeHint()` is valid, then tween the clamp `header → sizeHint`; on finish release the clamp to `QWIDGETSIZE_MAX` so the panel tracks later content-size changes (e.g. a list populating after `update_for_plant`).
+- **Collapse**: flip the chevron + logical state immediately (responsive, and keeps `is_expanded()` correct for tests/state), keep the content widget *visible* during the shrink so it is drawn clipped, tween `height → header`, and hide the content on finish.
+- `_restart_anim` stops any running tween and reconnects a fresh `finished` handler, so rapid open↔close toggles are safe. `expand_now`/`collapse_now` are the non-animated variants used at startup and `collapse_all()`.
+
+### 8.17.4 Debounce + anti-flicker (hover-peek)
+
+Two controller-level single-shot timers — open (~140 ms) and close (~220 ms, longer so a fast diagonal sweep to the canvas doesn't cascade-peek). The pointer leaves only one bar at a time, so a single `_pending_open_key` / `_pending_close_key` suffices; re-entering a bar cancels its pending close. `PINNED` panels ignore hover. Timer slots re-fetch the entry via `.get(key)` and bail on `None`; `start()`/`stop()` are wrapped in `contextlib.suppress(RuntimeError)` (teardown-safe).
+
+> **Deliberate sharp edge:** the content widget is a *sibling* of `_HeaderFrame`, not a child, so moving the pointer from the header down into a peeked panel's body fires the header's `leaveEvent` and schedules the close — a peek can collapse while the pointer is over its content. This is intentional: peek is transient (the tooltip says "Click to keep open", and a click pins it), and the asymmetric debounce is tuned for the sweep-to-canvas case. Do **not** "fix" it by widening the hover region to include the body — that would break the fast-sweep behaviour.
+
+### 8.17.5 Click-toggle + selection dismissal
+
+`_on_title_click`:
+- **PINNED** → collapse. If it was `SELECTION`-opened, set `selection_dismissed = True` so it does **not** re-open on the next selection *re-notify* (a scene move / undo fires `set_selection_pinned(True)` again for the same selection).
+- **PEEKING** → promote the hover-peek to a sticky `USER` pin (already open).
+- **COLLAPSED** → open as a `USER` pin.
+
+`set_selection_pinned(key, True)` opens as `SELECTION` *unless* `selection_dismissed`. `reset_selection_dismissals()` clears all dismissals and is called from `application._on_selection_changed` (wired to `selectionChanged` **before** the `_update_*_panel` slots), so a genuine selection change re-opens the contextual panels for the newly selected item. When wiring a selection signal to a contextual panel, keep the panel's own content-update call (`set_selected_items` / `update_for_plant` / `update_for_bed`), then call `set_panel_visible(key, relevant)` **and** `set_selection_pinned(key, relevant)`.
+
+### 8.17.6a Contextual-panel visibility
+
+Plant Details / Companion / Crop Rotation have nothing to show unless a matching item is selected, so their **bar is hidden entirely** when irrelevant (they are NOT left as empty collapsed bars the user could open onto a placeholder — this restores the pre-US-226 `setVisible(False)` behaviour). `set_panel_visible(key, visible)` is **orthogonal** to open/collapse: hiding (`visible=False`) cancels any pending hover, collapses the panel instantly (so it reopens clean) and `setVisible(False)`s it (a hidden widget takes no layout space); showing re-adds the bar. The three panels are hidden at startup in `_setup_sidebar` and toggled by the selection updaters via `show_panel`. Non-contextual panels are never hidden. `_fill_target` and the surplus share ignore hidden panels (they occupy no space).
+
+### 8.17.6 The dynamic-property QSS gotcha
+
+`set_visual_state(state)` sets a `panelState` dynamic property (`collapsed`/`peeking`/`pinned`) — but Qt does **not** re-evaluate property selectors until you `style().unpolish(w); style().polish(w)`. The header is styled via `CollapsiblePanel[panelState=…] > QFrame`, so **both** the panel and its header must be re-polished (re-polishing only the parent leaves the child header stale). Peeking = accent border; pinned = 3 px left accent rail; collapsed has a cheap `:hover` highlight for instant affordance before the peek debounce commits.
+
+### 8.17.7 No persistence
+
+Startup is always fully collapsed; pin/peek/dismissal state is never saved. The `UiStateStore` panel-state helpers were removed (window geometry + the horizontal `main` splitter are still persisted).
+
+## 8.18 Smart Symbol Authoring (US-C4)
+
+Smart symbols are **parametric blocks** defined in JSON. Bundled definitions
+live in `resources/data/smart_symbols/*.json`; users add their own by dropping a
+file in `<app-data>/smart_symbols/` (it appears in the **Smart Symbols** panel on
+next launch). See ADR-032 for the architecture.
+
+**File shape** (one symbol per file; `id` should match the filename):
+
+```json
+{
+  "id": "raised_bed_rows",
+  "version": 1,
+  "name": "Raised Bed (rows)",
+  "name_de": "Hochbeet (Reihen)",
+  "category": "beds",
+  "parameters": [
+    {"name": "L", "type": "length", "label": "Length", "label_de": "Länge",
+     "default": 200, "min": 20, "max": 1000, "unit": "cm"},
+    {"name": "W", "type": "length", "label": "Width", "default": 100},
+    {"name": "rows", "type": "number", "label": "Rows", "default": 4, "min": 1, "max": 20}
+  ],
+  "elements": [
+    {"kind": "rect", "x": 0, "y": 0, "w": "L", "h": "W"},
+    {"repeat": {"var": "i", "from": 1, "to": "rows - 1"},
+     "element": {"kind": "line", "x1": 0, "y1": "W * i / rows", "x2": "L", "y2": "W * i / rows"}}
+  ]
+}
+```
+
+- **Parameters** — `type` is `number` (integer spin), `length` (float spin, with
+  optional `unit`), or `choice` (`choices: [...]`, combo). `name`/`name_de` and
+  per-param `label`/`label_de` provide localisation (German falls back to
+  English); these are **data strings**, not Qt `tr()`.
+- **Elements** — `kind` ∈ `rect{x,y,w,h}`, `line{x1,y1,x2,y2}`,
+  `polyline{points:[[x,y],…]}`, `polygon{points}`, `circle{cx,cy,r}`. Every
+  coordinate is a number **or** an arithmetic **expression string** over the
+  parameters (and the active `repeat` variable `i`). A `repeat{var,from,to}`
+  block (inclusive integer range; endpoints may be expressions) emits its inner
+  `element` once per value.
+- **Expressions** are evaluated by `core/parametric_eval.safe_eval` — `+ - * / %
+  ** //`, parentheses, parameter names, and `min/max/abs/round/floor/ceil/sqrt`.
+  Anything else (attribute access, arbitrary calls, unknown names) is rejected:
+  symbol files are treated as untrusted input, never `eval()`'d. All param values
+  are coerced to **float**, so a parameter cannot be used as the `ndigits` arg of
+  `round(x, n)` (that needs an int — `round(x, rows)` raises and the symbol falls
+  back to cached geometry). Keep expressions small: an over-complex or deeply
+  nested formula is rejected (a node-count cap guards against stack-exhausting
+  input); coordinate formulas are a few terms, not a program.
+- **Versioning** — bump `version` when a definition changes incompatibly. A
+  saved plan stores the instance's `version`; on load, a mismatch (or a missing
+  definition) falls back to the cached geometry embedded in the file and logs a
+  warning, so old plans never break.
+
+`tests/unit/test_smart_symbol_schema.py` validates every bundled file in CI
+(loads, validates, every expression parses, generates ≥1 primitive).
+
+## 8.19 Agent API — Embedded MCP Server & Thread Marshaling (US-D1.1–D1.6, D2.0–D2.6, D3.1–D3.4, ADR-033/034/035/036)
+
+The app can host an **MCP server over streamable-HTTP** so AI agents read the
+plan currently open in the GUI and, behind the D2 write gate, edit it (epic
+#237). Package: `agent_api/`
+(`bridge.py`, `server.py`, `schema.py`, `mapping.py`, `queries.py`,
+`diagnostics.py`, `prompts.py`, `creates.py`, `edits.py`, `render.py`, `exports.py`,
+`providers.py`, `__init__.py`).
+
+**Lifecycle.** `AgentApiServer` builds a `FastMCP`, takes its
+`streamable_http_app()` ASGI app, and runs a `uvicorn.Server` we own on a
+**daemon `threading.Thread`** with its own asyncio loop. `start()` pre-binds the
+port (precise `PortInUseError`) then polls `server.started`; `stop()` sets
+`should_exit` and joins. **On by default** (`AppSettings.agent_api_enabled`
+default **True**, `agent_api_port` default 8765; a Preferences toggle disables
+it), **auto-starts on launch**, bound to **127.0.0.1 only**. Wired in `application.py`:
+`_setup_agent_api` (deferred auto-start) / `_on_preferences` (live restart on
+toggle/port change) / `closeEvent` (stop).
+
+**Thread-marshaling boundary (`MainThreadBridge`).** Tool handlers run on the
+server thread and must never touch Qt directly. `run_on_main(fn)` emits a
+`QueuedConnection` signal carrying `(fn, Future)`; the slot runs `fn` on the main
+thread and resolves the future; the worker blocks on `future.result(timeout)`.
+This is the reusable, write-ready core (D2 edit tools route through it the same
+way reads do).
+
+**Pitfall — sync vs async tool dispatch (verified mcp 1.28.1).** The SDK runs a
+**sync** tool handler *inline on the event loop*; only `async` handlers yield it.
+So a Qt-touching tool MUST be `async def` and offload the blocking main-thread hop
+to a worker: `await anyio.to_thread.run_sync(snapshot_provider)`. A sync handler
+calling `run_on_main` would block the uvicorn loop on `future.result()`.
+
+**Pitfall — shutdown deadlock.** During `closeEvent` the main thread stops pumping
+the Qt loop (it's in `stop()`'s `join`), so an in-flight `run_on_main` could hang.
+`MainThreadBridge.abort_pending()` (called *before* `server.stop()`) fails any
+in-flight hop immediately so the handler returns and the join completes fast.
+
+**Read model (ADR-034).** Reads go through `ProjectManager.snapshot_dict()` — an
+in-memory, read-only `.ogp`-shaped dict (it does NOT run the journal-pin sync that
+`save()` does, so reading never mutates state). The Qt-free `mapping.py` maps it to
+the curated pydantic `schema.py` (`PlanSummary`); object classification inlines the
+bed/plant `ObjectType` name sets, drift-guarded by `tests/unit/test_agent_api_mapping.py`.
+
+**Read/query tools (US-D1.2).** `build_server`/`AgentApiServer` take an
+`AgentProviders` bundle (Qt-free) of main-thread-marshaled callables (`snapshot`,
+`diagnostics`) — the extension seam for render/export/write later. Tools:
+- **Structural/spatial** — `list_objects`, `get_object`, `objects_in_region`,
+  `objects_in`, `plants_in_bed`, `nearest_objects`, `measure_distance` are pure
+  functions over the snapshot (`agent_api/queries.py`, Qt-free, **linear scan** not
+  the live quadtree). Coordinates are the **native scene frame** (cm, CAD Y-up per
+  ADR-002: origin bottom-left, +y north/up); shapes are summarised by `object_bbox` (handles every
+  serialised geometry). `raw=True` returns the serialiser dict(s) via a **dict-first
+  union return** (`list[dict] | list[ObjectRef]`) so FastMCP keeps a clean `anyOf`
+  schema **and** preserves unknown keys on raw (model-first would coerce raw dicts
+  back into the model and drop keys — verified mcp 1.28.1).
+- **`get_diagnostics`** reports the plan's **already-computed** warnings, not a
+  recomputation: `ProjectManager.diagnostics_snapshot` harvests each garden item's
+  badge flags (`antagonist_warning` / `spacing_overlap` / `capacity_overrun` /
+  `soil_mismatch_level` / `rotation_status`) on the main thread into Qt-free records,
+  and the Qt-free `diagnostics.py` maps them to `Diagnostic`. Positive indicators
+  (spacing `"ideal"`, rotation `"good"`) are not reported; values reflect the last
+  computed badge state (may lag a debounce tick — fine for read-only inspection).
+  The one exception is `outside_canvas` (#380): it is not a badge flag but is
+  computed on every call from each item's live `sceneBoundingRect()`.
+
+**Vision tool (US-D1.3).** `render_canvas_image(x?, y?, width?, height?, layers?,
+image_width_px?)` returns a PNG of the live canvas plus a `RenderMeta` block,
+reusing `services/scene_rendering.render_scene_region` — the exact pipeline
+`ExportService.export_to_png`/the PDF report already use, no new rendering
+logic. `agent_api/render.py` is the one Qt-**touching** module in the package
+(says so in its own docstring): `resolve_image_pixel_size` (pure, no Qt) clamps
+the requested width **and** the aspect-ratio-derived height independently to
+`[128, 2048]` so a pathological region can't produce a runaway image; the
+provider resolves the default region (full canvas), temporarily forces
+layer-bearing item visibility to match `layers` (`_hidden_layers_not_in` —
+a full override of what's shown, not a subtractive filter, so an allowed
+layer the user has toggled off live is shown anyway; restores every item's
+*original* visibility afterward), renders, and PNG-encodes — all in **one**
+atomic main-thread hop (`AgentProviders.render`, the first *parametrized*
+provider). Two things were **empirically verified**, not assumed:
+- `Image` (from `mcp.server.fastmcp.utilities.types`) isn't pydantic-representable,
+  so the natural `-> list[Image | RenderMeta]` annotation crashes `build_server()`
+  at decoration time; `@mcp.tool(structured_output=False)` is the verified fix,
+  at the cost of this one tool having no `structuredContent` (parse the
+  `TextContent` block's JSON instead). Relatedly: with `from __future__ import
+  annotations` in effect, `Image` must be a genuine module-level import in
+  `server.py` — importing it only inside `build_server()` (as `FastMCP` is)
+  raises `NameError` at server-build time, since FastMCP resolves stringified
+  annotations via the function's own `__globals__`, not the enclosing call's
+  locals.
+- The rendered image's pixel Y-axis is **inverted** relative to the D1.2 scene
+  frame — `render_scene_region`'s `y_flip=True` (kept for parity with the live
+  CAD view and every other export) means a small scene-y lands near the
+  **bottom** of the image, not the top. Pinned by rendering a known-position
+  item and scanning actual pixels (`tests/unit/test_agent_api_render_coordinate_frame.py`).
+  The correction formula is documented on `RenderMeta.px_per_cm`:
+  `px_x = (x_cm - region_x_cm) * px_per_cm`;
+  `px_y = image_height_px - (y_cm - region_y_cm) * px_per_cm`.
+
+See ADR-034 addendum (US-D1.3) for the full reasoning.
+
+**Export/save tools (US-D1.4).** `save_plan(file_path?)`, `export_pdf(file_path?,
+paper_size?, orientation?)`, `export_dxf(file_path?)`, and `export_csv(kind,
+file_path?)` are the first Agent API tools with a **filesystem side effect**
+beyond returning bytes/dicts — each writes a real file to disk by calling the
+exact same services the GUI's File > Export/Save menu already calls
+(`PdfReportService`, `DxfExportService`, `ExportService`, `ShoppingListService`,
+`ProjectManager.save`). `agent_api/exports.py::resolve_export_path` is the
+shared path-resolution helper: with no `file_path`, it uses the same
+`app/paths.py` chokepoint the GUI dialogs use (`default_save_path`/
+`default_dialog_dir`, the #199/#204 data-loss fix — next to the currently open
+project, or `<Documents>/Open Garden Planner`); with an explicit `file_path`,
+it force-applies the correct suffix and requires the parent directory already
+exist (a typo'd path fails clearly rather than silently creating a directory
+tree). `save_plan` with no `file_path` and no project open raises rather than
+inventing an `Untitled.ogp` — mirrors the GUI, where a brand-new project always
+needs an explicit Save-As first; given a path, it becomes the project's file
+going forward (Save As semantics), and `ExportResult.previous_file_path` reports
+the prior file so a caller can tell whether the call redirected the project.
+None of these tools return `Image`, so D1.3's `structured_output=False`
+workaround doesn't apply — all four register normally and share one
+`ExportResult` schema. **No token auth needed:** these tools don't mutate the
+in-memory plan (`save_plan` persists what's already on screen, mirroring
+`application._save_to_file` including its issue-#178 stale-price prune); the
+token-auth gate stays reserved for D2's scene-mutating write tools (ADR-033).
+None of the four are overwrite-safe the way a `QFileDialog` prompt is — an
+explicit path pointing at an unrelated file is overwritten without
+confirmation, accepted under the loopback-trust model. See ADR-034 addendum
+(US-D1.4) for the full reasoning.
+
+**Resources & prompts (US-D1.5).** Five read-only resources — `garden://plan`
+(curated `PlanSummary`), `garden://plan/raw` (uncurated snapshot dict),
+`garden://canvas.png` (full-canvas PNG, no region/layer args), `garden://
+diagnostics`, `garden://species` (bundled species DB, 118 records) — and two
+read-analysis prompts, `audit-plan` and `describe-garden` (new Qt-free
+`agent_api/prompts.py`), round out the epic's "tools + resources + prompts"
+MCP surface. Four of the five resources are one-line reuses of existing
+D1.2–D1.4 functions; `garden://species` calls `services/bundled_species_db
+.get_species_db()` directly with **no `AgentProviders` field and no
+main-thread hop** — that module is Qt-free static bundled data, not live-plan
+state. Verified directly against the installed `mcp==1.28.1` source (not
+assumed, same discipline as D1.3's `Image` discovery): resource functions are
+simpler than tools — `@mcp.resource(uri)` only inspects params via plain
+`inspect.signature(fn)` (every D1.5 resource is zero-argument, so the
+tool-only `eval_str`/module-level-import gotcha doesn't apply), a `bytes`
+return with an explicit `mime_type` produces a base64-encoded
+`BlobResourceContents` automatically (**no** `Image`/`structured_output=False`
+workaround — that was tool-dispatch-only), and any other return (a pydantic
+model, a `dict`, a `list`) auto-serializes via `pydantic_core.to_json`. A
+plain `str` prompt return is likewise wrapped into a `UserMessage`
+automatically. See ADR-034 addendum (US-D1.5) for the full reasoning.
+
+**AI client onboarding (US-D1.6).** A running server is useless until the
+user's AI client knows its URL — there's no universal localhost-MCP
+auto-discovery. The Help → "Connect AI Assistant…" dialog
+(`ConnectAiAssistantDialog`) and a new Qt-free `services/ai_client_onboarding
+.py` close that gap: `detect_clients()` checks each client's known config
+location (`~/.cursor`, `claude` on `PATH` / `~/.claude.json`, the platform
+Claude Desktop app-data dir), and `install_to_client()` registers the URL
+where each client's own docs support a safe automatic path — **Cursor** via a
+direct JSON merge into `~/.cursor/mcp.json`, **Claude Code** via the `claude
+mcp add --transport http --scope user` CLI when it's on `PATH`, else a
+**direct atomic merge into the top-level `mcpServers` of `~/.claude.json`**
+(the same user-scope `type: "http"` entry the CLI writes, read by both the
+CLI and the VS Code extension — so onboarding works without a terminal; the
+merge fails *closed* on an unreadable file, since `~/.claude.json` also holds
+OAuth/trust). **Claude Desktop is detection-only and cannot reach a localhost
+server** (its connectors are reached from Anthropic's cloud and reject
+`localhost`), so its row shows an honest "use Claude Code or Cursor instead"
+note — no button, no snippet. Every client with an automatic path also gets a
+copy-paste JSON snippet with a short "where to put this" note, and an always-
+present vendor-agnostic group (canonical `mcpServers` JSON + generic CLI shape +
+bare URL) covers any client OGP has never heard of. This is the **first
+atomic-write pattern in the codebase**: every prior JSON writer here only
+ever wrote its own file with a bare `open(path, "w")`; because this one edits
+files *owned by other applications*, the merge preserves every other
+key/server and writes via a same-directory temp file + `os.replace()`, copying
+the file's current contents to `<name>.bak` **immediately before** that write
+and naming the backup in its success message. Two consequences of the ordering:
+a **refused** merge leaves the directory byte- and file-for-file identical (a
+refusal is the common case for a `foreign` target, so taking the backup earlier
+meant the common case littered a second file beside a config OGP had just
+declined to touch), and a second call overwrites `.bak` with the state from just
+before *that* call, not the pristine original.
+
+**Generalized in issue #366 — clients are data, and the writer is keyed on syntax
+rather than on client.** A client is one frozen `ClientTarget` in `TARGETS`;
+`container_key` (possibly dotted, e.g. `mcp.servers`), `syntax`
+(`json`/`jsonc`/`toml`) and `entry`/`cli_argv` are independent fields, so a new
+client is one record rather than two new `if`/`elif` branches, and the dialog
+needed no change to gain OpenCode, Codex and Gemini CLI. The three
+client-agnostic guarantees (backup, atomic replace, fail-closed) now exist once
+in `_merge_into_config`, with only serialisation varying per syntax. Three
+lessons worth carrying: **(a)** a client's config may be a *superset* of the
+format you assume (OpenCode's is commented JSON that plain `json.load()`
+rejects) — and a fail-closed rule is only safe while the *read* can understand
+what it refuses to clobber; the tolerant reader is a character scan, not a
+regex, and the strict reader still raises so leniency cannot leak into
+fail-closed. **(b)** A surgical writer into a file you don't own owes a **parse
+check on its own output** — validating the input is not a licence to write an
+unverified result (a header spelled `["mcp_servers"."name"]`, or a `[`-leading
+line inside another table's multi-line string, both produce a file the user's
+own program cannot parse, and one of them destroys the other table's data).
+**(c)** Never re-serialise a file you do not own: that is why TOML is appended
+surgically and why the foreign JSONC target *refuses* the merge rather than
+rewriting the user's comments away. See ADR-035 (with its #253 and #366
+addenda) for the per-client reasoning and §11.4 for the pitfall entries.
+
+**Agent write path & token gate (US-D2.0/D2.1, ADR-036).** The scene-mutating
+tools — `move_object(item_id, dx, dy)`, `delete_object(item_id)` (D2.0) and
+`create_object(object_type, x, y, …)` (D2.1) — sit
+behind **two independent guards**: a **writes-enabled** Settings toggle
+(`agent_api_writes_enabled`, **default OFF**) and a **bearer token**
+(`agent_api_token`, auto-generated with `secrets.token_urlsafe(32)`). The tools
+are **registered only when both are present** (`writes_enabled and write_token`)
+— when either is missing they don't appear in the tool list at all — and each
+call must carry the token, **either in the connect URL as a `?token=` query
+param or as an `Authorization: Bearer <token>` header** (the URL token wins when
+both are present, so a stale legacy header can't shadow it). The URL route is the reliable one: Claude Code on streamable-HTTP
+stores a configured header but omits it on tool-call requests (anthropics/
+claude-code#50464 / #28293), while the URL — being the request target — is
+always transmitted; delivering the secret there preserves the same threat model
+(a caller still needs the token) at the cost of a URL-borne secret (mitigated:
+uvicorn access log off + the `token` param is stripped from the request scope
+right after extraction, so nothing downstream logs it). Reads stay open (loopback
+trust, unchanged), so the gate is **per-tool, not a server-wide middleware**
+that would break read-only D1 clients: a pure-ASGI wrapper
+(`_bearer_token_middleware`) reads each request's token from the header or the
+`?token=` query string into a `contextvars.ContextVar`, and each write handler
+calls `_require_write_auth` (constant-time `secrets.compare_digest`) in the same
+request task, **before** the `anyio.to_thread.run_sync` main-thread hop. Verified end-to-end against
+`mcp==1.28.1` with `stateless_http=True` that the ContextVar set in middleware
+is visible in the tool handler for the same request (chosen over a `ctx:
+Context` header read so the gate doesn't depend on FastMCP internals). The
+write itself hops to the main thread via an `AgentProviders` callable,
+resolves the item by UUID (`scene.find_item_by_id`), and runs
+`canvas_view.command_manager.execute(cmd)` — matching GUI *behaviour*, not
+merely reusing a `Command` class: `delete_object` mirrors
+`CanvasView._delete_selected_items`'s full orchestration, not just
+`DeleteItemsCommand` — it also removes any constraint referencing the object
+(`RemoveConstraintCommand`, else the constraint graph keeps a dangling UUID)
+and deletes a `HOUSE`'s linked roof ridge (a `metadata["ridge_item_id"]`
+association, else orphaned); contained plants are still detached, not
+deleted, matching the GUI's "Keep plants" choice. `move_object` mirrors
+`CanvasView`'s whole drag-release sequence — a bed/container/trellis's
+contained plants move with it (`AlignItemsCommand` over item+children), and a
+moved plant's bed membership is re-evaluated afterward (`SetParentBedCommand`
+on a boundary crossing) — so **one agent write is one undoable step for a lone
+item, and two when a move also reparents a plant**, never more; every command
+still marks the plan dirty (invariants #3/#4/#13; no parallel mutation path).
+Both tools **refuse** (in the shared `_resolve_agent_item` chokepoint, so
+future write tools inherit it) rather than silently mishandle cases the agent
+could otherwise reach by resolving a UUID directly but the GUI forbids: an
+object (or, for `move_object`, a bed child) in a geometric constraint —
+`CanvasView`'s live solver computes per-item deltas a one-shot agent call
+doesn't replicate; a journal pin, whose delete needs a `ProjectData`
+note-record prune no bare `DeleteItemsCommand` performs; an item on a **locked
+layer** (the GUI enforces the lock by clearing `ItemIsSelectable`/
+`ItemIsMovable`, which selection-based GUI edits respect but a UUID lookup
+bypasses); and an individual **group member** (a raw snapshot exposes its id,
+but `moveBy` on a `QGraphicsItemGroup` child displaces it within the group —
+address the group itself). `GroupItem`/`SmartSymbolItem` moves need no special
+handling: they are real Qt groups, so `moveBy`/delete cascade to members
+natively (the bed↔plant link is *logical*, which is why beds don't).
+
+**Creation is the exception to that chokepoint (US-D2.1).** `create_object`
+has no existing item to resolve, so it inherits **none** of
+`_resolve_agent_item`'s four refusals — which makes it the one write tool whose
+guards have to be stated separately. They live in two places, deliberately, and
+must be kept in step:
+
+- **Shape, size and position** — the Qt-free `agent_api/creates.py`. Beyond the
+  obvious (unsupported type, a dimension that doesn't fit the shape, a missing
+  or non-positive or non-finite extent) it applies two **sanity bounds**, because
+  finite-and-positive is not the same as plausible and an agent is exactly where
+  a metres-for-centimetres slip appears: every extent is capped at twice the
+  plan's larger canvas dimension (the error names the real plan size), and a
+  **plant's** diameter is additionally capped at 5000 cm because a plant
+  footprint feeds `plant_renderer.render_plant_pixmap`, which allocates an
+  `int(diameter)`-square ARGB `QImage` **from scene centimetres, not device
+  pixels**, on the Qt main thread — quadratic, and measured at ~2.3 GB / ~3 s
+  for a 24000 cm diameter, with allocation failure yielding a *null* (not
+  `None`) `QPixmap` the paint path forwards unchecked. Positions further than
+  one canvas beyond an edge are refused too: such an object is invisible,
+  unselectable and un-deletable in the GUI, so reporting success would be a lie.
+  This mirrors `render.py`'s existing precedent of clamping agent-supplied
+  sizes harder than the GUI does.
+- **Scene state** — `GardenPlannerApp._agent_creation_target_layer()`, which
+  needs the live scene and so cannot be Qt-free. It refuses a **locked active
+  layer** (the creation-side counterpart of the item-side lock check) and
+  returns `None` when the scene has no active layer at all, matching the GUI
+  drop path, which likewise leaves `layer_id` unset. It exists as a named seam
+  rather than an inline check so the next creation-shaped tool inherits it.
+
+One further asymmetry is worth knowing: creating on a **hidden** active layer
+silently un-hides that layer (`QGraphicsScene.addItem` does this for the GUI's
+draw tools too) and **undo does not re-hide it** — so the operation is one undo
+*stack* entry while leaving a non-undoable visibility change. Pre-existing GUI
+behaviour, not a D2.1 regression, but it sits oddly beside the locked-layer
+refusal and is recorded in FR-AGENT-14.
+
+Unlike `move_object`, `create_object` needs no bed reconciliation:
+`CreateItemCommand.execute` already calls `_auto_parent_plant` and its `undo`
+calls `_detach_from_parent`, so a new plant's bed link is established and
+reversed **inside the single create step**. (The first cut of D2.1 added an
+explicit reconcile on the false premise that the GUI never links a dropped
+plant; a probe of the running code disproved it — see ADR-036's D2.1 addendum.)
+
+The token is surfaced (Copy/Regenerate) in Preferences → Agent API and
+injected into each client's config by the D1.6 onboarding writers as a
+`?token=` query param on the connect URL (`ai_client_onboarding.url_with_token`).
+See ADR-036 (and its URL-delivery addendum); §8.11 for the security note.
+
+**Editing existing objects (US-D2.2/D2.3).** Four more tools sit inside the same
+`if writes_active:` block and share `_resolve_agent_item`: `resize_object`,
+`rotate_object`, `set_species`, `set_parent_bed`. Each applies exactly one
+undoable command; none reparents, so none produces the second undo step
+`move_object` can. Three points are load-bearing for anyone extending them:
+
+* **One geometry-apply path per geometry model.** `ResizeItemCommand` /
+  `RotateItemCommand` take a caller-supplied `apply_func`, and before D2.2 every
+  call site had its own closure — which had drifted, leaving three rotated-geometry
+  bugs in shipped GUI paths (§11.4). `ui/canvas/geometry_apply.py` is now the single
+  implementation; **its module docstring is the authoritative list of callers and of
+  the two deliberate exceptions**, and is deliberately not restated here. Do not add
+  another rect closure; add a builder there.
+* **Centre-preserving is the agent's anchor rule, for every type.** The read
+  tools and `create_object` speak in centres, so `resize_object` holds the
+  scene centre invariant; the panel keeps its own per-type anchor behaviour.
+  Both are the same builder with `keep_center=True|False`, and both solve `pos`
+  through `anchored_position()` so a rotated item lands correctly either way.
+* **Rotation sign is measured, not assumed.** A positive angle is
+  **counter-clockwise** (east-pointing → north after `+90`). Pinned against a
+  measured corner position in both `tests/unit/test_agent_api_edits.py` and
+  `tests/integration/test_agent_api_default_on.py` — never against the stored
+  angle, which cannot detect an inverted convention. This is the #267 lesson
+  applied prospectively.
+
+`set_species` delegates to `ui/plant_species_assignment.apply_species_to_item`
+(the #213 helper the plant panel and species search already share) rather than
+building `ApplySpeciesCommand` itself; its `apply_database_size` flag answers
+the GUI's conflicting-override dialog and is **not** a general "skip the resize"
+switch. `set_parent_bed` changes the link only — the plant does not move — and
+deliberately does not require geometric containment, reporting
+`link_is_geometric` instead so the agent can flag a mismatch. Validation for all
+four lives in the Qt-free `agent_api/edits.py`, whose plant-parent name set
+carries a drift guard against `PLANT_PARENT_TYPES` (§8.14 / ADR-017 — note
+`TRELLIS` is a plant parent but not a soil container). See ADR-036's D2.2/D2.3
+addenda, FR-AGENT-15/16.
+
+**Stacking order (issue #338, ADR-043 — outside the D2.x sequence, see
+`docs/roadmap.md`'s standalone "Canvas: Per-object stacking order" section).**
+A fifth tool in the same `if writes_active:` block, `arrange_object(item_id, action)`, reorders one
+object within its own layer (`bring_to_front`/`bring_forward`/`send_backward`/
+`send_to_back`). It does not build its own command: it calls
+`ui/canvas/arrange.py::build_arrange_command` — the same seam the Edit menu,
+every item's context menu, and the Properties panel's Arrange buttons call —
+so the bed-carries-its-plants block and the plant-cannot-go-behind-its-bed
+clamp (§8.25) apply identically whether a human or an agent triggers the move.
+It raises rather than reporting a false success when the gesture is a no-op
+(already at the front/back of the layer, or no overlapping object to step
+past for the forward/backward step) — the same refusal-over-silent-success
+precedent as `set_parent_bed`. `ObjectRef`/`ObjectDetail.stack_index` is the
+read-only counterpart: a 0-based position within the object's own layer,
+bottom→top, as displayed — comparable only between objects on the same layer.
+**Order note:** `list_objects`, `objects_in_region`, and `get_object` are
+documented as returning/reading objects **bottom→top in stacking order**
+(layer order, then position within the layer) — the same order
+`ProjectManager.snapshot_dict`/`_serialize_scene` now writes them in
+(`reversed(scene.items())`, ADR-043) and the same order `stack_index` is
+computed from. `get_diagnostics` is explicitly **not** in that order — it
+walks the live scene's badge state directly and was not changed by #338.
+
+**i18n.** MCP tool/resource/prompt descriptions are an English API contract
+(exempt). Only the Settings UI strings go through `tr()`.
+
+**Packaging.** See §7 deployment view — the `mcp`/`uvicorn`/`starlette` stack
+needs `collect_submodules` + `copy_metadata` in `ogp.spec`, must NOT walk
+`mcp.cli`, and must NOT exclude `multiprocessing` (uvicorn imports it).
+
+**US-D2.4/D2.5 — layer addressing and shape/structure creation.** The curated
+schema exposes layers as UUID-addressed records (`layer_id`, name, visibility,
+lock, opacity, z-order, active flag, and top-level object count);
+`layer_names` remains for back-compat. `list_layers` is read-only and open
+like the other read tools, while the layer write tools remain behind the D2.0
+double gate: `set_object_layer`, `create_layer`, `rename_layer`,
+`delete_layer`, `set_active_layer`, and `set_layer_property`. They call
+the existing layer commands rather than mutating `scene.layers` directly.
+Visibility is undoable; the active layer is session state and therefore the
+one layer operation that does not add an undo step. **A locked layer protects
+its OBJECTS, and (since issue #365) the lock itself is agent-writable in both
+directions.** That is a deliberate reversal of the original D2.4 decision, so
+state it plainly: `set_layer_property(layer_id, locked=true|false)` locks and
+unlocks through the same `SetLayerPropertyCommand` the Layers panel's own
+toggle runs, as one undo step. What is unchanged is the object-level
+protection — while a layer is locked, agents may not delete it, move objects
+onto it, or edit objects on it — and every one of those guards tests the
+layer's **current** lock state rather than a permission bit. So "unlock, then
+edit" is simply two ordinary undoable calls the user can see and reverse; no
+guard had to become conditional, and the tests that pin them are unchanged.
+Every refusal now names `set_layer_property(layer_id, locked=False)` as the
+way out, because that is the tool the agent actually has. Deleting another
+layer also refuses when its replacement would be locked; the command rechecks
+that precondition on redo. `set_layer_property` may change visibility and
+opacity on a locked layer, because that does not alter its protected
+contents.
+
+**Document lifecycle (issue #365).** Two more token-gated tools,
+`new_plan(width_cm?, height_cm?, force?)` and `open_plan(file_path, force?)`.
+They are gated like `delete_object` — not merely because they mutate, but
+because they **replace the open document and can discard unsaved work**, which
+is strictly more destructive. Both reuse the GUI's own paths rather than
+reimplementing them: `_on_new_project` was extracted into
+`_new_project_document`, and `_open_project_file` was split into a raising
+`_load_project_file` plus its modal-reporting GUI wrapper, so an agent never has
+a `QMessageBox` appear on its behalf. Each **refuses on a dirty plan unless
+`force=true`**: the GUI asks the user at that point and an agent cannot, so the
+choice is binary. `new_plan` keeps the current canvas dimension for any
+argument omitted and **refuses** an out-of-range or non-finite one rather than
+clamping. `open_plan` requires an existing `.ogp` file and is deliberately
+**not** sandboxed (a loopback-only server grants no filesystem access a local
+MCP client does not already have — see `agent_api/exports.py`). Neither is an
+undo step: a new or loaded document resets the stack. Both declare
+`PlanLifecycleResult`, not `ExportResult` — neither writes a file, and reusing
+`ExportResult` made every successful call raise a `ValidationError` while
+body-level tests stayed green.
+
+`create_object` now covers the curated GUI roster by canonical geometry
+family: circles, rectangles, ellipses, polygons, polylines, and callouts. The
+input contract is explicit: centres and extents are centimetres in the native
+CAD Y-up scene frame; polygon/polyline vertices pass through unchanged;
+polygons also accept a centre plus width/height convenience form; and callouts
+retain their stable item id through save/load. The loader's
+`ProjectManager._deserialize_item_core` remains the sole construction path,
+so agent-created objects and loaded objects cannot acquire divergent defaults.
+`HOUSE` creation builds its linked `ROOF_RIDGE` with the shared
+`core.roof_ridge` geometry helper and groups both items into one undo command.
+`ROOF_RIDGE`, `GARDEN_JOURNAL_PIN`, `GENERIC_TEXT`, and legacy
+`HEDGE_SECTION` are deliberately refused with machine-readable reasons;
+`list_creatable_types` exposes both the supported roster and these
+exclusions. The union of those two sets is drift-guarded against
+`ObjectType`, so a new enum member cannot silently become an undocumented
+agent capability. No `FILE_VERSION` change is required: the schema additions
+are additive and the new item data uses existing serialisation shapes.
+
+**Low-level geometry escape hatches (US-D2.6, issue #330).** The stable read is
+`get_geometry(item_id)`, not `get_object(raw=True)`: the latter intentionally
+exposes pre-transform serializer storage. `ui/canvas/geometry_inspect.py` runs on
+the Qt main thread and reports the same centre semantics as `get_object`, but maps
+current polygon/polyline vertices through `mapToScene()`, plus native extents or
+radius, rotation, curve/leader data, vertex capability/minimum count, and every
+referencing constraint in deterministic `(type, id)` order. The read is
+unauthenticated and never mutates or dirties the plan. Locked-layer and journal
+objects remain inspectable; group members remain non-addressable because the
+rest of the curated object surface addresses only top-level ids.
+
+Four writes share the ADR-036 gate. `set_object_position(item_id, x, y)`
+validates a finite, canvas-reachable absolute centre, converts it to a delta, and
+enters the same orchestration as `move_object`: logical bed children move with
+the parent, plant bed membership is reconciled, and the documented reparent case
+remains the only two-step move. `set_vertex`, `add_vertex`, and `delete_vertex`
+support only the polygon/polyline protocol. Qt-free `agent_api/edits.py` owns
+finite/reachable point validation, zero-based index semantics (an append uses
+`index == vertex_count`), and the deletion minimum supplied by the item's
+vertex-editing protocol (3 for a polygon, 2 for a polyline). Every accepted topology write is
+one `AddVertexCommand`/`DeleteVertexCommand`; set is one `MoveVertexCommand`.
+Their callbacks are built only by `geometry_apply.py`, which the interactive
+vertex commit paths also call. A HOUSE topology change invokes the item's
+existing linked-ridge reprojection hook, keeping the ridge attached through
+execute/undo/redo without turning the agent operation into a second command.
+
+The coordinate-frame rule has one precision guard: if a `set_vertex` target is
+within `1e-9 cm` of the current live vertex, `local_vertex_for_scene()` reuses
+the exact current local `QPointF`; otherwise it uses `mapFromScene`. A raw
+scene→local→scene inverse at 215° drifted by about `5.7e-14 cm`, so without the
+guard an unchanged request could look like a real mutation. The tool then refuses
+that unchanged request as a no-op with no command, history entry, or dirty state;
+the epsilon is noise detection, not a user snap mode. A moved-then-restored
+vertex leaves the serialized object byte-identical.
+
+**Constrained geometry remains permanently refused.** `_agent_require_unconstrained`
+is the one perimeter for absolute positioning, move, resize, rotate, species
+assignment when it resizes, and all vertex writes. The error names the first
+constraint type/UUID; `get_geometry` exposes the complete blocking set so the
+agent can explain why. This is final, not “solver deferred”: silently skipping
+`CanvasView`'s live multi-item solver would violate user intent. Solver-backed
+agent writes require a separate proof/design. Arrays, booleans,
+trim/extend/fillet/chamfer, align, mirror, and group/ungroup remain a named
+follow-up backlog. `delete_object` is the one policy exception and removes
+referencing constraints as part of its existing GUI-equivalent delete contract.
+Every refusal occurs before command execution, leaving scene, constraints,
+undo/redo, and dirty state untouched. No `FILE_VERSION` change.
+
+**Follow-up hardening (issues #353 and #355).** The global GUI/agent history is
+one `CommandManager` stack, not a second MCP history. Authenticated `undo` and
+`redo` preflight the relevant stack, reverse or reapply exactly one command on
+the Qt main thread, and return a `HistoryResult` containing the command
+description and the post-call `can_undo`/`can_redo` flags. An empty stack is a
+refusal; it is never a successful no-op. Project loading uses one centralized
+predicate for serialized document items, so same-scene loads remove old
+callouts and Arc/Bezier items as well as the original shape roster. Compare and
+dimension overlays keep their explicit controller cleanup, and a broad
+`CanvasScene.clear()` is not substituted for that ownership boundary. Agent
+`delete_object` additionally refuses duplicate live UUIDs and checks that every
+requested target is detached before returning success.
+
+Callout input is validated in `agent_api/creates.py` before the loader receives
+it. `box_dx` and `box_dy` remain signed so the GUI's normal above/below/left/
+right placement works, but each is finite and bounded by
+`abs(offset) <= 2 * max(canvas_width_cm, canvas_height_cm)`, including the
+resolved defaults. The MCP wrapper uses a private omission sentinel because
+some JSON stacks normalize Infinity/NaN to `null`; explicit null is rejected
+rather than silently becoming the default offset. Thus oversized, negative-oversized, and non-finite calls
+leave both the scene and undo stack untouched, while normal callouts still
+save/load, render, and delete through the existing paths. The benchmark
+hardening for #354 is documented in FR-SNAP-06 and ADR-020: one warm-up plus
+five samples, with median build/query limits calibrated for shared runners.
+
+**Canvas clamping (issue #380).** Agent writes are clamped to the plan canvas,
+joining the GUI, and the earlier "stage an object just off-plan" allowance is
+retired. The rule lives once for the canvas-view clamp paths and the agent paths (the properties panel's numeric X/Y, the mirror tool and the resize handle still carry their own copies — not yet migrated), Qt-free, in `core/canvas_bounds.py`
+(`clamp_shift_within_canvas`, `clamp_delta_within_canvas`,
+`rect_intersects_canvas` over `(left, top, right, bottom)` tuples). The GUI's
+`CanvasView._clamp_items_to_canvas` / `_clamp_delta_to_canvas` call it, and so do
+`GardenPlannerApp._clamp_agent_items_to_canvas` (creation) and
+`_agent_apply_object_move` (move / absolute position). It is applied in the
+application layer, where live bounding rects exist — `agent_api/creates.py` stays
+further Qt-free. `create_object` shifts the whole creation group (a HOUSE and its
+linked ridge together); a move clamps the item plus any plants it carries, so an
+offset that would strand the group is trimmed to the edge. `BackgroundImageItem`
+is exempt, matching the GUI. `require_reachable_position` remains only as the
+refuse-absurd gross guard and still leaves the scene and undo stack untouched on
+refusal. An object already saved off-plan by an older build — which clamping
+cannot recover, because the GUI clamp touches only the items being moved — is
+made discoverable instead: `ObjectRef`/`ObjectDetail` carry `outside_canvas`
+(bounding-box based; an empty canvas never flags) and `get_diagnostics` gains an
+`outside_canvas` kind, harvested by the existing
+`ProjectManager.diagnostics_snapshot`. `set_vertex`/`add_vertex`/`delete_vertex`
+are **not** clamped (they are outside the GUI's five clamp sites) and are covered
+by the flag only — a deliberate scope boundary recorded in the ADR-036
+addendum.
+
+**Domain-intelligence tools (US-D3.1 #319, US-D3.2 #331).** D3 wrapped domain engines
+that already existed and were already Qt-free, and made them reachable. Both slices
+add one Qt-free module, `agent_api/domain.py`, holding the pure functions; the
+`AgentProviders` callables in `application.py` marshal them across
+`MainThreadBridge.run_on_main`. Three conventions carry across both slices and are
+what the next D3 slice should follow:
+
+- **Honest degradation beats a plausible empty answer.** A component that did not
+  check something must not report a result that reads as a successful check. D3.1
+  returns `spacing_ok`/`soil_ok` as `None` ("not checked", never a fabricated
+  `True`) and `overall: "unknown_bed"` for an id that resolves to nothing (never
+  `"neutral"`, which reads as "I looked and there was nothing"). D3.2 reports
+  `has_plan: false` for "no plan" as distinct from an empty plan, and
+  `coverage: "no_frost_dates"` **together with** month-based fallback segments
+  rather than an empty segment list.
+- **Deterministic ranking with a stable final tiebreak.** D3.1 caps candidates at
+  60 and results at 50 and pins identical ordering on repeat calls. D3.2 sorts on
+  `(fits_window desc, days_to_maturity asc, species_key asc)`; both are pinned by
+  a same-input-twice test *and* a reversed-input-order test, because a suite that
+  only re-runs the same order cannot see an unstable tiebreak.
+- **`species_key` is derived, never invented (ADR-016).** It is a module-level
+  function over a dict (`models/plant_data.py`), not an attribute of a species
+  record, and its priority is `source_id -> scientific_name -> common_name` - so a
+  bundled plant's key is its **scientific** name. `"beans"` is not a valid key;
+  `"phaseolus vulgaris"` is. An implementation that reads a `species_key`
+  attribute silently gets `""` for every candidate.
+
+**Machine fields vs display strings.** Across the agent surface, fields an agent
+should *branch on* are the English API contract. The tool-side free text (D3.2's
+`reasons[]`) is **English and never localised** — ADR-033 makes MCP output an
+English contract — so it is documentation, not something to parse. D3.2's
+`reasons[]` and D3.3's generated task titles are therefore different problems:
+the latter DO cross the boundary translated, and D3.3 owns that decision.
+D3.2's `suggest_succession` is the worked example: branch on
+`species_key` / `family` / `days_to_maturity` / `fits_window`; `reasons[]` is
+prose. Note the asymmetry that makes this necessary - `services/task_generator.py`
+and `services/soil_service.py` build their task titles and amendment names with
+`QCoreApplication.translate`, because the GUI is their primary consumer, so those
+strings cross an API boundary localised. Do not force English at the generator.
+
+**D3.1's companion `name` follows the same rule (issue #410).** `suggest_companions`
+returns `species_key` (a stable machine key) beside `name` (a display string in the
+user's current UI language, selected from `companion_planting.json`'s `name_de` by
+`app/settings.py::active_language()`). Branch on `species_key`, never on `name`. The
+D3.1 tool predated the D3.3/D3.4 convention and shipped with the English default; the
+fix brought it into line. The generated soil-amendment task titles obey the same rule
+(issue #408), with the extra constraint that the task **id** keeps the English data name
+so saved task status survives a language switch.
+
+**The D3 localisation convention (US-D3.3 #332 + US-D3.4 #333, decided).** Epic
+#237 required one answer across both stories, so this is stated once here and in
+the ADR-034 addendum. Every D3 tool carries **two field classes**:
+
+| Class | Fields | Contract |
+|---|---|---|
+| machine keys | `task_id` / `task_type` / `source`; `amendment_id` / `target_kind` / `fixes` / `reason_codes` | **Stable English.** Part of the API contract. Never localised. |
+| display strings | `title` / `notes`; `display_name` / `reasons` | **The user's current UI language.** Explicitly NOT part of the English contract. |
+
+Consequences worth stating because they are all easy to get wrong:
+
+- **The agent layer passes the localised string through; it never translates.**
+  The translation stays upstream in `task_generator` / `soil_service`, where the
+  GUI already depends on it. `tests/unit/test_agent_d3_localisation.py` pins the
+  pass-through *and* the upstream translation separately — asserting only "the
+  title changed" would pass even if the wrapper had invented its own translation.
+- **Amendment names are data, not translations.** `Amendment.name` / `name_de`
+  are bilingual *data* fields, so `display_name` is *selected*. The convention is
+  unchanged either way: `amendment_id` never moves with the UI language.
+- **`task_type` carries the distinction `source` cannot.** `Task.source` has six
+  values — `calendar`, `propagation`, `succession`, `soil`, `frost`, `manual` —
+  for seven generators, because both soil generators emit `source="soil"`. The
+  amendment and mismatch tasks are told apart by `task_type`
+  (`soil_amendment` vs `soil_mismatch`), so **filtering by `source` alone cannot
+  select one of them.** A drift guard asserts the tuple equals the engine's set
+  in *both* directions (§11.4: a subset-only guard let two values that no
+  generator emits through, which made the working value refused and the
+  non-working one return an empty list).
+- **Hidden statuses match the Tasks tab exactly.** `get_tasks` hides `archived`
+  and `dismissed` by default because `ui/views/tasks_view.py` hides those two.
+  Hiding only `dismissed` would make the agent a third surface disagreeing with
+  the other two about one shared store — invariant 6.
+- **Degradation is never silence.** A plan with no geo-location has no frost
+  dates, so the calendar and propagation generators produce nothing;
+  `coverage: "no_frost_dates"` says so and still returns every other task kind.
+  A bed with no soil test gets `coverage: "no_soil_test"`, which means *untested*
+  and never *healthy*. An empty list is never the whole answer.
+
+**Soil reads need provenance, not just a reading.** `SoilService.get_effective_record`
+applies its documented hierarchy (bed's own latest → plan-wide default's latest →
+none) and returns the record alone. For an agent that is unusable: with only a
+plan-wide test recorded it hands back the global record *for a bed*, and the
+caller cannot tell that from a real bed reading. `SoilStatus.record_source`
+(`'bed'` / `'global'` / `'none'`) restores the distinction, and the provider
+uses `SoilService.get_effective_record_with_source` to obtain the record, source
+and matching history together. The existing `get_effective_record` delegates to
+that same resolver. Staleness follows the selected history, including a global
+fallback; checking an empty bed history against an old global reading incorrectly
+reported it as current.
+
+**D3 transport envelopes and period generation.** `get_soil_status` always
+returns `SoilStatusListView.beds`, with one result for a requested bed or all
+soil-capable beds when omitted. `get_soil_mismatches` returns
+`SoilMismatchBedsView.beds`, keyed by bed UUID, preserving each bed's `coverage`,
+`total` and disagreements. Its aggregate coverage distinguishes `no_beds`,
+`no_soil_test`, `partial_soil_tests` and `ok`. The soil prompt extracts the
+requested bed from both envelopes before rendering; it never treats an envelope
+as one bed. Real-client integration tests use `app._build_agent_providers()` and
+call all nine new tools and both prompts over HTTP, including authenticated
+writes, refusals and undo. Direct provider tests remain useful but cannot detect
+an MCP response-schema mismatch.
+
+`build_plan_state(today, year, actionable_only, include_propagation)` separates
+the reference date from the calendar year. Annual agent calendars and explicit
+task windows retain inactive dated tasks (`actionable_only=False` at the call
+site), then classify urgency against the actual reference date. Cross-year
+windows are clipped to each requested year before month bucketing.
+`generate_for_date_window` uses one snapshot and the shared generators for the
+frost-anchor years capable of overlapping the requested dates, deduplicating
+absolute tasks. The range is derived from species offsets and generated
+propagation steps: autumn garlic sowing precedes its anchor year, while asparagus
+harvest extends three years. Annual calendars use this same path; anchor-year
+task IDs remain stable.
+
+**GUI reminder surfaces (#414, ADR-029 addendum).** The Tasks tab and the
+planting-calendar dashboard no longer call the generators directly. They call
+`task_generator.generate_actionable_for_surface(state)`, which wraps
+`generate_for_date_window` and then re-applies the GUI's own listing rule
+(`classify_urgency(...) is not None`). Two details are load-bearing and neither is
+optional:
+
+- **`actionable_only=False` is passed INWARD.** `generate_for_date_window` builds
+  each anchor year with `replace(state, ...)`, so the caller's flag is inherited
+  *per anchor year*. Passing the GUI's `True` into it filters anchors out before
+  the outer filter ever runs — which is exactly what it did, producing an empty
+  Tasks tab and a blank Gantt. The helper passes `False` inward and filters once at
+  the edge.
+- **Undated tasks pass through, and manual tasks are never urgency-filtered.**
+  `classify_urgency` dereferences both dates and `generate_manual_tasks` emits
+  undated tasks (`date=None`), so calling it unguarded raised `TypeError` and took
+  both tabs down for a plan the agent's own `add_manual_task` creates. Manual
+  tasks are additionally merged in from their own generator rather than harvested
+  from the date-window pass, because they carry absolute dates and so fall outside
+  the date span; their generator documents that a manual to-do is never filtered by
+  urgency.
+
+The **Gantt** deliberately uses the *unfiltered* `generate_for_date_window` over
+Jan 1 – Dec 31, because a calendar chart is not a reminder list: routing it
+through the reminder helper dropped most of the chart. Two entry points, two
+declared purposes, neither reimplementing the other. The chart draws the windows
+the generators produced rather than re-deriving them from `last_frost` plus raw
+offsets — which had made it a second independent implementation of "offset to date" (the callers only *call* `generate_calendar_tasks`, so the old count was high) and the reason it could only ever draw one anchor year.
+Absolute propagation overrides instead use their start-date year as the task's
+owner year in the shared generator. This preserves one identity across GUI and
+agent reads and prevents wider anchor ranges from multiplying one saved step.
+Propagation plans use the extracted `build_propagation_plans` calculator
+shared with the GUI, preserving seed-packet germination values and user overrides.
+Missing frost dates still prevent those plans from being computed.
+
+Amendment display names use `Amendment.display_name(language)` with the app's
+language, just as the GUI does; stable amendment IDs do not change. Soil-write
+arguments use strict numeric MCP annotations so booleans and numeric strings
+cannot be coerced into readings before the domain validator sees them.
+An empty amendment list means the engine recommends nothing from the readings
+it can assess; it does not prove healthy soil. Existing GUI lab-only records
+may have no assessed kit values and keep an unknown health result.
+
+**Secondary nutrients have no health rating, and `None` is the honest answer.**
+`SoilService.health_level` rates `ph`, `n`, `p`, `k` and `overall` — its
+`ALL_PARAMS` is exactly those five. Passing `'ca'` / `'mg'` / `'s'` **falls
+through to the `overall` branch** and returns the whole bed's rating. So
+`SoilReading.health_level` is `str | None`, and `None` for a secondary means *"no
+rating exists"* — deliberately distinct from `'unknown'`, which means *not
+tested*. `overall_health_level` likewise covers **pH and N/P/K only**; the
+secondaries do not drag it down. Reporting the overall rating as calcium's would
+be a confidently wrong answer, which is the same trap D3.1 closed by reporting
+`unknown_bed` instead of a clean-looking `neutral`.
+
+**A rotation rule that looks reusable and is not.** D3.2's
+`suggest_succession` must exclude a candidate that conflicts with a crop planted
+*earlier in the same succession plan*. `CropRotationService.check_plant_placement`
+cannot supply that: it compares the candidate only against `records[0]`, the single
+most recent planting record, so it cannot see "tomato after the garlic entry three
+slots ago" - and succession entries never enter rotation history at all, since only
+the Crop Rotation panel writes `PlantingRecord`s. Succession is several crops in
+ONE season; that service models one record per season across years. So the
+**cross-year** 3-year family cooldown is reused verbatim via
+`get_recommendation(bed_id).avoid_families` (already Qt-free, already feeding
+`get_diagnostics`), while the **within-plan** rule is new logic confined to
+`agent_api/domain.py`. Calling the existing method would have looked correct,
+passed a casual test, and excluded almost nothing.
+
+**Season segments are four, and the no-location fallback is shared.**
+`models/succession.py::SEASON_SEGMENTS` is `early_spring`, `late_spring`, `summer`,
+`fall` - frost-relative boundaries documented in the module docstring. Segments are
+contiguous and inclusive at both ends, so a date exactly on the
+`early_spring`/`late_spring` boundary resolves to `early_spring`
+(`date_to_segment` returns the first match). A plan with no geo-location has no
+frost dates; the calendar-month fallback that handles that lived in
+`succession_plan_dialog.py` as a private table, and D3.2 **moved** it to
+`models/succession.py` as `compute_fallback_segments`, with
+`resolve_season_segments(year, location) -> (segments, are_fallback)` as the single
+entry point both the dialog and the agent call. Copying it would have let an agent
+and the GUI disagree about what "summer" means for the same bed.
+
+## 8.20 Solar Coordinate Discipline (Phase 14 sun/shade)
+
+The one rule: **do all solar/shadow math in scene centimeters, once, and
+flip nothing.** Scene coordinates ARE the CAD coordinates the user sees —
++x = East, +y = North (ADR-002; `ogp-qt-cad-reference` §1 owns the
+reconciliation with Qt's abstract Y-down description). Only pixel-facing
+surfaces (render/export/minimap) apply a Y-flip, and they already do it
+themselves (`render_scene_region(y_flip=True)`).
+
+**From compass azimuth to scene vector.** Azimuth `Az` is a compass bearing
+clockwise from true north, so the sun's horizontal direction in the scene
+frame is `(sin Az, cos Az)` and the shadow extends opposite:
+`d_scene = (−sin Az, −cos Az)`. Shadow length is `L = h / tan α`
+(`core/shadow_geometry.shadow_length_cm`, geometric elevation, flat ground).
+
+**Worked example (oracle-pinned).** Berlin 52.52N/13.405E,
+2026-06-21 12:00 UTC → α = 59.29°, Az = 203.74°. `sin Az = −0.4025`,
+`cos Az = −0.9154` → `d_scene = (+0.4025, +0.9154)` — mostly **north**,
+slightly east (early-afternoon sun just west of south → shadow falls NNE).
+A 100 cm object casts `L = 59.4 cm`; its tip sits at
+`base + 59.4·(0.4025, 0.9154)`.
+
+**In a rendered image** (`y_flip=True`, §8.19 formula
+`px_y = image_height_px − (y_cm − region_y_cm)·px_per_cm`): the northward
+tip has the *larger* scene-y → the *smaller* pixel-y → nearer the image
+top — exactly where North renders. Consistent, not a paradox.
+
+**The classic bug** is "correcting" the y-component a second time at some
+item-construction or render boundary — that double flip mirrors every
+shadow south. The binding pixel test in
+`tests/integration/test_shadow_overlay.py` renders the live scene and
+asserts the tip lands at the formula-predicted pixel; if a change mirrors
+shadows, that test fails before any human has to eyeball a canvas.
+
+**Recompute discipline** for canvas-scale overlays (shadow overlay,
+heatmap): precompute on change — `scene.changed` debounced (150 ms) +
+`stack_changed` for repaint-less metadata edits — cache the result, and
+let `paint()` only draw the cached path. Guard every timer start with
+`contextlib.suppress(RuntimeError)` (#230).
+
+**Threaded canvas-scale computation** (US-E4 heatmap; the pattern for any
+seconds-scale analysis): snapshot plain data on the GUI thread
+(`collect_shadow_casters` — never live QGraphicsItems across threads),
+run a `_WeatherFetchWorker`-shaped `QThread` whose results come back via
+signals, paint only `QImage` in the worker (`QPixmap` is GUI-thread-only;
+the QImage license is pinned by a 2-thread smoke test), recompute **on
+demand only** (a button — never `scene.changed`), and **join the worker
+before teardown** (`shutdown()` from `closeEvent`): a `QThread` destroyed
+while running aborts the interpreter (#230 class).
+
+**The 3D frame (US-E6)** adds ONE more mapping, applied exactly once at
+the engine-adapter boundary: scene `(E, N, up)` → Qt3D Y-up
+`(E, up, −N)` (`core/scene3d.to_engine_frame`; determinant +1, winding
+preserved). All mesh math stays in the scene frame in Qt-free
+`core/scene3d.py`; only `ui/view3d/qt3d_adapter.py` may import
+`PyQt6.Qt3D*` (ADR-038's engine-swap insurance). The sun vector's ground
+projection is pinned exactly opposite the 2D shadow direction — if the
+3D light and the 2D overlay ever disagree, a unit test fails first.
+
+## 8.21 Icon System (#279, ADR-039)
+
+### 8.21.1 The contract
+
+All chrome icons (main/constraint toolbars, gallery category chips, every
+menu action and submenu title, status-bar segments, dashboard tabs, panel
+and dialog markers — since #310 the whole chrome, see 8.21.5) live in
+`resources/icons/ui/` on one binding contract:
+`viewBox="0 0 24 24"`, root `fill="none" stroke="currentColor"
+stroke-width="2"` with round caps/joins; colors restricted everywhere to
+`none`, `currentColor` (the primary line) and the **accent sentinel
+`#3D8B37`** (replaced with the theme's `accent` at render time; it equals
+the light-theme accent so raw files preview correctly in editors). No
+`<text>` (i18n rule — icons are language-neutral), no rasters, no
+`<style>`/`<defs>`/`<g>`. Vendored glyphs come from Tabler Icons (MIT,
+pinned release — `PROVENANCE.md` + `LICENSE-tabler-icons.txt`); the rest
+are bespoke. The binding house-style contract and the add-an-icon
+checklist live in `resources/icons/ui/README.md`.
+
+### 8.21.2 The provider (`ui/icons.py`) — the ONLY render path
+
+QSvgRenderer resolves `currentColor` to **black**, never the palette —
+the reason the legacy set carried baked hex overrides (§11.4). The
+provider substitutes the active theme's colors into the SVG text BEFORE
+rasterizing (`get_icon(name, size=24, color=None)` / `get_pixmap`),
+renders at devicePixelRatio (crisp at 125/150 % Windows scaling; the dpr
+is part of the cache key, so mixed-DPI monitors stay sharp), adds a
+fully-grayed Disabled variant (both tokens → `text_disabled`), caches per
+`(name, size, dpr, tint, accent)`, and returns `None` for unknown names so
+every caller's text fallback keeps working — for `QAction`s and buttons that
+still carry text; the pixmap-only labels of #310 (status bar, collapsible
+chevron, crop-rotation status, constraint type) show an empty label instead,
+which is why the code→file gate exists. Category chips pass their
+muted identity tint (`theme.CATEGORY_ICON_TINTS`) as `color`.
+
+### 8.21.3 Refresh protocol (theme switch without restart)
+
+A theme listener registered at import clears the provider cache on every
+`apply_theme()`; the propagation walk (§8.4.3) then calls
+`refresh_theme_icons()` on the three toolbars — buttons re-request icons,
+`gallery_data.refresh_icon_thumbnails` re-renders icon-derived gallery
+thumbnails (species/texture art is theme-neutral and untouched), each
+`CategoryDropdown.refresh_thumbnails()` re-pulls its labels — and on the
+main window (tracked `_icon_actions` menu replay; since #310 also
+`_icon_labels` for status-bar pixmap labels, `_tab_icons` for the dashboard
+tabs and the frost badge's last state) and on every panel/widget that
+exposes its own `refresh_theme_icons` (layers panel rows, weather card,
+calendar dashboard + propagation detail, plant-search filters and rows,
+collapsible panels, sun-sim toolbar, constraint rows, journal/companion
+rows, season manager, succession notes, the 3D window). **Rule (#310 review):
+a widget that bakes a provider pixmap or icon at construction MUST expose
+`refresh_theme_icons` — the text glyph it replaced followed the palette for
+free, a baked pixmap does not.** Widgets constructed after the switch simply
+call `get_icon()` fresh. The properties panel
+opts in with a DEFERRED full-rebuild hook (singleShot(0) — never rebuild
+form widgets inside the walk that invoked the hook; the #200 focus guard
+still protects a focused field).
+
+### 8.21.4 Gates & how to add an icon
+
+`scripts/normalize_icons.py` (deterministic canonicalizer — idempotence
+is itself a check; `--check` for CI drift) and
+`scripts/check_icon_conformance.py` (contract + PROVENANCE cross-check in
+both directions), pinned into pytest by `tests/unit/test_icon_conformance.py`;
+end-to-end rendering on both themes + app wiring + live-switch re-tint by
+`tests/integration/test_icon_system.py` (§8.10). Adding an icon: vendor
+from Tabler (note glyph + release) or author bespoke at 24×24 → run the
+normalizer → add the PROVENANCE entry → reference it by name in code →
+gates green. **No provenance entry, no merge** (asset-forge discipline).
+Since #310 a code→file gate (`tests/unit/test_icon_names_referenced_in_src.py`)
+also fails when a literal icon name in `src/` (provider calls, the app's
+`_set_action_icon` / `_make_icon_label` / `_set_tab_icon` helpers, `.get(…,
+"fallback")` literals, the panels' lookup tables, the toolbar rows and the
+built gallery) has no file — the drift that had `properties_panel.py`
+requesting a non-existent `lawn.svg` for months.
+
+### 8.21.5 Comprehensive coverage (#310, Package 3c)
+
+Everything the user sees as an icon goes through the provider — there is no
+second class of "text glyphs that look like icons". Concretely: every menu
+action and submenu title in all six menus (per-format Export glyphs, the
+Align/Distribute and Auto-Save submenus, Plants/Garden/Help residue), the
+status bar (a 14 px pixmap `QLabel` in front of every segment, tooltip'd,
+tracked in `_icon_labels`; the sun-hint icon follows the hint's visibility
+via an event filter), the dashboard tabs (`setTabIcon`, tracked in
+`_tab_icons`), the frost badge (icon tinted with `on_status`, state kept so
+the theme walk re-applies it), the View menu's grouped submenus (Snapping /
+Overlays / Sun & 3D — the flat list of 22 toggles was hard to scan; the
+toggle attribute names are unchanged so callers/tests keep working), the
+layers panel (eye/eye_off/lock/lock_open tinted accent / text_secondary /
+warning), the constraints panel (a type-icon column reusing the constraint
+toolbar's glyphs; row text is now "A – B   detail"), seed viability, task /
+calendar urgency (painted themed dot — a `QPixmap` drawn with `QPainter`, not
+a font glyph), go-to arrows, plant-search type filters (`QCheckBox.setIcon`),
+weather (condition map returns provider icon NAMES; the widget renders them
+and re-renders its last forecast on theme switch), journal photo marker,
+companion star, collapsible chevron/info, season manager status, the
+sun-sim and soil-overlay toolbars, and the theme's spin-box arrows (path
+SVGs — a `<text>` glyph depends on the system font). What deliberately stays
+text: arrows inside sentences ("File → Set Location", "A → B: reason",
+"pH 5.8 → 6.5" — named exceptions in the static guard, which scans every
+string constant — f-string parts and escapes included — of every module
+under `src/`, with a named list of exception files), canvas TEXT (dimension prefixes "↔ 1.20 m", the constraint tools'
+on-canvas preview labels "≡ H (same Y)" / "⊙ On Circle" / "⦿ Coincident",
+the succession badge's bullets — drawn in the app font on the canvas, not
+chrome; the one emoji among them, "🔒 Fix in place", is gone because emoji
+glyphs are font-dependent), the update banner's external-link arrow ("What's
+new ↗", typography), and the combo separator rows ("── Paths ──"). Radio
+groups (Theme, Language, Auto-Save intervals) carry the icon on the submenu
+title only. The 3D window's Refresh/Walk toolbar, the crop-rotation status
+prefix and the constraint rows' delete "×" were the last text-only
+controls; all are iconized.
+
+## 8.22 Plant Sprite Pipeline (#281, ADR-040)
+
+### 8.22.1 One generator, 123 artifacts
+
+Every SVG under `resources/plants/{species,categories}/` is produced by
+`scripts/generate_plant_sprites.py` — a seeded, deterministic generator whose
+recipe tables (archetype + palette + signature features per species) are the
+actual source of the plant art. The committed SVGs are build artifacts:
+`--check` and `tests/unit/test_plant_sprite_conformance.py` fail on any byte
+drift, which also makes hand edits impossible to land. The binding style
+contract lives in `resources/plants/README.md` ("Lush Sprite", user-approved
+2026-07-26): shingled leaf rings, per-leaf tip→base gradients, occlusion
+under every leaf, glossy fruit / chunky bloom clusters, signature
+recognition cue per species. Ball-shaped canopies/mounds use **dome
+foreshortening** (manual-test refinement on PR #282): leaves are largest at
+the crown and radially compressed + denser toward the rim —
+`sqrt(1-(rho/R)^2)` per fixed dome latitude, leaf count from the ring
+circumference — so the canopy reads as a sphere seen from above. Flat
+growth forms (rosettes, grass tufts, narrow-leaf cushions like lavender)
+are exempt from the foreshortening: their outer leaves really are the big
+ones. Star-form archetypes were reworked in the same manual-test round:
+conifers are interleaved serrated branch-whorl layers (not a flat
+thin-leaf star), grass/fern species are fields of clumped tufts over a
+dark grounding mass (not a single center starburst), and alliums/corn are
+dense double-layer fountains. The on-canvas hedge (HEDGE_POLYGON) fills
+with `resources/textures/hedge.png`, regenerated in the same leaf language
+via `scripts/generate_asset_forge_textures.py` (tileability-gated) — the
+`hedge_section.svg` sprite only serves the plant category + legacy
+rectangles. Independent of archetype, SMALL leaves everywhere (length < 12 units)
+drop their frilly occlusion underlay and vein lines — a byte-budget
+optimization that is visually invisible at canvas scale but does slightly
+simplify e.g. rosette outer rings (visible on the sign-off contact sheet).
+
+### 8.22.2 The two invariants
+
+**Rotation safety**: `core/plant_renderer.py` rotates each plant by a stable
+per-item random angle, so sprites are top-down with radial shading only
+(light from straight above) — never a baked light direction.
+**QtSvg subset**: QSvgRenderer ≈ SVG 1.2 Tiny — linear/radial gradients,
+opacity, transforms, stroke-linecap; no filters, masks, clipPath, CSS or
+text (enforced by an element/attribute/color **allowlist walk** over the
+parsed tree in the conformance gate). The one geometry
+exception: `hedge_section.svg` keeps its legacy rectangular viewBox
+`10 25 80 50`.
+
+### 8.22.3 Changing a sprite — the loop
+
+Edit the recipe → regenerate → **visually review with the real engine**
+(QSvgRenderer offscreen grids at 256/64 px — see the `ogp-asset-forge`
+skill's "SVG sprite forge" section; never judge by XML or a browser render)
+→ run the two gates (`test_plant_sprite_conformance.py`,
+`tests/integration/test_plant_sprite_rendering.py` — the §8.10 test renders
+every sprite to visible pixels through `render_plant_pixmap`, including
+tint, rotation and the 16 px growth-model size) → owner sign-off on a
+contact sheet for style-level changes. New species additionally need a
+`_SPECIES_FILES` alias in `core/plant_renderer.py`.
+
+## 8.23 Object Sprite Pipeline (#308, ADR-042)
+
+### 8.23.1 One generator, 24 artifacts
+
+Every SVG under `resources/objects/{furniture,infrastructure}/` is produced by
+`scripts/generate_object_sprites.py` — a seeded, deterministic generator whose
+`MATERIALS` anchor table + material primitives + one builder per object are
+the actual source of the furniture/infrastructure art. The committed SVGs are
+build artifacts: `--check` and `tests/unit/test_object_sprite_conformance.py`
+fail on any byte drift, which also makes hand edits impossible to land. The
+binding style contract lives in `resources/objects/README.md` ("Lush Object"):
+rim-dark → crown-light shading per part (symmetric linear gradients across a
+part's short axis, radial for round parts), occlusion halos where parts
+stack, material micro-detail (plank gaps + grain + knots, brushed-metal crown
+line, weave hatch + puff shading, ripples + caustic sparkles, granular clumps),
+gloss on glossy materials. The primitives are reusable building blocks —
+`plank`/`wood_surface`, `disc`/`ring`, `fabric`, `metal_bar`, `glass_pane`,
+`water_fill`, `granular_fill`, `glow`/`flame`, `frame_box` — so a new object
+is typically 20–40 lines composing them; rings are two-subpath paths (nonzero
+winding) and circle-clipped planks are computed analytically because QtSvg
+has no clipPath.
+
+### 8.23.2 The three invariants
+
+**No baked shadow / light from above**: furniture rotation is USER-controlled
+(unlike the plants' stable random rotation), so a baked directional shadow
+would rotate with the object and double the item-level painted shadow
+(`GardenItem.SHADOW_OFFSET`, View › Shadows). The gate pins the legacy
+`#00000020` shadow's absence. **QtSvg subset**: same allowlist discipline as
+§8.22.2 (elements/attributes/colors walked over the parsed tree; `fill-opacity`,
+`stroke-linejoin` are additionally allowed here). **viewBox = nominal footprint**:
+each sprite's `viewBox` is `0 0 W H` with `(W, H)` = `FURNITURE_DEFAULT_DIMENSIONS`
+in cm — a gate-read metadata table (no production code sizes objects from it;
+users size by dragging), pinned by the gate — the canvas stretches the art to
+the user's rect; circle-tool objects (`table_round`, `parasol`, `fire_pit`, `planter_pot`,
+`bbq_grill`, `rain_barrel`, `water_tap`, `trampoline`, `bird_bath`) therefore
+ship **square** art (a circle item renders into a square footprint — the BBQ's
+old 80×60 art was stretched on every canvas until #308).
+
+### 8.23.3 Changing or adding an object — the loop
+
+Edit/add the builder + `OBJECTS` row → regenerate → **visually review with the
+real engine** (QSvgRenderer offscreen: canvas scale on lawn + soil, rotated
+copy, 64/24 px thumbnails — see the `ogp-asset-forge` skill's "SVG sprite
+forge" section; never judge by XML or a browser render) → run the two gates
+(`test_object_sprite_conformance.py`; `tests/integration/test_object_sprite_rendering.py`
+— the §8.10 test renders every sprite through `render_furniture_pixmap` within
+the visual-weight band, at 24 px, checks letterboxed thumbnails, and drives
+every new tool end-to-end) → owner sign-off on a contact sheet for style-level
+changes. **Adding an object type** touches exactly these surfaces (verified
+2026-08-17, ADR-042): `core/object_types.py` (enum member appended, `OBJECT_STYLES`
+entry — its `fill_color` is the 3D extrusion colour —, `get_valid_types_for_shape`
+branch), `core/tools/base_tool.py` (`ToolType`, same name), `ui/canvas/canvas_view.py`
+`_setup_tools` (rect/circle furniture or infrastructure list), `core/furniture_renderer.py`
+(`_FURNITURE_FILES` for furniture-dir types; infrastructure-dir types need
+`_INFRASTRUCTURE_FILES` **and** `_SVG_DIR_OVERRIDES` **and** `_OBJECT_SVG_FILES` —
+the gate checks all three; plus `FURNITURE_DEFAULT_DIMENSIONS`), `core/object_height.py`
+(`DEFAULT_HEIGHTS_CM` — gives shadows/3D/height field; open structures like
+swing/pergola/hammock instead go into `_HEIGHT_FIELD_TYPES`: field offered, no
+default, no shadow until the user sets one), `ui/widgets/gallery_data.py`
+(gallery tuple), and `scripts/fill_translations.py` in the `CanvasView`,
+`GalleryData` and `ObjectType` contexts. Roster tests are map-driven; the
+additive-enum forward-compat contract (unknown names → generic shape, no
+FILE_VERSION bump) is pinned by `tests/unit/test_project_unknown_object_type.py`.
+
+## 8.24 Texture Forge Pipeline (#309, ADR-042)
+
+### 8.24.1 One generator, 24 artifacts
+
+Every PNG under `resources/textures/` is produced by
+`scripts/generate_asset_forge_textures.py`: one `generate_<name>(rng)` recipe
+per texture over a shared **numpy torus painter** (`Tile`). The painter works
+in float64 on a 2×-supersampled canvas whose windows are indexed modulo the
+tile size — every primitive (`ellipse`/`blob`/`halo`, `capsule`, `rect`
+including full-height planks, `leaf`, `vgrain`) computes analytic
+anti-aliased coverage and paints with radial rim → crown shading, so anything
+crossing an edge simply continues on the opposite side; noise fields
+(`lattice_noise`, `fbm`, `fine_grain`) are periodic lattices, `voronoi` uses
+the torus metric (with an optional periodic domain warp for organic slab
+edges), and `wrap_blur` is an in-repo separable Gaussian built on `np.roll`.
+Structured layouts (brick courses, planks, laths, panes, roof courses) divide
+256 exactly, so a joint or bar either **straddles the wrap symmetrically**
+(brick/stone/slate courses, the glazing bars — the painter samples at
+pixel centres everywhere (windows, analytic fields, noise, Voronoi), so the
+wrap sits exactly on the joint's mirror line and the two sides are
+identical: glass 0.00/0.00, brick 0.04/0.08)
+or lies **clear of it** (wood/decking plank joints at half-pitch offsets);
+what must never happen is a joint landing *near* the wrap asymmetrically.
+The roof's bottom course repaints its wrapped overhang — with the same RNG
+state the row was drawn with, pinned by reading the rng stream
+(`TestRoofTileOverhangReplay`) because no seam metric can see a tone
+mismatch on a texture full of hard edges — so the overlap layering AND the
+per-tile tone are seam-correct. Know what the gates catch: the seam metric
+catches broken tiling, the band catches flatness, the pixel gate catches
+drift; layering, replay and light-direction defects are found by reading
+code and by the owner's eye (both #309 review rounds found one each). All randomness
+flows through `random.Random(seed_for(name))` (`"ogp-<name>-lush"`), which is
+stream-stable across CPython versions; no numpy RNG, no rasterizer, no
+Pillow filter is involved — Pillow only encodes/decodes PNG. The binding
+style contract ("Lush": visible detail, radial shading, concentric occlusion,
+tint-readable contrast, no directional light) is the `ogp-asset-forge`
+skill's §1; provenance is `resources/textures/PROVENANCE.md`.
+
+### 8.24.2 The three invariants
+
+**Pixel determinism, not byte determinism**: `--check` regenerates in memory
+and compares the DECODED pixels of each committed PNG (pinned per file by
+`tests/unit/test_texture_forge_conformance.py`). PNG is lossless, but the
+deflate stream depends on the zlib build Pillow bundles — a Windows wheel and
+a Linux CI wheel can encode identical pixels to different bytes — so file
+bytes are deliberately not the contract, and regeneration rewrites a file
+only when its pixels change (no cross-platform git churn). **Seamless on the
+canvas**: `scripts/check_texture_tileability.py` (seam vs the 98th percentile
+of the texture's own internal steps, threshold 1.6 unchanged since #264) must
+pass for every file (`tests/unit/test_texture_tileability.py` parametrises
+all of them — the #264 grandfather list `KNOWN_SEAMED_LEGACY` was emptied
+and then deleted, a constant that must stay empty being ceremony), and the
+§8.10 test paints the item's real tinted brush two tiles wide and checks the
+wrap column AND wrap row against the same metric. **Tint-readable**: the runtime tint overlays the user colour
+at 80/255 alpha; the conformance gate pins mean luminance 40–225, luminance
+std ≥ 4 and local detail ≥ 2 per texture, and the integration test proves a
+red vs a blue fill colour move the rendered hue without flattening the
+detail (materials that would collapse under tint fail before an owner sees
+them). A fourth rule is not gated but binding: **no directional light** — the
+view flips Y and fills never rotate, so every shading cue is radial or
+concentric.
+
+### 8.24.3 Changing or adding a texture — the loop
+
+Edit/add the recipe + `TEXTURES` row → run the generator (only changed files
+are rewritten) → **look**: a 2×2-tiled half-scale sheet (seams, repetition)
+plus 1:1 crops (detail), and the tint check with the object's real default
+fill colour → run the three gates (`--check`, tileability, the §8.10 test) →
+owner sign-off on a contact sheet for style-level changes → PROVENANCE
+register row. Adding a texture additionally touches `core/fill_patterns.py`
+(`FillPattern` member + `_TEXTURE_FILES`), the properties panel's
+`_pattern_names` (translated), and `scripts/fill_translations.py`; the
+conformance gate cross-checks registry ↔ loader table ↔ files on disk. A
+seam that the gate reports is located by measurement, not theory: the
+per-column `|row0 − row255|` (or the transpose) names the columns, and
+painting the suspect primitive alone on a fresh `Tile` confirms it
+(2026-08-18: a capsule whose default `taper` pointed every joint line —
+§11.4, debugging-playbook row 36).
+
+## 8.25 Stacking order within a layer (#338, ADR-043)
+
+### 8.25.1 Model
+
+Every document item that carries a `layer_id` also carries a sparse integer
+**rank**, `stack_order: int | None` (`GardenItemMixin.stack_order`; mirrored
+independently on `ArcItem`/`BezierItem`, which are not the mixin). A rank is
+a **sort key**, not a display value — nothing renders it, and its absolute
+magnitude is meaningless, only its ordering among the other items in the same
+layer. Ranks are spaced `STACK_STEP = 1024` apart (`core/stacking.py`) so
+inserting between two existing ranks never forces an immediate renumber in
+practice.
+
+**Ranks are written in exactly four places** — everywhere else only reads
+`stack_order`:
+
+1. `CanvasScene.addItem` — an item whose `stack_order is None` gets
+   `max_rank_in_layer + STACK_STEP` (`_next_stack_order`).
+2. `MoveToLayerCommand.execute` — only items whose layer actually changes get
+   a fresh top rank in the target layer; an item already in the target layer
+   is left completely alone (re-selecting an item's current layer, e.g. via
+   the Properties panel combo, is a true no-op, not a silent bump to the
+   top).
+3. `ArrangeItemsCommand.execute` — renumbers every top-level item in each
+   affected layer to `STACK_STEP` multiples in the new order; `undo` restores
+   every snapshotted rank exactly (see 8.25.4).
+4. `CanvasScene.suspend_z_refresh(renumber=True)` — the one-time post-load renumber
+   (`ProjectManager.load` wraps its item-creation loop in that context manager).
+   This is what gives a file saved without `stack_order` keys — an older app
+   version — honest, evenly-spaced ranks the first time the current app opens it.
+
+A `layer_id` of `None` (no active layer at drop time, or a bare item without
+one) is ranked in its own pseudo-layer at base z 0 — the band such items
+always occupied — so the derive-only clamp (8.25.3) still applies to them.
+
+### 8.25.2 Derived z — the formula
+
+z-values are **never** stored as intent; they are recomputed from the current
+ranks on demand. `CanvasScene._layer_top_level_items(layer_id)` collects one
+layer's top-level items (`parentItem() is None`, matching `layer_id`), sorted
+by `(stack_order is None, stack_order, current scene index)` so an unranked
+item sorts to the top of its band. `_stack_entries` turns that list into
+`core.stacking.StackEntry` objects (id, plant-parent/owner-polygon id, scene
+bounding rect). `_normalized_layer_order(layer_id)` runs those entries through
+`core.stacking.normalize_order` (8.25.3) and maps back to live items.
+`_refresh_layer_z(layer_id)` then assigns:
+
+```python
+item.setZValue(layer.z_order * 100 + 100 * (i + 1) / (n + 1))
+```
+
+over that normalized bottom→top order (`i` = 0-based position, `n` = layer
+item count), for `layer_id = None` the base is `0` instead of
+`layer.z_order * 100`. The fraction `100 * (i + 1) / (n + 1)` is strictly
+inside the open interval `(base, base + 100)` for any `n ≥ 1` — it can never
+touch `base` or `base + 100`, so a layer's items can never collide with a
+neighbouring layer's band or with any fixed overlay band (8.25.6), however
+many items it holds. **One accepted exception:** the `layer_id = None`
+pseudo-layer shares base `0` with a real layer whose `z_order == 0` (the
+default single layer every new plan starts with) — an item with no layer and
+an item on that first layer can land at the same derived z. This only
+matters for items reachable via a pre-#338 `.ogp` that never set `layer_id`;
+current code always assigns one on `addItem`. Not fixed, since separating
+the bands would need a second special-cased offset for one legacy edge case. `_update_items_z_order()` is unchanged in name and
+callers — it just now loops every layer (plus the `None` pseudo-layer) and
+calls `_refresh_layer_z` on each, instead of a single flat pass.
+
+### 8.25.3 The derive-only clamp
+
+`core.stacking.normalize_order` enforces two structural relationships,
+**purely for z derivation** — it reorders a layer's list, it never writes a
+rank:
+
+- A plant (`_parent_bed_id`) always renders immediately above its parent bed,
+  **only when that bed is itself present in the same layer's list** — a bed
+  in a different layer is ignored, and the plant sorts as an ordinary
+  top-level entry by its own rank.
+- A `ROOF_RIDGE` always renders immediately above its owner polygon, under
+  the identical same-layer-only condition.
+
+Because this is a reorder-for-display step and not a rank mutation, "Send to
+Back" on a lone plant does not reach the true bottom of its layer — it stops
+just above its bed, and if it is already there the arrange algorithm reports
+"already at back" rather than a phantom change (`core/stacking.py::_finish`
+compares the candidate *after* normalization against the *already-normalized*
+input, so the clamp collapsing a move to a no-op is visible as exactly that).
+Group/Ungroup keep a member's `stack_order` unchanged across the transition —
+grouping and ungrouping is a reparent, not an arrange. This is the one
+documented exception to the exact round-trip claimed in 8.25.1/FR-STACK-06:
+because an ungrouped member keeps its stale pre-group rank instead of being
+re-ranked into the current sequence, it can end up tied with an unrelated
+item created while the group existed, and that tie is broken by current
+scene order rather than by the original session's order.
+
+### 8.25.4 Refresh rules
+
+**A single `CanvasScene.addItem` triggers exactly one `_refresh_layer_z` call**
+for the item's layer, right after assigning a rank if it didn't have one —
+unless `scene._suspend_z_refresh` is set. Two ways to set it:
+
+- `scene.suspend_z_refresh(renumber=True)` — used by
+  `ProjectManager.load` around its whole item-creation loop.
+  `renumber=True` additionally does the one-time post-load renumber
+  (8.25.1 point 4) before its one full refresh.
+- `with scene.suspend_z_refresh(): ...` (a context manager; nests safely) —
+  used by every command that re-adds several items on `execute`/`undo`
+  (`CreateItemsCommand`, `DeleteItemsCommand.undo`, `MirrorItemsCommand`,
+  `LinearArrayCommand`, `GridArrayCommand`, `CircularArrayCommand`,
+  `ArrayAlongPathCommand`) via the shared `core.commands._bulk_add_scope`
+  helper. `suspend_z_refresh(renumber=True)` is reserved for the file-load
+  path only — every bulk re-add path must pass `renumber=False` (the
+  default), because renumbering would silently overwrite the exact ranks a
+  command's undo/redo snapshot depends on being restored unchanged.
+
+Without this, a bulk add would trigger one O(layer-size) refresh **per item**
+— O(n²) for a paste of n items into a large layer. Measured: a 50-item paste
+into a 2000-object plan went from 316 ms to 91 ms.
+
+**The refresh itself never writes a rank — ever.** This was a real draft
+design, caught in review before it shipped (see the rejected alternative in
+ADR-043): a refresh that also renumbered ranks as a side effect would silently
+invalidate any command's undo snapshot taken before a refresh happened to run
+in between — since the refresh runs on many paths unrelated to an explicit
+arrange (layer visibility toggle, opacity preview, any command's unrelated
+cleanup). Only the four writers in 8.25.1 ever touch `stack_order`.
+
+Beyond `addItem`'s automatic refresh, an **explicit** refresh is needed
+wherever an item becomes top-level or gets re-linked to a parent without
+going through `addItem`: `GroupCommand.undo`/`UngroupCommand.execute` (members
+leave the group), `_auto_parent_plant` and `SetParentBedCommand` (attach/
+detach a plant), and `DeleteItemsCommand.undo` — unconditionally, whenever it
+restored anything, not only when a bed's child list was touched: an undone
+PLANT delete restores `parent_bed_id` alone with no bed-side relink, and a
+flag gated on the child-relink branch missed that case and left the plant's
+z stale below its bed (issue #338 review round 3, P0).
+These call `core.commands._refresh_z_after_relink` (single item) or
+`scene._update_items_z_order()` (whole scene) — never an explicit z bump. The
+old `ensure_z_above_parent(child, parent)` helper — which raised a child's
+`zValue()` by one above its parent's whenever they tied — is **deleted**: its
+job is now done for free by the derive-only clamp every time the scene
+refreshes.
+
+### 8.25.5 The one apply seam
+
+`ui/canvas/arrange.py::build_arrange_command(scene, items, mode) -> tuple[ArrangeItemsCommand | None, ArrangeOutcome]`
+is the **only** place that groups a selection by layer, reads each layer's
+current order via `scene._stack_entries`/`_normalized_layer_order`, asks the
+Qt-free `core.stacking.arrange` what changes, and builds the undoable
+`ArrangeItemsCommand`. Every surface that can arrange an object calls this one
+function — the same discipline `ui/canvas/geometry_apply.py` established for
+resize/rotate (§8.19) and for the identical reason: a `Callable`/copy-per-call-site
+pattern is how the three rotated-geometry bugs in §11.4/ADR-036's D2.2 story
+happened. The four callers:
+
+1. `CanvasView.arrange_selected(mode)` — the Edit ▸ Arrange menu actions and
+   the two keyboard-shortcut sets both call this.
+2. `GardenItemMixin._build_arrange_menu`/`_dispatch_arrange` — the `Arrange ▸`
+   context-menu submenu, shared by every item class that already has the
+   `_build_move_to_layer_menu` seam (rectangle, polygon, polyline, circle,
+   ellipse, text, callout, group, smart symbol). Delegates to
+   `CanvasView.arrange_selected` when a view is available (so status messages
+   have exactly one source), falls back to a direct build+execute for
+   view-less unit-test construction.
+3. `PropertiesPanel._add_arrange_section` — the "Arrange" row (four icon
+   buttons), shown for a single selected item and for a multi-selection.
+4. `GardenPlannerApp._do_agent_arrange_object` — the Agent API's
+   `arrange_object` tool (§8.19).
+
+No caller ever builds `ArrangeItemsCommand` directly, or duplicates
+`build_arrange_command`'s layer-grouping logic. If you find yourself reaching
+for a second implementation, use this seam instead.
+
+### 8.25.6 Reserved z bands
+
+Every fixed-z overlay in the app, low to high, alongside the per-layer band
+§8.25.2 derives into:
+
+| Band | z value(s) | What lives there |
+|------|-----------|-------------------|
+| Background image | `-1000` | `BackgroundImageItem` (satellite/reference photo) |
+| Sun & shade shadow overlay | `-500` | `sun_shadow_controller.py`'s shadow-union overlay (US-E3) |
+| Hours-of-sun heatmap | `-450` (fill), `-449` (contour lines), `-448` (contour labels) | `sun_heatmap.py` overlay (US-E4) |
+| Construction geometry | `-10` | `ConstructionItem` — always below every regular item |
+| **Per-layer document items** | `layer.z_order * 100 + (0, 100)` (open interval) | Every ordinary document item, per-object stacking order within its layer (8.25.2) — this is the band #338 subdivides |
+| Dimension/constraint lines | `900` (line/witness), `901` (label/handle, `DIMENSION_LINE_Z + 1`) | `dimension_lines.py` |
+| Tool overlay highlights | `999` (corner-edit/trim highlight), `1000` (measure-tool line, on-top ellipse), `1003` (constraint-tool selected marker) | `core/tools/*` in-progress-gesture previews |
+| **Shape-tool preview band** | `999` (fill), `1000` (line/path), `1001` (label), `1002` (vertex/handle) — `core/tools/preview_z.py` | The in-progress preview of every shape tool (`circle`, `rectangle`, `ellipse`, `polygon`, `polyline`, `arc`, `bezier`, `mirror`, `callout`, `select`, `construction`). Issue #377: these previously had **no** z-value and drew behind any bed they overlapped. Every value MUST stay below the minimap cutoff below. |
+| Transient previews | `9999` | Offset-tool preview path, paste/duplicate drag preview |
+| Soil health badge | `10002` | `SoilBadgeItem` (always on top of its bed) |
+| Minimap overlay-hide cutoff | `10000` (`minimap_widget._OVERLAY_Z_MIN`) | Threshold above which the minimap thumbnail hides an item as a screen-space overlay (§8.9.5) — a named constant, not a bare `100` (see the corrected note in §8.9.5) |
+
+**`JournalPinItem` is NOT a fixed-z overlay, despite its constructor calling
+`self.setZValue(9_500)`.** It is a `GardenItemMixin` with a `layer_id` and a
+`stack_order`, so `supports_stacking(pin)` is True and `_refresh_layer_z`
+overwrites that 9500 the moment the pin (or any sibling in its layer) is
+added — a pin can end up rendering *behind* an ordinary item in the same
+layer. Verified: a lone pin lands at `z=50.0`; adding one more layered item
+drops it to `33.3` while the new item sits at `66.7`. This is **pre-existing**
+(unbumped by #338 — `CanvasScene.addItem` already clobbered the 9500 to
+`layer.z_order * 100` before this PR), not a new regression, but it means the
+9500 constant is dead for any pin that has a layer. Journal pins are
+deliberately excluded from Arrange (`ui/canvas/arrange.py`) and from the
+agent's `arrange_object` tool, but nothing today re-asserts their z above the
+document band once one is set. Fixing this — either exempting pins from
+`supports_stacking` or giving them a real fixed post-refresh bump — is
+tracked as follow-up work, not part of #338.
+
+A per-layer band can, in principle, grow past `z_order * 100 + 100` only if
+`z_order` itself is large enough to reach the next fixed band above — not a
+concern at the layer counts this app supports, and unchanged by #338 (the
+formula was already `layer.z_order * 100` before per-object stacking; #338
+only subdivides the same band, it does not widen it).

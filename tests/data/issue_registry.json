@@ -1,0 +1,697 @@
+{
+  "114": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(#110,#111): Hedge tiled texture polygon + roof ridge with mirrored tiles"
+  },
+  "12": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-4.8): Organized sidebar with collapsible tool panels"
+  },
+  "16": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "refine(US-4): Improve Plant Details panel layout and date picker"
+  },
+  "161": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Need for Admin rights for in-app update"
+  },
+  "169": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix: stable polyline vertex edit + discoverable add/delete (#167, #168)"
+  },
+  "170": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Auto-populate plant species data on canvas drop + ship a local pre-filled species DB"
+  },
+  "171": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Soil test history: edit and delete past records"
+  },
+  "173": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Bug: US-12.10d soil-mismatch warning has stale state on plant move/reparent"
+  },
+  "175": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#173): refresh soil warnings on reparent + elevate plant z above bed"
+  },
+  "188": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Package C — Garden Smart Features: harvest log, task reminders, vertical/container gardening, smart symbols"
+  },
+  "191": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "Phase 13 Package B: close the CAD precision gap (Bezier + Arc + Fillet/Chamfer + 3 snap modes + Paper Space)"
+  },
+  "193": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-B9: vertex / handle editing for Bezier, Arc, and filleted polylines"
+  },
+  "198": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(constraints): make snap-emitted constraints real (#197, #196, #192, #190)"
+  },
+  "199": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Data Loss During Update to Version 1.13.0"
+  },
+  "200": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Plant Name Input Field Loses Focus After Each Keystroke"
+  },
+  "201": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "New Layers Should Default to Top of Layer Order"
+  },
+  "202": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-B9,B11): curve edit handles + exact arc rendering + start->end->bulge arc order (#193, #195)"
+  },
+  "204": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#199): keep user .ogp data out of the install dir + preserve it on uninstall"
+  },
+  "205": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix: Properties panel Name field loses focus after each keystroke (#200)"
+  },
+  "206": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Properties panel rebuilds entire form on every undo/redo signal (incremental update needed)"
+  },
+  "207": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(#201): new layers default to the top of the layer order"
+  },
+  "208": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(layers): make all layer operations undoable via command pattern"
+  },
+  "209": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Undo/Redo does not mark the project dirty (CommandManager emits no signal on undo/redo)"
+  },
+  "210": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Properties panel: free-text fields commit an undo command + refresh the calendar on every keystroke"
+  },
+  "211": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#209): mark project dirty on undo/redo (+ unify undo-stack writes, translate command descriptions)"
+  },
+  "212": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Enable Consistent Plant Selection and Editing from \"Find Plants\" Tab"
+  },
+  "213": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Automatically Update Generic Plant Properties When Assigning a Database Plant"
+  },
+  "214": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#210): commit free-text property edits as one undo step + localize command descriptions"
+  },
+  "215": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#212): reliable plant selection from the Find Plants tab"
+  },
+  "217": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(#213): apply database species values to existing plants"
+  },
+  "218": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Model plant sizing explicitly (footprint / spacing override / max_spread precedence) + unify rotation-aware resize"
+  },
+  "219": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Rotation pivot uses boundingRect center, not rect center — drifts badged plants on save/reload"
+  },
+  "220": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#219): rotate about rect center, not boundingRect center"
+  },
+  "221": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "refactor(#218): plant-sizing resolver + unified rotation-aware resize"
+  },
+  "222": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#206): Properties panel incremental updates — no rebuild-on-every-signal"
+  },
+  "223": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#206): drive panel refreshes from a single stack_changed wiring (plant-DB undo/redo)"
+  },
+  "225": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Companion / crop-rotation / calendar panels go stale on undo/redo (not wired to stack_changed)"
+  },
+  "226": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Modern sidebar: hover-peek + click-to-pin accordion (declutter the right panel)"
+  },
+  "227": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-C2): Task management & reminders (#188)"
+  },
+  "228": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Converge planting-calendar dashboard onto the US-C2 task generators"
+  },
+  "229": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Finalize/CI wait fails to detect release completion (UTC vs local date; brittle polling)"
+  },
+  "230": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#225,#228): converge calendar dashboard onto unified task engine + fix panel undo/redo staleness"
+  },
+  "231": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Plant Details: missing enum traits render as the first dropdown option (e.g. trees show \"Annual\"/Einjährig)"
+  },
+  "232": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#231): show \"—\" for missing plant dimensions instead of \"0 cm\""
+  },
+  "235": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-C1): harvest tracking / yield log (#188)"
+  },
+  "236": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(Package C #188): containers, trellis & smart symbols (US-C3 + US-C4)"
+  },
+  "237": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Package D - Agent Integration: embedded MCP server, editing and domain intelligence"
+  },
+  "240": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D1.6 — AI client onboarding: in-app 'Connect your AI assistant' helper"
+  },
+  "242": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-D1.3): Agent API vision tool (render_canvas_image)"
+  },
+  "251": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "US-D1.6: AI client onboarding for the Agent API"
+  },
+  "255": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Phase 14 epic: 3D Visualization & Sun/Shade (v2.0)"
+  },
+  "256": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-E1: Solar position engine — Qt-free core/solar.py (Phase 14)"
+  },
+  "264": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-E9 (optional): AI asset-generation dev tooling for textures/object art (Phase 14, off critical path)"
+  },
+  "277": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "[P0] Released v1.24.9 exe crashes on opening the 3D view — CI ships Qt6Core 6.11.1 against Qt3D 6.11.0 (unpinned PyQt6-Qt6)"
+  },
+  "279": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Toolbar & gallery iconography redesign — one cohesive, theme-aware icon system"
+  },
+  "281": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Visual Refresh Package 2: plant illustration redesign — unified style for 108 species + 15 category SVGs"
+  },
+  "283": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "chore: three QToolBars have no objectName — QMainWindow.saveState() warns on every exit and cannot persist them"
+  },
+  "284": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Visual Refresh Package 3: furniture & infrastructure art, texture harmonization, remaining iconography"
+  },
+  "285": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "chore: route UiStateStore through app/settings.py so there is one QSettings chokepoint"
+  },
+  "291": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Agent API server never starts in the frozen (windowed) exe — uvicorn log config touches sys.stdout, which is None"
+  },
+  "293": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "CI: \"Auto-add issues to project\" has failed on all 62 runs since 2026-04-18 — `unknown owner type`; project board frozen at #161"
+  },
+  "296": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Plant API field-mapping audit: Trefle/Perenual/Permapeople data is silently dropped or mis-mapped"
+  },
+  "297": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Trefle-derived fields (sun/water/pH/nutrient/foliage) never reach users -- search() lacks growth/specifications data"
+  },
+  "299": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Plant icon should visually reflect growth stage, decoupled from the mature spacing footprint"
+  },
+  "305": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Probable memory leak"
+  },
+  "308": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Visual Refresh Package 3a: generated Lush furniture & infrastructure sprites (+ roster growth)"
+  },
+  "309": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Visual Refresh Package 3b: regenerate all textures through the Pillow forge (Lush, deterministic, seamless)"
+  },
+  "310": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Visual Refresh Package 3c: comprehensive iconography overhaul + View-menu restructure"
+  },
+  "311": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-G1: In-app data attribution & licence notice — Permapeople (CC BY-SA 4.0), Trefle, Perenual, bundled data (Package G — Plant data quality; compliance, do first)"
+  },
+  "312": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "US-F1: Permaculture layer + plant function tags on species — foundation of Package F (Permaculture & Polyculture), do first"
+  },
+  "316": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "US-F5: Bundled example-plan gallery + template export/import (Package F, last — after US-F1 #312 / US-F2 #313, ideally US-F4 #315 and US-G1 #311)"
+  },
+  "317": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-G2: Plant profile header — image, description, external links (Wikipedia / PFAF / POWO) in Plant Details (Package G, independent)"
+  },
+  "318": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-G3: Fetch companion/antagonist data from Permapeople /plants/{id}/companions with local cache + source tags (Package G, after US-G1 #311)"
+  },
+  "319": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D3.1: suggest_companions / find_compatible_set / check_placement — first domain-intelligence tools + Companion-panel action (Package D3, epic #237; after US-G3 #318 for coverage)"
+  },
+  "320": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "US-G4: Plant favourites & named collections — Plant Lists panel with drag-to-canvas, JSON import/export (FR-8; Package G, independent)"
+  },
+  "321": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "Touch input: pinch-to-zoom + two-finger pan on the canvas (standalone, low priority)"
+  },
+  "324": {
+    "is_pr": true,
+    "state": "CLOSED",
+    "title": "feat(#310): Visual Refresh 3c — comprehensive iconography (162-icon set), View-menu submenus, Ctrl+4/5"
+  },
+  "325": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(#310): Visual Refresh 3c — comprehensive iconography (162-icon set), View-menu submenus, Ctrl+4/5"
+  },
+  "326": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D2.2: resize_object / rotate_object — complete core object manipulation + extract a canonical geometry-apply path (Package D2, epic #237)"
+  },
+  "328": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D2.4: Layer tools — list_layers + set_object_layer/create/rename/delete/visibility, and the may-an-agent-unlock decision (Package D2, epic #237)"
+  },
+  "330": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D2.6: Low-level geometry escape hatches — set_object_position, get_geometry, vertex editing, and the constraint decision (Package D2, epic #237)"
+  },
+  "331": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D3.2: Succession tools — get_succession_plan / find_succession_gaps / suggest_succession / set_succession_plan + plan-succession prompt (Package D3, epic #237)"
+  },
+  "332": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D3.3: Calendar & task tools — get_tasks / get_task_calendar / manual-task writes + plan-my-week prompt (Package D3, epic #237)"
+  },
+  "333": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D3.4: Soil amendment tools — get_soil_status / recommend_amendments / get_soil_mismatches / record_soil_test + plan-soil-amendments prompt (Package D3, epic #237)"
+  },
+  "334": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "chore: deliver-package skill + strengthen the canonical frozen-exe gate (and gate the gate command)"
+  },
+  "337": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "RuntimeError (deleted QGraphicsEllipseItem) in _on_new_project -> clear_compare_overlay (US-10.7)"
+  },
+  "338": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Per-Object \"Bring to Front\" / \"Send to Back\" Commands"
+  },
+  "342": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Configure Google Maps API key in Preferences for packaged builds"
+  },
+  "344": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(#342): configure Google Maps API key in Preferences"
+  },
+  "346": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Redesign satellite-image import around Google Maps JavaScript API"
+  },
+  "347": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Satellite import: pan-grid view capture for higher resolution (follow-up to #346)"
+  },
+  "353": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Follow-up: live MCP QA findings for reload counts and concurrent deletes"
+  },
+  "354": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Follow-up: CI performance threshold is flaky for snap spatial index"
+  },
+  "355": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Follow-up: bound MCP callout box offsets before Qt geometry"
+  },
+  "356": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Exe is diagnosed as a Trojan"
+  },
+  "360": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#353,#355): harden MCP history, deletion, and callout input"
+  },
+  "361": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-D2.6): agent geometry escape hatches (#330)"
+  },
+  "362": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "US-D2.7: get_history - expose the undo/redo stack to the agent (Package D2, epic #237)"
+  },
+  "363": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Two contact links in ISSUE_TEMPLATE config point at non-existent templates (bug_report.md, feature_request.md)"
+  },
+  "364": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "HOUSE roof ridge drifts off its polygon on vertex edits and never recovers on undo/redo (membrane projection, not recompute)"
+  },
+  "365": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Agent API gaps from the #361 manual pass: new_plan, open_plan, and agent-writable layer lock (policy reversal)"
+  },
+  "366": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Generalize AI-client onboarding: a target registry plus a vendor-agnostic fallback, instead of one branch per client"
+  },
+  "367": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(#366,#365): registry-driven client onboarding + agent document lifecycle tools"
+  },
+  "368": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-G1,G2,G3): plant data attribution, profile header, and Permapeople companions"
+  },
+  "369": {
+    "is_pr": true,
+    "state": "CLOSED",
+    "title": "feat(US-D3.1,D2.7): agent domain intelligence tools + get_history"
+  },
+  "370": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-D3.1,D2.7): agent domain-intelligence tools + get_history"
+  },
+  "371": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#364,#363): recompute the HOUSE roof ridge instead of re-projecting it"
+  },
+  "372": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "HOUSE roof tiles lap toward the ridge: the mirrored half is chosen by the ridge's direction, not by which side is downhill"
+  },
+  "373": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "App shutdown waits ~10 seconds for the Agent API server thread"
+  },
+  "374": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-D3.2): succession agent tools — first agent write into ProjectData (#331)"
+  },
+  "377": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Plant/shape drag preview is drawn behind beds and objects — invisible until you release"
+  },
+  "378": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Crop rotation panel ignores an existing succession plan"
+  },
+  "380": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Agent writes are not canvas-clamped: an object can be created or moved entirely off-plan and becomes invisible"
+  },
+  "382": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "feat(US-D3.3,US-D3.4): task and soil tools complete Package D"
+  },
+  "385": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "L1 \"New engine, new light\": Qt Quick 3D becomes the 3D view, Qt 3D removed (Phase 17)"
+  },
+  "392": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "Repository audit 2026-10 — hardening ledger (epic)"
+  },
+  "393": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "fill_translations.py: 5 duplicate context keys drop 62 translations; German PDF 'Garden Notes' page prints 5 strings in English (Audit 2026-10, epic #392)"
+  },
+  "394": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Text annotations are not saved to the .ogp file (TextItem missing from ProjectManager serializer) (Audit 2026-10, epic #392)"
+  },
+  "395": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Array tools (grid/linear/circular/along-path) have zero test coverage behind their modal dialogs (Audit 2026-10, epic #392)"
+  },
+  "396": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Agent API: make Host/Origin (DNS-rebinding) validation explicit, test it, and raise the mcp floor to >=1.23 (Audit 2026-10, epic #392)"
+  },
+  "397": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Loader silently drops items it cannot decode: a legacy plan whose background image moved loses it on load and permanently on the next save; duplicate item_ids accepted (Audit 2026-10, epic #392)"
+  },
+  "398": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "skills: CI job count, 'no token auth' and 'ADR-001…034' statements contradict ci.yml / server.py / docs/09 (Audit 2026-10, epic #392)"
+  },
+  "399": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "'Never merge on red' is prose-only: required status checks are off on master, merges use --admin, PR #323 merged on a red Test (Audit 2026-10, epic #392)"
+  },
+  "400": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Copy/paste drops spacing override, frost flag, label visibility, fence style and skips Arc/Bezier/Group items (clipboard serializer diverged from file serializer) (Audit 2026-10, epic #392)"
+  },
+  "401": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "CI: mypy is documented as a gate but never runs — add a ratcheted type-check job and fix the docs (Audit 2026-10, epic #392)"
+  },
+  "402": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "CI: coverage is declared (>80 % non-UI) but never measured — add a coverage job with per-package floors (Audit 2026-10, epic #392)"
+  },
+  "403": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Opening a corrupt .ogp leaves a partial scene under the previous file's name — Ctrl+S overwrites the good plan (Audit 2026-10, epic #392)"
+  },
+  "405": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "§8.7 promises 'all errors logged' but the logging module has no handler anywhere: 55 handled-error log calls are discarded in the windowed exe (Audit 2026-10, epic #392)"
+  },
+  "406": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "constraint_tool.py is 29.0 % line / 9.6 % branch covered: 1 661 of 2 340 statements never run, 50 public methods never executed (25 non-trivial) (Audit 2026-10, epic #392)"
+  },
+  "408": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Generated soil amendment task names remain English with German UI"
+  },
+  "409": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "NFR-PERF-01 missed in a real window: fit-in-view repaint of the 500-object plan takes 54 ms (18 fps) (Audit 2026-10, P1)"
+  },
+  "410": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "suggest_companions returns English plant names with a German UI (D3.1 display string not localised)"
+  },
+  "411": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#393,#408,#410): localize shared-service display strings; enforce translation-key uniqueness; full-tree ruff"
+  },
+  "412": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(core): harden serialization, clipboard unification, and atomic plan loading (#394, #400, #397, #403)"
+  },
+  "414": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Task calendar: GUI task surfaces miss every frost-relative window anchored on another year's frost (TD-037)"
+  },
+  "415": {
+    "is_pr": false,
+    "state": "CLOSED",
+    "title": "Planting calendar: the propagation editor saves steps in the wrong year (and untranslated detail labels)"
+  },
+  "416": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "Plant data: harvest offsets are read two ways (garlic's follow \"after planting\", the task generator counts from the last frost)"
+  },
+  "418": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "Plant data: convert the harvest offsets to their true reading (split from #416)"
+  },
+  "419": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(#414,#415,#395,#396,#398): task-date correctness and audit P1s"
+  }
+}

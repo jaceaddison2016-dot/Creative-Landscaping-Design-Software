@@ -1,0 +1,791 @@
+"""Object type definitions for property objects."""
+
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import Literal
+
+from PyQt6.QtCore import QT_TR_NOOP, QCoreApplication, Qt
+from PyQt6.QtGui import QColor
+
+from .fill_patterns import FillPattern
+
+
+class PathFenceStyle(Enum):
+    """Visual style presets for path and fence polylines."""
+
+    # Path styles
+    NONE = auto()  # Plain line (no style preset)
+    GRAVEL_PATH = auto()
+    STEPPING_STONES = auto()
+    PAVED_PATH = auto()
+    WOODEN_BOARDWALK = auto()
+    DIRT_PATH = auto()
+
+    # Fence styles
+    WOODEN_FENCE = auto()
+    METAL_FENCE = auto()
+    CHAIN_LINK = auto()
+    HEDGE_FENCE = auto()
+    STONE_WALL = auto()
+
+
+@dataclass(frozen=True)
+class PathFenceStyleInfo:
+    """Display info for a path/fence style preset."""
+
+    display_name: str
+    category: str  # "path" or "fence"
+    stroke_color: QColor
+    stroke_width: float
+    description: str = ""
+
+
+# Style presets with default visual properties
+PATH_FENCE_STYLES: dict[PathFenceStyle, PathFenceStyleInfo] = {
+    PathFenceStyle.NONE: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("None (Plain)"),
+        category="",
+        stroke_color=QColor(160, 82, 45),
+        stroke_width=3.0,
+    ),
+    PathFenceStyle.GRAVEL_PATH: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Gravel"),
+        category="path",
+        stroke_color=QColor(180, 170, 150),
+        stroke_width=8.0,
+    ),
+    PathFenceStyle.STEPPING_STONES: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Stepping Stones"),
+        category="path",
+        stroke_color=QColor(160, 160, 155),
+        stroke_width=6.0,
+    ),
+    PathFenceStyle.PAVED_PATH: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Paved"),
+        category="path",
+        stroke_color=QColor(140, 140, 140),
+        stroke_width=10.0,
+    ),
+    PathFenceStyle.WOODEN_BOARDWALK: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Wooden Boardwalk"),
+        category="path",
+        stroke_color=QColor(160, 120, 70),
+        stroke_width=10.0,
+    ),
+    PathFenceStyle.DIRT_PATH: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Dirt"),
+        category="path",
+        stroke_color=QColor(150, 110, 60),
+        stroke_width=6.0,
+    ),
+    PathFenceStyle.WOODEN_FENCE: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Wooden Fence"),
+        category="fence",
+        stroke_color=QColor(139, 90, 43),
+        stroke_width=3.0,
+    ),
+    PathFenceStyle.METAL_FENCE: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Metal/Wrought Iron"),
+        category="fence",
+        stroke_color=QColor(60, 60, 60),
+        stroke_width=2.5,
+    ),
+    PathFenceStyle.CHAIN_LINK: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Chain Link"),
+        category="fence",
+        stroke_color=QColor(160, 165, 170),
+        stroke_width=2.0,
+    ),
+    PathFenceStyle.HEDGE_FENCE: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Hedge"),
+        category="fence",
+        stroke_color=QColor(60, 120, 40),
+        stroke_width=8.0,
+    ),
+    PathFenceStyle.STONE_WALL: PathFenceStyleInfo(
+        display_name=QT_TR_NOOP("Stone Wall"),
+        category="fence",
+        stroke_color=QColor(130, 130, 120),
+        stroke_width=5.0,
+    ),
+}
+
+
+def get_path_fence_style_info(style: PathFenceStyle) -> PathFenceStyleInfo:
+    """Get display info for a path/fence style."""
+    return PATH_FENCE_STYLES[style]
+
+
+def get_translated_path_fence_style_name(style: PathFenceStyle) -> str:
+    """Get the translated display name for a path/fence style."""
+    info = PATH_FENCE_STYLES[style]
+    return QCoreApplication.translate("PathFenceStyle", info.display_name)
+
+
+class StrokeStyle(Enum):
+    """Stroke/line styles for object outlines."""
+
+    SOLID = auto()
+    DASHED = auto()
+    DOTTED = auto()
+    DASH_DOT = auto()
+
+    def to_qt_pen_style(self) -> Qt.PenStyle:
+        """Convert to Qt pen style.
+
+        Returns:
+            Corresponding Qt.PenStyle enum value
+        """
+        mapping = {
+            StrokeStyle.SOLID: Qt.PenStyle.SolidLine,
+            StrokeStyle.DASHED: Qt.PenStyle.DashLine,
+            StrokeStyle.DOTTED: Qt.PenStyle.DotLine,
+            StrokeStyle.DASH_DOT: Qt.PenStyle.DashDotLine,
+        }
+        return mapping[self]
+
+
+class ObjectType(Enum):
+    """Types of property objects in the garden planner."""
+
+    # Polygon-based structures
+    HOUSE = auto()
+    GARAGE_SHED = auto()
+    TERRACE_PATIO = auto()
+    DRIVEWAY = auto()
+    POND_POOL = auto()
+    GREENHOUSE = auto()
+    GARDEN_BED = auto()
+    LAWN = auto()
+    HEDGE_POLYGON = auto()  # Hedge area (polygon, tiled texture)
+
+    # Polyline-based structures
+    FENCE = auto()
+    WALL = auto()
+    PATH = auto()
+    ROOF_RIDGE = auto()  # Roof ridge line (auto-created, not in toolbar)
+
+    # Plant types (circle-based)
+    TREE = auto()
+    SHRUB = auto()
+    PERENNIAL = auto()
+
+    # Hedge section (rectangle-based, SVG-rendered)
+    HEDGE_SECTION = auto()
+
+    # Outdoor furniture (rectangle-based, SVG-rendered)
+    TABLE_RECTANGULAR = auto()
+    TABLE_ROUND = auto()
+    CHAIR = auto()
+    BENCH = auto()
+    PARASOL = auto()
+    LOUNGER = auto()
+    BBQ_GRILL = auto()
+    FIRE_PIT = auto()
+    PLANTER_POT = auto()
+
+    # Garden infrastructure (SVG-rendered)
+    RAISED_BED = auto()
+    COMPOST_BIN = auto()
+    COLD_FRAME = auto()
+    RAIN_BARREL = auto()
+    WATER_TAP = auto()
+    TOOL_SHED = auto()
+
+    # Package 3a roster growth (#308) — appended so existing enum ordering
+    # is untouched (names are serialized, values are not).
+    SANDBOX = auto()
+    TRAMPOLINE = auto()
+    HOT_TUB = auto()
+    SWING = auto()
+    PICNIC_TABLE = auto()
+    HAMMOCK = auto()
+    WHEELBARROW = auto()
+    PERGOLA = auto()
+    BIRD_BATH = auto()
+
+    # Vertical & container gardening (US-C3). Plant-parent objects that are
+    # NOT garden beds. CONTAINER/WALL_PLANTER are rectangle-based, CONTAINER_ROUND
+    # is circle-based; all three are soil containers. TRELLIS (US-C3b) is a
+    # vertical structure — a plant-parent but NOT a soil container.
+    CONTAINER = auto()
+    CONTAINER_ROUND = auto()
+    WALL_PLANTER = auto()
+    TRELLIS = auto()
+
+    # Generic geometric shapes (for backwards compatibility)
+    GENERIC_RECTANGLE = auto()
+    GENERIC_POLYGON = auto()
+    GENERIC_CIRCLE = auto()
+    GENERIC_ELLIPSE = auto()
+
+    # Text annotation
+    GENERIC_TEXT = auto()
+
+    # Callout / leader line annotation
+    GENERIC_CALLOUT = auto()
+
+    # Garden journal map-linked note pin (US-12.9)
+    GARDEN_JOURNAL_PIN = auto()
+
+
+@dataclass(frozen=True)
+class ObjectStyle:
+    """Styling configuration for an object type."""
+
+    fill_color: QColor
+    stroke_color: QColor
+    stroke_width: float
+    display_name: str
+    fill_pattern: FillPattern = FillPattern.SOLID
+    stroke_style: StrokeStyle = StrokeStyle.SOLID
+
+
+# Default styles for each object type
+OBJECT_STYLES: dict[ObjectType, ObjectStyle] = {
+    ObjectType.HOUSE: ObjectStyle(
+        fill_color=QColor(210, 180, 140, 255),  # Tan
+        stroke_color=QColor(139, 90, 43),  # Brown
+        stroke_width=2.5,
+        display_name=QT_TR_NOOP("House"),
+        fill_pattern=FillPattern.ROOF_TILES,
+    ),
+    ObjectType.GARAGE_SHED: ObjectStyle(
+        fill_color=QColor(169, 169, 169, 255),  # Gray
+        stroke_color=QColor(105, 105, 105),  # Dim gray
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Garage/Shed"),
+        fill_pattern=FillPattern.CONCRETE,
+    ),
+    ObjectType.TERRACE_PATIO: ObjectStyle(
+        fill_color=QColor(222, 184, 135, 255),  # Burlywood
+        stroke_color=QColor(160, 82, 45),  # Sienna
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Terrace/Patio"),
+        fill_pattern=FillPattern.WOOD,
+    ),
+    ObjectType.DRIVEWAY: ObjectStyle(
+        fill_color=QColor(112, 128, 144, 255),  # Slate gray
+        stroke_color=QColor(47, 79, 79),  # Dark slate gray
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Driveway"),
+        fill_pattern=FillPattern.GRAVEL,
+    ),
+    ObjectType.POND_POOL: ObjectStyle(
+        fill_color=QColor(64, 164, 223, 255),  # Water blue
+        stroke_color=QColor(25, 25, 112),  # Midnight blue
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Pond/Pool"),
+        fill_pattern=FillPattern.WATER,
+    ),
+    ObjectType.GREENHOUSE: ObjectStyle(
+        fill_color=QColor(210, 230, 245, 255),  # Light sky-blue glass
+        stroke_color=QColor(160, 165, 170),  # Silver / aluminium
+        stroke_width=2.5,
+        display_name=QT_TR_NOOP("Greenhouse"),
+        fill_pattern=FillPattern.GLASS,
+    ),
+    ObjectType.GARDEN_BED: ObjectStyle(
+        fill_color=QColor(139, 90, 43, 255),  # Brown soil
+        stroke_color=QColor(34, 139, 34),  # Forest green border
+        stroke_width=2.5,
+        display_name=QT_TR_NOOP("Garden Bed"),
+        fill_pattern=FillPattern.SOIL,
+    ),
+    ObjectType.LAWN: ObjectStyle(
+        fill_color=QColor(100, 180, 60, 255),  # Fresh green
+        stroke_color=QColor(60, 130, 30),  # Darker green
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Lawn"),
+        fill_pattern=FillPattern.GRASS,
+    ),
+    ObjectType.TREE: ObjectStyle(
+        fill_color=QColor(34, 139, 34, 255),  # Forest green
+        stroke_color=QColor(85, 107, 47),  # Dark olive green
+        stroke_width=3.0,
+        display_name=QT_TR_NOOP("Tree"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.SHRUB: ObjectStyle(
+        fill_color=QColor(107, 142, 35, 255),  # Olive drab
+        stroke_color=QColor(85, 107, 47),  # Dark olive green
+        stroke_width=2.5,
+        display_name=QT_TR_NOOP("Shrub"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.PERENNIAL: ObjectStyle(
+        fill_color=QColor(154, 205, 50, 255),  # Yellow green
+        stroke_color=QColor(34, 139, 34),  # Forest green
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Perennial"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.FENCE: ObjectStyle(
+        fill_color=QColor(139, 69, 19, 0),  # Brown (no fill for lines)
+        stroke_color=QColor(139, 69, 19),  # Saddle brown
+        stroke_width=3.0,
+        display_name=QT_TR_NOOP("Fence"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.WALL: ObjectStyle(
+        fill_color=QColor(128, 128, 128, 0),  # Gray (no fill for lines)
+        stroke_color=QColor(105, 105, 105),  # Dim gray
+        stroke_width=4.0,
+        display_name=QT_TR_NOOP("Wall"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.PATH: ObjectStyle(
+        fill_color=QColor(210, 180, 140, 0),  # Tan (no fill for lines)
+        stroke_color=QColor(160, 82, 45),  # Sienna
+        stroke_width=5.0,
+        display_name=QT_TR_NOOP("Path"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.ROOF_RIDGE: ObjectStyle(
+        fill_color=QColor(0, 0, 0, 0),
+        stroke_color=QColor(100, 72, 38),  # Dark brown ridge
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Roof Ridge"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.HEDGE_SECTION: ObjectStyle(
+        fill_color=QColor(60, 120, 40, 255),  # Hedge green
+        stroke_color=QColor(40, 90, 25),  # Dark hedge green
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Hedge Section"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.HEDGE_POLYGON: ObjectStyle(
+        fill_color=QColor(45, 90, 28, 255),  # Deep hedge green
+        stroke_color=QColor(30, 65, 18),  # Darker green outline
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Hedge"),
+        fill_pattern=FillPattern.HEDGE,
+    ),
+    ObjectType.TABLE_RECTANGULAR: ObjectStyle(
+        fill_color=QColor(160, 120, 80, 255),  # Warm wood
+        stroke_color=QColor(100, 70, 40),  # Dark wood
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Table (Rectangular)"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.TABLE_ROUND: ObjectStyle(
+        fill_color=QColor(160, 120, 80, 255),  # Warm wood
+        stroke_color=QColor(100, 70, 40),  # Dark wood
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Table (Round)"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.CHAIR: ObjectStyle(
+        fill_color=QColor(140, 105, 70, 255),  # Medium wood
+        stroke_color=QColor(90, 60, 30),  # Dark wood
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Chair"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.BENCH: ObjectStyle(
+        fill_color=QColor(150, 110, 70, 255),  # Wood
+        stroke_color=QColor(90, 60, 30),  # Dark wood
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Bench"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.PARASOL: ObjectStyle(
+        fill_color=QColor(230, 220, 200, 255),  # Cream/beige
+        stroke_color=QColor(180, 160, 130),  # Warm gray
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Parasol"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.LOUNGER: ObjectStyle(
+        fill_color=QColor(180, 180, 180, 255),  # Light gray metal
+        stroke_color=QColor(120, 120, 120),  # Medium gray
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Lounger"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.BBQ_GRILL: ObjectStyle(
+        fill_color=QColor(60, 60, 60, 255),  # Dark charcoal
+        stroke_color=QColor(40, 40, 40),  # Near black
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("BBQ/Grill"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.FIRE_PIT: ObjectStyle(
+        fill_color=QColor(140, 100, 70, 255),  # Stone brown
+        stroke_color=QColor(80, 60, 40),  # Dark brown
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Fire Pit"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.PLANTER_POT: ObjectStyle(
+        fill_color=QColor(180, 120, 60, 255),  # Terracotta
+        stroke_color=QColor(140, 80, 30),  # Dark terracotta
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Planter/Pot"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.RAISED_BED: ObjectStyle(
+        fill_color=QColor(139, 90, 43, 255),  # Wood brown
+        stroke_color=QColor(100, 60, 20),  # Dark wood
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Raised Bed"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.COMPOST_BIN: ObjectStyle(
+        fill_color=QColor(90, 70, 40, 255),  # Dark brown
+        stroke_color=QColor(60, 45, 25),  # Very dark brown
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Compost Bin"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.COLD_FRAME: ObjectStyle(
+        fill_color=QColor(200, 220, 240, 255),  # Light glass blue
+        stroke_color=QColor(150, 155, 160),  # Silver aluminum
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Cold Frame"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.RAIN_BARREL: ObjectStyle(
+        fill_color=QColor(60, 100, 60, 255),  # Dark green
+        stroke_color=QColor(40, 70, 40),  # Darker green
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Rain Barrel"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.WATER_TAP: ObjectStyle(
+        fill_color=QColor(160, 170, 180, 255),  # Steel gray
+        stroke_color=QColor(100, 110, 120),  # Dark steel
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Water Tap"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    # Package 3a roster (#308). fill_color doubles as the 3D extrusion colour.
+    ObjectType.SANDBOX: ObjectStyle(
+        fill_color=QColor(228, 208, 160, 255),  # Sand
+        stroke_color=QColor(158, 124, 64),  # Pine frame
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Sandbox"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.TRAMPOLINE: ObjectStyle(
+        fill_color=QColor(48, 51, 54, 255),  # Mat
+        stroke_color=QColor(66, 123, 194),  # Safety pad
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Trampoline"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.HOT_TUB: ObjectStyle(
+        fill_color=QColor(67, 163, 210, 255),  # Water
+        stroke_color=QColor(105, 64, 28),  # Teak cladding
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Hot Tub"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.SWING: ObjectStyle(
+        fill_color=QColor(212, 180, 113, 255),  # Pine frame
+        stroke_color=QColor(158, 124, 64),
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Swing"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.PICNIC_TABLE: ObjectStyle(
+        fill_color=QColor(185, 131, 80, 255),  # Oak
+        stroke_color=QColor(125, 80, 41),
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Picnic Table"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.HAMMOCK: ObjectStyle(
+        fill_color=QColor(79, 157, 151, 255),  # Teal canvas
+        stroke_color=QColor(102, 67, 44),  # Walnut stand
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Hammock"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.WHEELBARROW: ObjectStyle(
+        fill_color=QColor(63, 124, 62, 255),  # Enamel green tub
+        stroke_color=QColor(32, 76, 34),
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Wheelbarrow"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.PERGOLA: ObjectStyle(
+        fill_color=QColor(185, 131, 80, 255),  # Oak beams
+        stroke_color=QColor(125, 80, 41),
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Pergola"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.BIRD_BATH: ObjectStyle(
+        fill_color=QColor(162, 157, 147, 255),  # Stone
+        stroke_color=QColor(104, 100, 92),
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Bird Bath"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.TOOL_SHED: ObjectStyle(
+        fill_color=QColor(160, 130, 90, 255),  # Light wood
+        stroke_color=QColor(100, 75, 45),  # Dark wood
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Tool Shed"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.CONTAINER: ObjectStyle(
+        fill_color=QColor(170, 110, 70, 255),  # Terracotta brown
+        stroke_color=QColor(120, 70, 35),  # Dark terracotta
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Container"),
+        fill_pattern=FillPattern.SOIL,
+    ),
+    ObjectType.CONTAINER_ROUND: ObjectStyle(
+        fill_color=QColor(170, 110, 70, 255),  # Terracotta brown
+        stroke_color=QColor(120, 70, 35),  # Dark terracotta
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Round Container"),
+        fill_pattern=FillPattern.SOIL,
+    ),
+    ObjectType.WALL_PLANTER: ObjectStyle(
+        fill_color=QColor(150, 120, 90, 255),  # Wood/box brown
+        stroke_color=QColor(100, 75, 45),  # Dark wood
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Wall Planter"),
+        fill_pattern=FillPattern.SOIL,
+    ),
+    ObjectType.TRELLIS: ObjectStyle(
+        fill_color=QColor(180, 150, 110, 120),  # Light translucent wood
+        stroke_color=QColor(110, 80, 45),  # Dark wood
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Trellis"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GENERIC_RECTANGLE: ObjectStyle(
+        fill_color=QColor(144, 238, 144, 255),  # Light green
+        stroke_color=QColor(34, 139, 34),  # Forest green
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Rectangle"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GENERIC_POLYGON: ObjectStyle(
+        fill_color=QColor(173, 216, 230, 255),  # Light blue
+        stroke_color=QColor(70, 130, 180),  # Steel blue
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Polygon"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GENERIC_CIRCLE: ObjectStyle(
+        fill_color=QColor(255, 182, 193, 255),  # Light pink
+        stroke_color=QColor(219, 112, 147),  # Pale violet red
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Circle"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GENERIC_ELLIPSE: ObjectStyle(
+        fill_color=QColor(255, 220, 150, 255),  # Light amber
+        stroke_color=QColor(200, 140, 0),  # Dark amber
+        stroke_width=2.0,
+        display_name=QT_TR_NOOP("Ellipse"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GENERIC_TEXT: ObjectStyle(
+        fill_color=QColor(0, 0, 0, 255),  # Black text
+        stroke_color=QColor(0, 0, 0, 0),  # No stroke
+        stroke_width=0.0,
+        display_name=QT_TR_NOOP("Text"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GENERIC_CALLOUT: ObjectStyle(
+        fill_color=QColor(255, 255, 255, 220),
+        stroke_color=QColor(30, 30, 30, 255),
+        stroke_width=1.5,
+        display_name=QT_TR_NOOP("Callout"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+    ObjectType.GARDEN_JOURNAL_PIN: ObjectStyle(
+        fill_color=QColor(255, 200, 0, 255),
+        stroke_color=QColor(120, 80, 0, 255),
+        stroke_width=1.0,
+        display_name=QT_TR_NOOP("Journal Pin"),
+        fill_pattern=FillPattern.SOLID,
+    ),
+}
+
+
+def get_style(object_type: ObjectType) -> ObjectStyle:
+    """Get the default style for an object type."""
+    return OBJECT_STYLES[object_type]
+
+
+def get_translated_display_name(object_type: ObjectType) -> str:
+    """Get the translated display name for an object type.
+
+    Uses QCoreApplication.translate() to look up the translation
+    at display time. The source strings are marked with QT_TR_NOOP()
+    in OBJECT_STYLES for extraction by pylupdate6.
+    """
+    style = OBJECT_STYLES[object_type]
+    return QCoreApplication.translate("ObjectType", style.display_name)
+
+
+# US-C3: two distinct seams that historically both went through is_bed_type().
+#
+# SOIL_CONTAINER_TYPES — objects that hold soil: beds + containers + wall
+# planters. They get soil tests, mismatch borders, amendment/shopping volume.
+# is_bed_type() is the "soil-capable" predicate (it already returned True for
+# the non-"bed" RAISED_BED) and now also covers containers/wall planters.
+#
+# PLANT_PARENT_TYPES — anything a plant can be a child of: the soil containers
+# PLUS the trellis (a vertical structure that hosts climbers but holds no soil).
+# is_plant_parent_type() gates reparenting, drag/copy propagation, the
+# "Contained Plants" panel section, and the bed-style context menu (the trellis
+# gets pest/harvest/succession; its soil-test action is gated off via
+# supports_soil=False — US-C3b). Trellis is the only type that is a plant-parent
+# but NOT soil-capable, which is exactly why two predicates exist.
+#
+# Note: the square-foot grid overlay stays on the SOIL seam (is_bed_type) on
+# purpose — containers get a planting grid, the trellis does not (a grid on a
+# vertical surface is meaningless).
+SOIL_CONTAINER_TYPES: frozenset[ObjectType] = frozenset(
+    {
+        ObjectType.GARDEN_BED,
+        ObjectType.RAISED_BED,
+        ObjectType.CONTAINER,
+        ObjectType.CONTAINER_ROUND,
+        ObjectType.WALL_PLANTER,
+    }
+)
+
+PLANT_PARENT_TYPES: frozenset[ObjectType] = SOIL_CONTAINER_TYPES | {ObjectType.TRELLIS}
+
+# Container types whose soil fill is measured by container height (litres),
+# not bed soil-depth. Used by the properties panel and shopping-list volume.
+CONTAINER_TYPES: frozenset[ObjectType] = frozenset(
+    {
+        ObjectType.CONTAINER,
+        ObjectType.CONTAINER_ROUND,
+        ObjectType.WALL_PLANTER,
+    }
+)
+
+
+def is_bed_type(object_type: ObjectType | None) -> bool:
+    """Check if an ObjectType is soil-capable (bed, raised bed, or container).
+
+    Despite the historical name, this is the *soil container* predicate: it
+    gates soil tests, mismatch warnings, amendment/shopping volume, and the
+    soil-depth UI. Trellis is deliberately excluded (it holds no soil) —
+    use :func:`is_plant_parent_type` for parent/relationship behaviour.
+    """
+    if object_type is None:
+        return False
+    return object_type in SOIL_CONTAINER_TYPES
+
+
+def is_plant_parent_type(object_type: ObjectType | None) -> bool:
+    """Check if a plant can be a child of this object type.
+
+    Covers every soil container (see :func:`is_bed_type`) plus the trellis.
+    Gates reparenting, drag/copy/duplicate propagation, the "Contained Plants"
+    panel, and the bed-style context menu (the trellis gets pest/harvest/
+    succession via ``supports_soil=False``). The grid overlay stays on the SOIL
+    seam (:func:`is_bed_type`) — a grid on a vertical trellis is meaningless.
+    """
+    if object_type is None:
+        return False
+    return object_type in PLANT_PARENT_TYPES
+
+
+def is_container_type(object_type: ObjectType | None) -> bool:
+    """Check if an ObjectType is a pot/wall-planter container (US-C3).
+
+    Containers are soil-capable like beds but measure their fill by height
+    (litres) rather than bed soil-depth, and carry material/drainage props.
+    """
+    if object_type is None:
+        return False
+    return object_type in CONTAINER_TYPES
+
+
+def get_valid_types_for_shape(
+    shape: Literal["circle", "polygon", "rectangle", "polyline", "ellipse"],
+) -> list[ObjectType]:
+    """Return the valid ObjectType values for a given shape class.
+
+    Single source of truth used by both the properties panel dropdown and
+    the context-menu "Change Type" submenu so they stay in sync.
+    """
+    if shape == "circle":
+        return [
+            ObjectType.GENERIC_CIRCLE,
+            ObjectType.TREE,
+            ObjectType.SHRUB,
+            ObjectType.PERENNIAL,
+            ObjectType.TABLE_ROUND,
+            ObjectType.PARASOL,
+            ObjectType.FIRE_PIT,
+            ObjectType.BBQ_GRILL,  # circle-tool object (canvas_view registers it round)
+            ObjectType.PLANTER_POT,
+            ObjectType.CONTAINER_ROUND,
+            ObjectType.RAIN_BARREL,
+            ObjectType.WATER_TAP,
+            ObjectType.TRAMPOLINE,
+            ObjectType.BIRD_BATH,
+            ObjectType.POND_POOL,
+            # F9: round in-ground beds (keyhole gardens, etc.). RAISED_BED is
+            # intentionally excluded — its wooden-frame pixmap is rectangular
+            # and would render as a square inside the circle's bounding rect
+            # (US-12.10/F2.10c).
+            ObjectType.GARDEN_BED,
+        ]
+    if shape == "polygon":
+        return [
+            ObjectType.GENERIC_POLYGON,
+            ObjectType.HOUSE,
+            ObjectType.GARAGE_SHED,
+            ObjectType.TERRACE_PATIO,
+            ObjectType.DRIVEWAY,
+            ObjectType.POND_POOL,
+            ObjectType.GREENHOUSE,
+            ObjectType.GARDEN_BED,
+            ObjectType.LAWN,
+            ObjectType.HEDGE_POLYGON,
+        ]
+    if shape == "rectangle":
+        return [
+            ObjectType.GENERIC_RECTANGLE,
+            ObjectType.HOUSE,
+            ObjectType.GARAGE_SHED,
+            ObjectType.GREENHOUSE,
+            ObjectType.GARDEN_BED,
+            ObjectType.HEDGE_SECTION,
+            ObjectType.TABLE_RECTANGULAR,
+            ObjectType.CHAIR,
+            ObjectType.BENCH,
+            ObjectType.LOUNGER,
+            ObjectType.BBQ_GRILL,
+            ObjectType.RAISED_BED,
+            ObjectType.COMPOST_BIN,
+            ObjectType.COLD_FRAME,
+            ObjectType.TOOL_SHED,
+            ObjectType.SANDBOX,
+            ObjectType.HOT_TUB,
+            ObjectType.SWING,
+            ObjectType.PICNIC_TABLE,
+            ObjectType.HAMMOCK,
+            ObjectType.WHEELBARROW,
+            ObjectType.PERGOLA,
+            ObjectType.CONTAINER,
+            ObjectType.WALL_PLANTER,
+            ObjectType.TRELLIS,
+        ]
+    if shape == "ellipse":
+        # F9: oval in-ground beds (decorative borders). RAISED_BED is
+        # intentionally excluded — see the corresponding comment on the
+        # circle branch (US-12.10/F2.10c).
+        return [
+            ObjectType.GENERIC_ELLIPSE,
+            ObjectType.GARDEN_BED,
+        ]
+    if shape == "polyline":
+        return [ObjectType.FENCE, ObjectType.WALL, ObjectType.PATH]
+    return list(ObjectType)

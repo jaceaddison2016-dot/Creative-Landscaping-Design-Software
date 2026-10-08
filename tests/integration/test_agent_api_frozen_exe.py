@@ -1,0 +1,146 @@
+"""Regression pin for issue #291 — the Agent API must start with no stdout.
+
+A PyInstaller **windowed** build (``console=False``, which is what we ship)
+allocates no console. When it is launched with no inherited stdout handle — a
+double-click, or CI's ``Start-Process`` — ``sys.stdout`` and ``sys.stderr``
+are ``None``. Run through a shell pipe, the exe does inherit a handle and the
+condition does not arise (see §11.4's dated correction). This test's
+simulation is unaffected: it sets the streams to ``None`` explicitly.
+uvicorn's DEFAULT logging config calls ``sys.stdout.isatty()`` while
+``dictConfig`` builds its formatter. So ``uvicorn.Config.__init__`` raised
+``ValueError: Unable to configure formatter 'default'`` and the embedded MCP
+server never started — in every released exe, since US-D1.1.
+
+It was invisible three ways over: running from source has a real stdout, a
+``console=True`` diagnostic build has a real stdout, and the failure was
+swallowed by ``_start_agent_api``'s ``except Exception`` into a
+``logger.exception`` that had no handler to write to (with ``sys.stderr`` None,
+even ``logging.lastResort`` is mute). The pre-merge exe gate only asserts the
+app survives 8 seconds, which a silently-dead subsystem passes.
+
+These tests reproduce the exact condition in-process. ``test_plain_uvicorn_...``
+is the POSITIVE CONTROL: it proves the simulated environment really does trigger
+the bug, so the passing start-up test below it means something.
+"""
+
+from __future__ import annotations
+
+import socket
+import sys
+from typing import Any
+
+import pytest
+
+from open_garden_planner.agent_api import AgentApiServer, AgentProviders
+from tests.integration.agent_task_soil_stubs import TASK_SOIL_STUBS
+
+
+def _free_port() -> int:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+def _unused(*_a: Any, **_k: Any) -> dict[str, Any]:
+    raise AssertionError("no provider should run during a start/stop test")
+
+
+def _providers() -> AgentProviders:
+    """Minimal bundle — these tests only exercise server lifecycle."""
+    return AgentProviders(
+        snapshot=lambda: {},
+        diagnostics=lambda: [],
+        render=_unused,
+        save_plan=_unused,
+        new_plan=_unused,
+        open_plan=_unused,
+        export_pdf=_unused,
+        export_dxf=_unused,
+        export_csv=_unused,
+        create_object=_unused,
+        get_geometry=_unused,
+        get_succession_plan=_unused,
+        find_succession_gaps=_unused,
+        suggest_succession=_unused,
+        set_succession_plan=_unused,
+        move_object=_unused,
+        set_object_position=_unused,
+        delete_object=_unused,
+        resize_object=_unused,
+        rotate_object=_unused,
+        set_vertex=_unused,
+        add_vertex=_unused,
+        delete_vertex=_unused,
+        set_species=_unused,
+        set_parent_bed=_unused,
+        arrange_object=_unused,
+        set_object_layer=_unused,
+        create_layer=_unused,
+        rename_layer=_unused,
+        delete_layer=_unused,
+        set_active_layer=_unused,
+        set_layer_property=_unused,
+        undo=_unused,
+        redo=_unused,
+        **TASK_SOIL_STUBS,
+        get_history=_unused,
+        suggest_companions=_unused,
+        find_compatible_sets=_unused,
+        find_sets_for_bed=_unused,
+        check_placement=_unused,
+    )
+
+
+def test_plain_uvicorn_config_really_does_break_without_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POSITIVE CONTROL for the test below.
+
+    Feeds the detector the exact defect it exists to catch: uvicorn's DEFAULT
+    log config under a windowed build's ``sys.stdout is None``. If uvicorn ever
+    stops doing ``sys.stdout.isatty()`` at config time, this test fails and the
+    next test stops being meaningful -- which is precisely when we want to know.
+    """
+    import uvicorn
+
+    async def _app(scope: Any, receive: Any, send: Any) -> None:  # pragma: no cover
+        return None
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    with pytest.raises(ValueError, match="formatter"):
+        uvicorn.Config(_app, host="127.0.0.1", port=_free_port())
+
+
+def test_server_starts_when_stdout_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real ``AgentApiServer`` must start in a windowed frozen build.
+
+    Deliberately drives the REAL server rather than re-asserting the
+    ``uvicorn.Config`` kwargs: duplicating them here would keep passing if
+    ``server.py`` later dropped ``log_config=None``.
+    """
+    port = _free_port()
+    server = AgentApiServer(_providers(), port=port)
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    try:
+        server.start()
+        assert server.is_running, (
+            "Agent API did not start with sys.stdout=None — the windowed frozen "
+            "build condition from issue #291 has regressed"
+        )
+        # Actually reachable, not merely flagged as running.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(2.0)
+        try:
+            assert probe.connect_ex(("127.0.0.1", port)) == 0, (
+                f"nothing listening on {port} despite is_running"
+            )
+        finally:
+            probe.close()
+    finally:
+        server.stop()
