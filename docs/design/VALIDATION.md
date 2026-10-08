@@ -19,7 +19,7 @@ visual approval is pending.
 | Agent context / citations | Passed. |
 | Secret scan | Passed on tracked files; repeat after staging the new files. |
 | Full inherited suite | Not completed. Two full runs and an alphabetical-prefix reproduction were interrupted after prolonged Qt styling work around the preview theme tests. Instrumentation observed roughly 79,000 retained widgets; the focused run completes. Root cause is not fully isolated, and no full-suite green result is claimed. CI/full-suite completion remains a gate before landing. |
-| Independent senior review | First review of 439e486..c8859ed found sample-file overwrite, launcher preference/translation defects, fullscreen sun chrome and a broken link. Fixes and regression coverage are recorded in docs/reviews/CREATIVE_DESIGN_PREVIEW.md; clean re-review pending. |
+| Independent senior review | Clean re-review of 439e486..2c255da from a fresh ordinary clone: all previous P0/P1 findings resolved, no new P0/P1. Reviewer independently ran 3 risky regression tests: 3 passed in 15.33 s. Suitable for draft review only; full-suite/native/owner gates remain outstanding. Details in docs/reviews/CREATIVE_DESIGN_PREVIEW.md. |
 
 The full suite includes drawing, selection, dragging, snapping, numeric editing,
 undo/redo, layers, project serialization, recovery, solar/shadow and export tests.

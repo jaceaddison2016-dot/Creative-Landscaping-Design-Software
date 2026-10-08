@@ -292,12 +292,14 @@ changing project data or either undo/redo stack.
 
 The development runner chooses a separate settings organization/application
 before any store exists (ADR-041), creates QApplication after the required
-WebEngine pre-import, applies proposed tokens, and constructs a
+WebEngine pre-import, loads the saved translator, applies proposed tokens, and constructs a
 `CreativePreviewWindow`. The inherited startup/recovery sequence and project
 manager remain intact. Gallery activation emits tool selection first and plant
 metadata second; subsequent canvas gestures use existing commands.
 
-Capture mode resets only preview UI state, loads a synthetic saved plan, enables
+Capture mode uses a separate capture account and fixture path, resets its UI state,
+loads a synthetic saved plan, enables
 the existing sun study and records real widget grabs after layout/accordion
-settling. Interactive mode retains preview workspace preferences. Normal app
+settling. Interactive mode retains saved sample edits, language, theme, window/dock
+preferences and the inherited welcome-on-startup choice. Normal app
 startup does not import the experiment. Details: [design validation](../design/VALIDATION.md).

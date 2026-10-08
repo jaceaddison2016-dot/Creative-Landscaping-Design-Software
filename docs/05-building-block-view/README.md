@@ -413,7 +413,9 @@ proposed palette and installed-font fallbacks. `ui/theme.py` accepts optional
 color overrides through its existing stylesheet/listener pipeline.
 
 Only `scripts/creative_design_preview.py` imports the opt-in window. It redirects
-settings/data to a preview account before construction, creates a synthetic
-`.ogp` through ProjectManager and can grab actual Qt widgets. Normal startup
+settings/data to a preview account before construction, creates an absent
+interactive sample through ProjectManager and preserves saved edits on restart.
+Captures use a separate account and synthetic fixture path and grab actual Qt
+widgets. Normal startup
 remains unchanged. See [ADR-050](../09-architecture-decisions/README.md#adr-050-opt-in-creative-desktop-design-preview)
 and [design review](../design/README.md); no approved production redesign is claimed.

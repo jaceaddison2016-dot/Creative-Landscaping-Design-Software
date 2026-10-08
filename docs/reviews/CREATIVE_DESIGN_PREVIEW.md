@@ -21,7 +21,14 @@ Review P2 follow-ups remain explicit: selected-language formatting of recent-fil
 dates and consolidation of global theme restyling. Neither is represented as
 completed; styling performance is also an unresolved full-suite validation issue.
 
-Clean re-review of the fixes is pending. This document is not a merge approval.
+Clean re-review of 439e486..2c255dacdbd84492ff9f9cd6db63dc387096ef89 completed
+from a fresh ordinary clone. All previous P0/P1 findings were resolved, with no
+new P0/P1 findings. The reviewer independently ran the three risky regression
+tests: **3 passed in 15.33 seconds**. The verdict permits a draft PR only.
+
+One remaining cleanup observation is unreachable interactive welcome wiring in
+the capture-only callback. No user behavior depends on that leftover branch.
+This document is not a merge approval.
 Full inherited-suite completion, native package checks, owner visual approval
 and manual testing remain outstanding. No merge or production release is
 authorized by this review.
