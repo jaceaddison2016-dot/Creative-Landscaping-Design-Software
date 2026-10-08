@@ -1,5 +1,16 @@
 # 6. Runtime View
 
+## Creative Windows validation runtime
+
+The Windows workflow freezes the normal app, verifies startup/subsystems and
+launches `--prototype-check` from an output directory outside the checkout.
+The probe uses a private QA settings account, creates QApplication and the real
+Creative window, then schedules drawing, key/mouse input, undo/redo, save/reopen
+and exports on the Qt event loop. A fresh run ID, process exit and JSON verdict
+must agree. Screenshots come from actual widgets. After silent NSIS installation,
+the workflow repeats these checks against the installed executable, preserves
+source/licenses/evidence and uploads a test artifact. It does not create a release.
+
 ## 6.1 Drawing Workflow
 
 ```mermaid

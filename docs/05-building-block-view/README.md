@@ -1,5 +1,16 @@
 # 5. Building Block View
 
+## Creative packaged-workflow diagnostic
+
+`app/packaged_check.py` is an opt-in observer of the real desktop window, entered
+only with `--prototype-check OUTPUT`. It isolates settings before window creation
+and schedules QtTest interaction after QApplication and the normal window exist.
+It writes synthetic projects, physical exports, screenshots and a JSON verdict.
+`scripts/run_packaged_creative_check.py` owns the child process, bounds its runtime
+and rejects stale results or non-native/non-frozen Windows evidence. Normal
+startup does not import QtTest. PyInstaller includes QtTest for this diagnostic;
+the normal editor, project format and settings identity retain their contracts.
+
 ## 5.1 High-Level Architecture
 
 ```mermaid

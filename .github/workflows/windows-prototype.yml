@@ -49,6 +49,8 @@ jobs:
           python -m pip check
       - name: Install NSIS
         run: choco install nsis -y
+      - name: Use the approved Michigan sample's computer time zone
+        run: tzutil /s "Eastern Standard Time"
       - name: Verify inherited editor workflows
         env:
           QT_QPA_PLATFORM: offscreen
@@ -60,6 +62,9 @@ jobs:
           tests/integration/test_shadow_overlay.py tests/unit/test_solar.py
           tests/unit/test_shadow_geometry.py tests/unit/test_shade_aggregation.py
           tests/unit/test_autosave.py tests/unit/test_export.py
+          tests/integration/test_creative_design_preview.py
+          tests/integration/test_creative_imperial_workflow.py
+          tests/integration/test_creative_packaged_check.py
           --junitxml=build/windows-editor-tests.xml -q
       - name: Freeze the actual upstream desktop application
         run: python installer/build_installer.py --version 1.29.5 --skip-nsis
@@ -75,6 +80,12 @@ jobs:
         run: >-
           python scripts/desktop_baseline_smoke.py
           --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-portable-smoke
+      - name: Verify approved Creative workflows in the native portable executable
+        run: >-
+          python scripts/run_packaged_creative_check.py
+          --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe
+          --output build/windows-portable-creative
+          --sample "docs/design/creative-preview/revised-light/Southwest Michigan - sample landscape.ogp"
       - name: Build installer including notices
         run: python installer/build_installer.py --version 1.29.5 --skip-pyinstaller
       - name: Verify installer and installed application
@@ -87,6 +98,8 @@ jobs:
           if (-not (Test-Path (Join-Path $installDir "licenses/GPL-3.0.txt"))) { throw 'Installed license is missing' }
           ./scripts/verify_windows_selftest.ps1 -Executable $installedAppPath
           python scripts/desktop_baseline_smoke.py --exe "$installedAppPath" --output build/windows-installed-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/run_packaged_creative_check.py --exe "$installedAppPath" --output build/windows-installed-creative --sample "docs/design/creative-preview/revised-light/Southwest Michigan - sample landscape.ogp"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Assemble download with source, notices, build evidence and checksums
         shell: pwsh
@@ -107,12 +120,16 @@ jobs:
           Copy-Item build/windows-editor-tests.xml dist/download/
           Copy-Item -Recurse build/windows-portable-smoke dist/download/portable-check
           Copy-Item -Recurse build/windows-installed-smoke dist/download/installed-check
+          Copy-Item -Recurse build/windows-portable-creative dist/download/portable-creative-check
+          Copy-Item -Recurse build/windows-installed-creative dist/download/installed-creative-check
+          Copy-Item "docs/design/creative-preview/revised-light/Southwest Michigan - sample landscape.ogp" "dist/download/Southwest Michigan - sample landscape.ogp"
           @{
             source_commit = (git rev-parse HEAD)
             upstream_commit = 'cb4a71db8649cc4e48f85f0bef671bb0ac58dd16'
             platform = 'Windows x64'
             run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             signed = $false
+            creative_workflows = 'native portable and installed Qt controls, imperial drawing/edit, undo/redo, save/reopen, physical exports, icons/fonts, sun/shade'
             interactive_manual_test = 'not performed'
           } | ConvertTo-Json | Set-Content -Encoding utf8 dist/download/BUILD-INFO.json
           Get-ChildItem dist/download -File | Sort-Object Name | ForEach-Object {

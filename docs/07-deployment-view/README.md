@@ -10,6 +10,13 @@ The inherited `release.yml` job is restricted to `cofade/open-garden-planner`;
 merging into this fork does **not** create a tag or production release. Its draft
 PR requires owner manual testing. macOS packages and signing remain unverified.
 
+After the owner's revised visual approval, the native Windows gate additionally
+exercises the normal Creative window through QtTest inside each frozen copy.
+Drawing, fractional-inch input, undo/redo, save/reopen, physical exports,
+fonts/icons and sun/shade must pass, with fresh JSON results and native widget
+captures. The download includes the approved editable Michigan sample and both
+copies' evidence. See [the rebuild recipe](../WINDOWS_BUILD.md).
+
 The remaining sections below describe the **inherited upstream deployment**.
 Their automatic release/merge/version instructions apply to upstream, not to
 Creative Landscape Studio. Preserve them as the upstream build reference.

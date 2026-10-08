@@ -1,19 +1,21 @@
-> This available download contains the older foundation at `439e486414070161d9fea58a6123644e8d0afdc3`. It does **not** contain the revised Creative workspace or imperial features. A new installer awaits revised layout approval and native validation; see [current screenshots and checklist](design/README.md).
+# Try the Creative Landscape Studio Windows test build
 
-# Try the Windows desktop test build
-
-This is Creative Landscape Studio's first desktop baseline, built from Open
-Garden Planner 1.29.5. The window and installer still say **Open Garden Planner**.
-It uses **centimeters/meters**; feet and inches are the next milestone.
+This guide accompanies the approved Creative desktop test bundle. The window
+opens **Creative Landscape Studio**, with feet and inches as the default for
+new projects. Installer filenames and the Start menu shortcut retain **Open
+Garden Planner** to preserve the inherited installer identity. Check
+**BUILD-INFO.json** for the exact source commit used to build your download.
+The old foundation build at `439e486414070161d9fea58a6123644e8d0afdc3` has the
+earlier interface and metric-only foundation; it cannot demonstrate this work.
+Use the new successful run linked in the draft PR and current README.
 
 ## Download and start
 
-1. Open the successful **Windows prototype download** run linked in the draft
-   pull request. Sign in to GitHub if needed, scroll to **Artifacts**, and click
-   **Creative-Landscape-Studio-Windows-x64-test**.
+1. Open the **Windows test download** link in the draft pull request. Sign in
+   to GitHub if needed and download **Creative-Landscape-Studio-Windows-x64-test**.
 2. Right-click the downloaded ZIP and select **Extract All**.
 3. Open **OpenGardenPlanner-v1.29.5-Setup.exe** and follow the installer. Start
-   **Open Garden Planner** from the Start menu.
+   **Open Garden Planner** from the Start menu; the Creative workspace opens.
 
 You do not need Python, a terminal, or coding. This build is for **64-bit Windows**
 on Intel/AMD PCs. Windows ARM is not verified. The installer is unsigned;
@@ -27,33 +29,39 @@ together, including **_internal** and **licenses**.
 
 ## Five-minute check
 
-1. Create a new plan. Use the drawing tools to add a rectangle and a garden bed.
-2. Drag a tree or shrub from the plant gallery onto the plan. Select and move it.
-3. Undo the move, then redo it. Try changing its size and switching layers.
-4. Use **File > Save As** to save a `.ogp` file in Documents. Close and reopen it.
-5. Try an export and confirm the resulting image/PDF shows your objects.
-6. For the inherited sun/shade controls, set the garden location and choose a
-   date/time. Change the time and inspect the shadow overlay. Results are a
-   planning approximation; building/tree heights and location affect them.
+1. Use **Open Project** to open **Southwest Michigan - sample landscape.ogp**
+   from the download. This editable sample contains a house, patio, walk, curved
+   bed, plants and dimensions. Save your work in Documents using **File > Save As**.
+2. Select the patio and edit its width. Try `10' 6 1/2"`. Undo with **Ctrl+Z**
+   and redo with **Ctrl+Y**. Bare numbers mean feet; explicit cm/m work too.
+3. Create a new plan and draw an object or place a plant from the library.
+   **Dimensions > Project units** also offers decimal feet and metric.
+4. Save, close, reopen the `.ogp` file and try **File > Export**.
+5. Choose **Sun Study** in the workspace selector and change the date/time.
+   The sample has a Michigan location. Times use your computer's time zone;
+   shade is a geometric planning approximation that depends on object heights.
 
-The download also contains **portable-check/baseline.ogp**, a tiny synthetic
-four-object plan used by the automated checks. Use **File > Open** to try it.
-Save your own work outside the application installation/extracted folder.
+Save your own projects outside the installation/extracted app folder. The
+company identity text remains a placeholder until an approved logo is supplied.
 
-## What this download establishes
+## What the automated Windows checks establish
 
-The workflow tests the actual frozen and installed editor: startup, bundled Qt3D
-imports, loopback server, opening a plan, canvas rendering, PNG/PDF/DXF/CSV
-output, saving, and reopening. `BUILD-INFO.json` identifies its exact source
-commit. Evidence is in **portable-check**, **installed-check**, and the test XML.
+The download is uploaded only after the actual portable and installed app pass
+startup, Qt subsystem/server checks and real Qt key/mouse interaction: drawing,
+plant placement, fractional-inch editing, undo/redo, save/reopen, physical
+PNG/PDF/DXF/CSV exports, bundled fonts/icons and live sun/shade. Native screenshots
+and JSON results are in **portable-creative-check** and **installed-creative-check**.
+The older API smoke evidence is in **portable-check** and **installed-check**;
+the source regression results are in **windows-editor-tests.xml**.
 
-Interactive mouse use on your PC, GPU rendering, installer upgrades/uninstall,
-printing, antivirus acceptance, and code signing still need manual testing.
-The local automation server is on by default at `127.0.0.1:8765`; other local
-programs can read/export/save through it. Editing tools require explicit opt-in
-and a token. Disable the server in Preferences if you do not need automation.
+Human use on your PC, GPU rendering, installer upgrades/uninstall, printing,
+native file dialogs, accessibility, display scaling and antivirus acceptance
+still need manual testing. The local automation server is on by default at
+`127.0.0.1:8765`; local programs can read/export/save through it. Editing tools
+require explicit opt-in and a token. Disable it in Preferences if unused.
 
 The source ZIP, PyQt binding source ZIP, license folder, notices, dependency
-manifest and checksums accompany the download. Keep them when sharing this GPL
-test build. Actions downloads expire after 90 days; this is not a production
-release. There is no Mac download in this milestone.
+manifest and checksums accompany the download. Keep them when sharing this
+**GPL-3.0-or-later** test build. Actions downloads expire after 90 days. The PR
+remains a draft; no production release or merge is authorized. macOS remains
+in scope, but there is no verified Mac installer for these changes.

@@ -1,6 +1,6 @@
 # Revised Creative desktop design
 
-The navy/ivory/gold direction is approved; this revised layout awaits owner visual review before a new installer. The normal desktop entry point now opens the real Creative workspace over Open Garden Planner's editor. The internal subclass name remains CreativePreviewWindow to avoid an unnecessary package rename.
+The owner approved the navy/ivory/gold direction and revised layout. A matching Windows test installer is undergoing native validation. The normal desktop entry point opens the real Creative workspace over Open Garden Planner's editor. The internal subclass name remains CreativePreviewWindow to avoid an unnecessary package rename.
 
 These are genuine captures of running Qt widgets and an editable synthetic `.ogp` project. The labeled identity text remains a placeholder; there is no approved company logo. No client data, company photographs or fake templates were added.
 
@@ -18,7 +18,7 @@ See [validation and unit coverage](CONTINUATION_VALIDATION.md), [original interf
 
 A developer with the prepared environment can run `.venv/bin/python -m open_garden_planner` (Windows: `.venv\Scripts\python.exe -m open_garden_planner`). `--classic` retains the inherited shell. To open the synthetic review plan in an isolated account, run `.venv/bin/python scripts/creative_design_preview.py`; it preserves subsequently saved sample edits. No new dependency is needed.
 
-For the owner, review the images first. A new Windows test installer follows revised visual approval and successful native validation; the [existing test download](../WINDOWS_DOWNLOAD.md) contains the older desktop foundation.
+Visual approval is complete. A new Windows test installer follows successful native validation; the older foundation download does not contain this interface. See [download instructions](../WINDOWS_DOWNLOAD.md).
 
 ## Source review checklist
 

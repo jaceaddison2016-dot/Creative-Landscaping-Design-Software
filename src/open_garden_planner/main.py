@@ -247,6 +247,17 @@ def main() -> int:
 
         return run_spike_cli(sys.argv)
 
+    probe_output = None
+    if "--prototype-check" in sys.argv:
+        # Explicit CI-only exercise of the actual application, in a private
+        # settings account. It accepts no client project or executable code.
+        if len(sys.argv) != 3 or sys.argv[1] != "--prototype-check":
+            return 2
+        from open_garden_planner.app.packaged_check import configure_probe
+
+        probe_output = Path(sys.argv[2]).resolve()
+        configure_probe()
+
     # Import here to avoid slow startup for --help, --version, etc.
     from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
@@ -289,6 +300,12 @@ def main() -> int:
 
     # Reapply theme after window is shown to update title bar
     theme(app, settings.theme_mode)
+
+    if probe_output is not None:
+        from open_garden_planner.app.packaged_check import schedule_probe
+
+        schedule_probe(app, window, probe_output)
+        return app.exec()
 
     # Open file passed as command-line argument (e.g. double-click .ogp file)
     args = app.arguments()

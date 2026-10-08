@@ -2,6 +2,22 @@
 
 Architecture Decision Records (ADRs) for significant technical choices.
 
+## ADR-052: Verify Creative workflows inside the native packaged application
+
+**Status**: Accepted for the approved Windows test-build stage.
+**Context**: Source/offscreen tests and the inherited MCP smoke cannot establish
+packaged imperial typing, shortcuts, fonts or bundled library interaction.
+**Decision**: Add an opt-in `--prototype-check OUTPUT` to the normal desktop
+entry point. Isolate its QSettings account, schedule QtTest after real window
+creation, validate physical exports and save native widget captures. An external
+driver launches the frozen executable outside the checkout without console
+handles and requires a matching fresh run ID, successful child exit and native
+Windows plugin. Repeat against the NSIS-installed copy before artifact upload.
+**Consequences**: QtTest is included in the frozen bundle but unused during normal
+startup. The diagnostic is coupled to the real application's controls and must
+evolve with them. Automated evidence remains distinct from human/GPU testing.
+Preserve installer identity, licensing and source distribution; create no release.
+
 ## ADR-001: PyQt6 as GUI Framework
 
 **Status**: Accepted

@@ -1,10 +1,10 @@
 # Creative continuation validation
 
-Evidence: 2026-10-08 UTC. Branch `feature/creative-design-preview`; draft PR [#3](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/pull/3). Implementation follows the verbatim [continuation brief](../../CREATIVE_CONTINUATION_BRIEF.md), the master plan and redesign brief. The color direction is approved; revised layout approval is pending.
+Evidence: 2026-10-08 UTC. Branch `feature/creative-design-preview`; draft PR [#3](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/pull/3). Implementation follows the verbatim [continuation brief](../../CREATIVE_CONTINUATION_BRIEF.md), the master plan and redesign brief. The owner approved the color direction and revised layout and authorized the matching Windows test build.
 
 ## Executed checks
 
-Final reviewed source: `7cfbcdc7746c3ae24806ebc7f12cd5ea3f986f90`. Documentation/capture commits after this SHA do not change application source.
+Reviewed visual source: `7cfbcdc7746c3ae24806ebc7f12cd5ea3f986f90`. The following table records that source stage. The subsequent packaging stage adds an opt-in workflow diagnostic; its native results will be recorded separately below.
 
 | Check | Result |
 | --- | --- |
@@ -54,4 +54,4 @@ The sample's curved bed is an editable sampled polygon, not a spline bed. Origin
 
 No new Windows build exists for this continuation. The available foundation artifact was built from `439e486414070161d9fea58a6123644e8d0afdc3` and contains the earlier interface; see [Windows download](../WINDOWS_DOWNLOAD.md). Do not use it to assess these screenshots or imperial work.
 
-Revised visual approval precedes another installer, as requested in continuation brief §8. Native Windows packaged startup/fonts/icons/drawing/input/save/reopen/exports are **not tested for these changes** yet. Signing and human testing remain pending. macOS previously passed dependency/source self-test on Apple Silicon and Intel; **no working Mac installer is established**, and the continuation has not run on a Mac. Qt3D GPU, native dialogs, accessibility and real display scaling require native/manual checks. Context7 is unavailable; the implementation uses installed Qt bindings and existing repository patterns. The separate upstream wiki checkout is absent, so no external wiki was synchronized.
+The owner's visual approval satisfies continuation brief §8. Native Windows packaged startup/fonts/icons/drawing/input/save/reopen/exports are **not tested for these changes** yet. The new opt-in actual-entry-point workflow diagnostic passed its two cloud integration checks; offscreen source checks do not establish a Windows package. Signing and human testing remain pending. macOS previously passed dependency/source self-test on Apple Silicon and Intel; **no working Mac installer is established**, and the continuation has not run on a Mac. Qt3D GPU, native dialogs, accessibility and real display scaling require native/manual checks. Context7 is unavailable; the implementation uses installed Qt bindings and existing repository patterns. The separate upstream wiki checkout is absent, so no external wiki was synchronized.

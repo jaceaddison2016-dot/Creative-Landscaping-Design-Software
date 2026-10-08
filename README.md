@@ -15,9 +15,8 @@ See the owner's [master plan](MASTER_PLAN.md),
 
 ## Trying the current prototype
 
-Review the [revised editor and welcome images](docs/design/README.md) first.
-The navy/ivory/gold direction is approved; the continuation brief requests
-another layout approval before a matching Windows installer is built.
+The owner approved the [revised editor and welcome](docs/design/README.md).
+The matching Windows installer is now undergoing native packaged validation.
 
 The [available Windows foundation download](docs/WINDOWS_DOWNLOAD.md) was
 built from `439e486414070161d9fea58a6123644e8d0afdc3`. It contains the older
@@ -85,5 +84,5 @@ The [desktop editor and welcome captures](docs/design/README.md) show the actual
 Qt application opened by the normal entry point. See the
 [design system](BRAND_DESIGN_SYSTEM.md), [redesign brief](CREATIVE_REDESIGN_BRIEF.md)
 and [continuation brief](CREATIVE_CONTINUATION_BRIEF.md). Identity text is an
-explicit placeholder. Revised layout approval and native Windows validation
-remain necessary before the next test installer.
+explicit placeholder. Visual approval is recorded; native Windows validation
+remains necessary before the next test installer is uploaded.

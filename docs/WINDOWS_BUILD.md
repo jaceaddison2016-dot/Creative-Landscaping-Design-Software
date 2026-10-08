@@ -13,6 +13,7 @@ python -m venv .venv
 .venv/Scripts/python scripts/collect_desktop_notices.py --output dist/OpenGardenPlanner/licenses --binding-sources dist/binding-sources
 .venv/Scripts/python installer/build_installer.py --version 1.29.5 --skip-pyinstaller
 .venv/Scripts/python scripts/desktop_baseline_smoke.py --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-smoke
+.venv/Scripts/python scripts/run_packaged_creative_check.py --exe dist/OpenGardenPlanner/OpenGardenPlanner.exe --output build/windows-creative --sample "docs/design/creative-preview/revised-light/Southwest Michigan - sample landscape.ogp"
 ```
 
 For the required frozen subsystem check, use `ogp-change-control` section 2.8.
@@ -24,6 +25,16 @@ and refuses an occupied port. It creates synthetic plans, invokes inherited
 save/export tools, and stops only the child it starts. Never run it against an
 existing live project. It does not enable editing. Existing pytest fixtures
 isolate their settings in a separate test organization.
+
+The Creative check launches the actual executable outside the checkout without
+inherited console handles, using a private **Creative Prototype QA** settings
+account. It draws and types through QtTest in the normal Creative window, then
+validates physical exports and captures screenshots. It requires a fresh run ID,
+exit zero, `frozen=true` and the native `windows` platform plugin. The workflow
+repeats it against the installed app and includes its evidence and the approved
+editable sample in the download. The runner uses Michigan's time zone for that
+sample; this does not alter an end user's computer. The opt-in
+`--prototype-check OUTPUT` accepts no client project or additional arguments.
 
 The constraints record the validated Python 3.12 baseline. Windows-specific
 transitives and exact downloaded wheels/hashes are recorded by pip's
