@@ -1737,3 +1737,13 @@ as new component strings. See the risk-log entry and
 **Root cause:** presentation was only handled at new UI entry points. Retained annotations, coupled numeric editors, brush callbacks, recovery loading and CAD import still had their old assumptions. QDoubleSpinBox decimals controlled its stored numeric precision as well as its displayed precision.
 **Fix:** refresh live item annotations and selection measurements; separate spin-box numeric precision from locale-aware metric display; use a current-strength material brush helper for edit/undo/state restore; synchronize loaded grid spacing through CanvasScene for every attached view; retain Find & Replace Ctrl+F and expose library search Ctrl+Shift+F; derive import defaults from declared DXF units, preserving explicit overrides and unitless defaults. Integration regressions exercise the actual Qt workflows, peer positions/ellipse dimensions, and physical DXF round trips.
 **Lesson:** presentation preferences must cross existing callback and loading seams. Test a changed component with a precise unchanged peer, and test both directions of a physical format conversion.
+
+
+## Case study: a unit-aware DXF default still passed through a lossy editor (2026-10-08)
+
+**Symptom:** valid kilometer and micron DXF imports silently used a factor ten times too small/large; US survey feet defaulted to centimeters.
+**Wrong theory:** using the file header plus ezdxf.conversion_factor was sufficient.
+**Key evidence:** `[DXF_UNIT_DIAG] 7 service 100000.0 dialog 10000.0`; `13 service 0.0001 dialog 0.001`; `21 service 1.0 dialog 1.0`, with diagnostic caller stacks. The retained dialog range/three decimal places changed the header-derived value, and ezdxf's conversion table marks survey units unsupported.
+**Root cause:** correct service conversion still traversed a bounded rounded QDoubleSpinBox; unsupported library conversions were mistaken for unitless input.
+**Fix:** preserve the canonical declared factor independently of compact display, allow the full declared DXF factor range with 15 decimal storage, keep untouched rounded text from firing an edit, and explicitly cover microinches/mils and US survey foot/inch/yard/mile (one survey foot = 1200/3937 m). Explicit user changes remain authoritative. Twenty-four declared-unit cases exercise dialog completion, untouched interpretation, physical import and an actual edited override.
+**Lesson:** inspect the editor's numeric storage range/precision, not merely the formatter. Unknown units and known-but-unsupported units must not share a fallback by accident. Temporary diagnostics remain only in ignored local evidence.

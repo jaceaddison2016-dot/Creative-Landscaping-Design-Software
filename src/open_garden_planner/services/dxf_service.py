@@ -310,15 +310,21 @@ class DxfImportService:
     @staticmethod
     def _declared_scale(doc) -> float:
         """Centimeters per declared DXF unit; unknown/unitless keeps legacy 1."""
-        from ezdxf.units import conversion_factor
-
         units = int(doc.header.get("$INSUNITS", 0))
-        if units <= 0:
-            return 1.0
-        try:
-            return conversion_factor(units, 5)
-        except (TypeError, ValueError):
-            return 1.0
+        # DXF includes microinches/mils and US survey units absent from
+        # ezdxf's conversion table. One US survey foot is 1200/3937 meters.
+        survey_foot_cm = 120000 / 3937
+        factors = {
+            1: 2.54, 2: 30.48, 3: 160934.4,
+            4: .1, 5: 1., 6: 100., 7: 100000.,
+            8: 2.54e-6, 9: .00254, 10: 91.44,
+            11: 1e-8, 12: 1e-7, 13: 1e-4,
+            14: 10., 15: 1000., 16: 10000., 17: 1e11,
+            18: 14959787070000., 19: 9.46e17, 20: 3.09e18,
+            21: survey_foot_cm, 22: survey_foot_cm / 12,
+            23: survey_foot_cm * 3, 24: survey_foot_cm * 5280,
+        }
+        return factors.get(units, 1.0)
 
     @staticmethod
     def default_scale_factor(file_path: Path | str) -> float:

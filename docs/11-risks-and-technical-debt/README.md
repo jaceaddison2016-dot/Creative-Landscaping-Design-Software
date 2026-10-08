@@ -1026,3 +1026,8 @@ The normal-entry-point subprocess test initially scheduled QTimer.singleShot bef
 ### Continuation review: shared presentation paths (2026-10-08)
 
 Independent desktop probes found six gaps missed by the initial 7,669-test suite: stale annotation/status units, rounded peer dimensions, full-strength brushes after edits, recovery grid drift, Ctrl+F ambiguity, and feet DXF reimport at centimeter scale. Fixes now share loaded-grid synchronization and current-strength brush creation, preserve canonical spin-box precision beneath the metric display, refresh existing annotations, retain the original Find & Replace shortcut and derive CAD import defaults from declared units. Regression coverage includes real keyboard dispatch, precise rectangle/ellipse peers, snapping after recovery and a physical export/reimport. Native packaging remains gated by renewed layout approval.
+
+
+### DXF conversion-factor precision (2026-10-08)
+
+A declared-unit default can still be corrupted by a numeric widget: the retained factor editor clamped kilometer factors from 100000 to 10000 and micron factors from 0.0001 to 0.001. Its compact formatter now preserves the canonical factor until a real user edit, with the range/precision needed by declared DXF units. Explicit standard and US survey conversion factors also avoid ezdxf's unsupported-unit fallback. All 24 declared units have dialog/service/override regressions; unknown and unitless files continue to need user-confirmed scaling when their physical meaning is absent.

@@ -22,6 +22,7 @@ from open_garden_planner.core.units import IMPERIAL, METRIC, DisplayUnits, Lengt
 from open_garden_planner.services.dxf_service import DxfExportService, DxfImportService
 from open_garden_planner.services.export_service import ExportService
 from open_garden_planner.services.shopping_list_service import ShoppingListService
+from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.items import (
     CircleItem,
     EllipseItem,
@@ -191,6 +192,35 @@ def test_unitless_dxf_default_remains_explicitly_one_cm(window, tmp_path, qtbot)
     assert dialog.scale_factor == 1
     result = DxfImportService.import_file(window.canvas_scene, path)
     assert result.items[0].radius == 20
+
+
+@pytest.mark.parametrize(("declared", "expected"), [
+    (1, 2.54), (2, 30.48), (3, 160934.4), (4, .1), (5, 1.), (6, 100.),
+    (7, 100000.), (8, 2.54e-6), (9, .00254), (10, 91.44),
+    (11, 1e-8), (12, 1e-7), (13, .0001), (14, 10.), (15, 1000.),
+    (16, 10000.), (17, 1e11), (18, 14959787070000.), (19, 9.46e17), (20, 3.09e18),
+    (21, 120000 / 3937), (22, 10000 / 3937), (23, 360000 / 3937), (24, 633600000 / 3937),
+])
+def test_declared_dxf_units_preserve_default_precision_and_explicit_edit(qtbot, tmp_path, declared, expected):
+    path = tmp_path / f"units-{declared}.dxf"
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = declared
+    doc.modelspace().add_circle((0, 0), radius=1)
+    doc.saveas(path)
+    dialog = DxfImportDialog(path)
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: not dialog._loading_label.parent())
+    assert DxfImportService.default_scale_factor(path) == pytest.approx(expected, rel=1e-15)
+    assert dialog.scale_factor == pytest.approx(expected, rel=1e-15)
+    dialog._scale_spin.interpretText()
+    assert not dialog._scale_edited
+    assert dialog.scale_factor == pytest.approx(expected, rel=1e-15)
+    scene = CanvasScene()
+    result = DxfImportService.import_file(scene, path, scale_factor=dialog.scale_factor)
+    assert result.items[0].radius == pytest.approx(expected, rel=1e-15)
+    enter(dialog._scale_spin, "2.5", qtbot)
+    assert dialog._scale_edited
+    assert dialog.scale_factor == 2.5
 
 
 @pytest.fixture
