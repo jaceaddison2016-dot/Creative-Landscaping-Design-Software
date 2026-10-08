@@ -53,3 +53,16 @@ key restricts rebuilding. Changes must preserve the GPL and dependency notices.
 The inherited upstream automatic release workflow is restricted to the upstream
 repository. This fork's workflow uploads test artifacts only; it creates no tags,
 publishes no production release, and merges no pull requests.
+
+Windows source GUI regressions use the native `windows` Qt plugin. Diagnostic
+runs found that the runner's `offscreen` plugin resolves no system font family
+and rejects even digits, giving invalid glyph and layout evidence. Linux remains
+offscreen. Font and measurement assertions stay intact.
+
+`scripts/record_creative_evidence.py` also records the installed synthetic check's
+four PNG captures and native/build JSON in API-readable GitHub logs, in numbered
+base64 chunks with SHA-256. It validates the successful frozen/native result and
+source SHA before recording. These are the same files preserved in the artifact;
+this review route supports cloud environments whose allowlist excludes Actions'
+Azure storage host. It includes only the known synthetic captures, no arbitrary
+projects or personal files. Reconstructed images must match their digests.

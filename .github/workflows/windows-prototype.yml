@@ -53,7 +53,9 @@ jobs:
         run: tzutil /s "Eastern Standard Time"
       - name: Verify inherited editor workflows
         env:
-          QT_QPA_PLATFORM: offscreen
+          # Windows offscreen has no system font database on this runner.
+          # Use the real Windows Qt plugin for native layout/glyph checks.
+          QT_QPA_PLATFORM: windows
         run: >-
           python -m pytest tests/integration/test_drawing_workflows.py
           tests/integration/test_undo_redo.py tests/integration/test_selection_and_resize.py
@@ -66,6 +68,7 @@ jobs:
           tests/integration/test_creative_imperial_workflow.py
           tests/integration/test_creative_packaged_check.py
           tests/unit/test_creative_packaged_driver.py
+          tests/unit/test_creative_evidence_log.py
           --junitxml=build/windows-editor-tests.xml -q
       - name: Freeze the actual upstream desktop application
         run: python installer/build_installer.py --version 1.29.5 --skip-nsis
@@ -136,6 +139,10 @@ jobs:
           Get-ChildItem dist/download -File | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content -Encoding ascii dist/download/SHA256SUMS.txt
+      - name: Record genuine installed screenshots and build metadata for API review
+        run: >-
+          python scripts/record_creative_evidence.py build/windows-installed-creative
+          --build-info dist/download/BUILD-INFO.json
       - name: Upload Windows test download
         uses: actions/upload-artifact@v4
         with:

@@ -1787,3 +1787,18 @@ as new component strings. See the risk-log entry and
 **Fix:** The diagnostic retains a fresh TemporaryDirectory and assigns its path to process-local `tempfile.tempdir` before application construction or recovery timers. The normal app's autosave contract is unchanged. A real subprocess regression invokes the flag directly and requires unchanged sentinel bytes.
 
 **Lesson:** Trace each persistence path rather than inferring isolation from settings alone. Test protection of pre-existing data, including direct diagnostic invocation.
+
+
+## Case study: Windows offscreen Qt supplied no system fonts
+
+**Symptom:** Native Windows build preparation passed 272 checks but failed three glyph/narrow-window checks; Linux checks passed.
+
+**Wrong theories:** The approved application font lacks superscripts, or a redesign is required to fix Windows status spacing.
+
+**Key evidence:** Two unchanged-assertion diagnostic runs reported requested `Sans Serif`, an empty resolved font family, `platform=offscreen`, and False for every digit, quote, slash and superscript. The same synthetic selection needed 564px with this font engine while its allocated label was 459px.
+
+**Root cause:** The Windows workflow and subprocess tests forced Qt's offscreen plugin, which has no system font database on this runner. Its font metrics do not represent the shipped native Windows app.
+
+**Fix:** Select the native windows plugin for Windows GUI tests and subprocess probes; retain offscreen on Linux. Keep all glyph, width and timeout assertions. Native validation is still required to prove this correction. No product layout or fonts are changed to satisfy an empty-font test backend.
+
+**Lesson:** Record the actual platform plugin and resolved font before attributing cross-platform glyph/layout failures to the UI. Diagnostic failure messages remain useful; no temporary print instrumentation is retained.

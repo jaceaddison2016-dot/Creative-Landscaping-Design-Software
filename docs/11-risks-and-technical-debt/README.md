@@ -1046,3 +1046,8 @@ A detached Windows child can inherit explicit standard handles when Popen mixes 
 ### Creative QA: untitled recovery needs separate temp isolation
 
 Private QSettings alone left AutoSaveManager pointing at the shared Python temp untitled-recovery file. A synthetic sentinel was deleted by the diagnostic new-plan path. The opt-in diagnostic now establishes a retained fresh TemporaryDirectory before app construction, so startup recovery and reset cannot inspect or clear normal-account recovery. A direct subprocess test proves the sentinel bytes survive. Normal autosave semantics remain unchanged; see ADR-052.
+
+
+### Windows source GUI checks need native Qt fonts
+
+The Windows runner offscreen plugin resolves no system font family, reports every ASCII digit missing and supplies unusable font metrics. Source GUI and subprocess checks now use windows on Windows and offscreen on Linux; assertions remain unchanged. Native evidence verifies fonts and width using the shipped plugin. See WINDOWS_BUILD and both debug case studies.

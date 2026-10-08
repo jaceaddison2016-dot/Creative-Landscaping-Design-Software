@@ -10,7 +10,8 @@ from pathlib import Path
 def test_actual_entrypoint_exercises_imperial_gui_and_exports(tmp_path, qtbot):
     root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
-    env.update({"QT_QPA_PLATFORM": "offscreen", "XDG_CONFIG_HOME": str(tmp_path / "config"),
+    platform = "windows" if os.name == "nt" else "offscreen"
+    env.update({"QT_QPA_PLATFORM": platform, "XDG_CONFIG_HOME": str(tmp_path / "config"),
                 "XDG_DATA_HOME": str(tmp_path / "data"), "XDG_CACHE_HOME": str(tmp_path / "cache")})
     sample = root / "docs/design/creative-preview/revised-light/Southwest Michigan - sample landscape.ogp"
     original = sample.read_bytes()
@@ -23,7 +24,7 @@ def test_actual_entrypoint_exercises_imperial_gui_and_exports(tmp_path, qtbot):
     assert result.returncode == 0, result.stdout + result.stderr + str(report)
     assert report["status"] == "PASS"
     assert report["frozen"] is False  # This test does not establish a native Windows build.
-    assert report["platform_plugin"] == "offscreen"
+    assert report["platform_plugin"] == platform
     assert report["imperial_width_cm"] == 321.31
     assert report["icons"] and report["control_font"]
     assert report["human_manual_test"] == "not performed"
@@ -49,7 +50,7 @@ def test_direct_diagnostic_preserves_existing_untitled_recovery(tmp_path, qtbot)
     sentinel = b"synthetic recovery sentinel: never delete another account's work"
     recovery.write_bytes(sentinel)
     env = os.environ.copy()
-    env.update({"QT_QPA_PLATFORM": "offscreen", "TMPDIR": str(system_temp),
+    env.update({"QT_QPA_PLATFORM": "windows" if os.name == "nt" else "offscreen", "TMPDIR": str(system_temp),
                 "TEMP": str(system_temp), "TMP": str(system_temp),
                 "XDG_CONFIG_HOME": str(tmp_path / "config"),
                 "XDG_DATA_HOME": str(tmp_path / "data"), "XDG_CACHE_HOME": str(tmp_path / "cache")})
