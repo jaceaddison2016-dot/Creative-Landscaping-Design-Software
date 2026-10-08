@@ -9,6 +9,9 @@ validate the inherited desktop foundation before changing units or redesigning i
 
 ## Try it on Windows
 
+Download the [current Windows x64 test bundle](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37707747601/artifacts/11520149105)
+(about 436 MiB; GitHub sign-in may be required).
+
 The first deliverable is a **Windows x64 test download** with an installer and a
 portable ZIP. Follow [the simple download instructions](docs/WINDOWS_DOWNLOAD.md)
 from the draft pull request's successful Windows Actions run. No coding or Python

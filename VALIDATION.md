@@ -17,11 +17,12 @@ compatible. Installation is not a GPU guarantee.
 | Actual source self-test | Pass: six Qt3D imports, matching runtime version, real loopback API server |
 | Normal app process | Pass: 8-second startup, fixture summary, rendered PNG, PDF/DXF/CSV, .ogp save and second-process reopen |
 | Output checks | PNG/PDF signatures; DXF geometry via ezdxf; CSV header; saved/reloaded object counts |
-| Ruff src/tests/scripts | Baseline pass; final check before PR |
-| Bandit HIGH severity | Baseline pass, zero HIGH results; final check before PR |
-| Context parity / tracked secret scan | Pass; final check before PR |
+| Ruff src/tests/scripts | Pass, including final operational scripts |
+| Bandit HIGH severity | Pass, zero HIGH results |
+| Context parity / citation / tracked secret scans | Pass |
 | Notice/source collector | Pass: 70 dependency metadata/notice sets and all four exact PyQt/sip source archives with verified PyPI SHA-256 |
 | First full suite | 7,586 passed, 36 skipped, 4 failed, 42 warnings; 7,626 collected; 743.07 seconds |
+| Final full suite | **7,590 passed, 36 skipped, zero failures/errors**, 42 warnings; 7,626 collected; 741.65 seconds; exit 0 |
 
 First-run failures were investigated, not suppressed:
 
@@ -35,13 +36,20 @@ First-run failures were investigated, not suppressed:
   It now patches Path.home to pytest's temporary directory and also verifies
   directory creation. Production path behavior and assertions were not removed.
 
-The two corrected test files pass 56/56. A fresh full suite is required after these
-changes and will be recorded before completing the draft PR. Earlier redirection
+The two corrected test files pass 56/56. The second full run had 7,587 passed,
+36 skipped and three README banner failures: the fork README had moved upstream's
+banner to the reference copy. The root banner was restored and all nine resource
+tests pass. The fresh full suite after this correction passed, with the final
+result above; XML is `build/milestone-a/verified-tests.xml` and its matching log
+is `verified-tests.log`. Earlier redirection
 failures did not execute tests and are not suite runs. Logs/XML are in ignored
 build/milestone-a; persistent CI evidence is linked in the PR.
 
 All 36 headless skips are retained, including GPU/3D-dependent cases; exact reasons
-are in JUnit. The 42 warnings concern inherited deprecated MCP client transport
+are in JUnit: 20 Linux/X11 rendering cases require the render opt-in and Xvfb,
+13 Qt3D window cases require a real RHI context, two platform-specific bundled
+Qt binding checks and one Windows registry-backend case are skipped here.
+The actual source self-test separately confirms binding imports. The 42 warnings concern inherited deprecated MCP client transport
 names. No UI strings, translations, engine code or .ogp schema changed.
 
 ## Native evidence
@@ -52,11 +60,22 @@ species, sun/shadow, autosave and export tests. The subsystem helper waits for t
 GUI child and rejects nonzero exits without console pipes. Real portable and
 installed processes must render/save/export/reopen before upload. A PID or open
 port alone cannot pass. The download carries evidence and exact source/build records.
-Windows final installer results remain pending until CI finishes.
+[Windows run 37707747601](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37707747601)
+completed successfully at build commit `4419983`. Both portable and installed
+copies passed subsystem/startup/load/render/save/reopen and PNG/PDF/DXF/CSV checks.
+Required ZIP contents, CRCs and installer format passed before artifact upload.
+The source commit, dependency report, notices and evidence accompany artifact
+`11520149105`; it was confirmed present, nonexpired and 456,944,585 bytes.
+Later commits are documentation-only, with identical runtime/build scripts.
 
 Native Intel and Apple Silicon Mac dependency installs and source self-tests passed
 in run 37706636013 without changing Qt pins. Mac package/manual QA is deferred by
 the owner's Windows-first steering. There is no verified Mac download.
+
+[Repository CI at `65cc717`](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37708474498)
+also completed successfully: full pytest, Ruff, Bandit/secret scanning and context
+parity. Subsequent evidence-only documentation changes do not alter runtime,
+tests, scripts or packaging. PR-triggered checks may rerun these same gates.
 
 ## Limits and review
 
@@ -69,3 +88,13 @@ Inherited instructions request Context7, but no Context7 tool is available here.
 Installed source/metadata and upstream build instructions provided the evidence.
 Independent senior review is required before opening the draft PR; the PR remains
 draft/unmerged until the owner confirms manual testing. This does not complete B–F.
+
+Independent review completed at `4419983` with all P0/P1 findings resolved; a clean
+documentation follow-up at `65cc717` confirmed the restored banner and links.
+Native command/archive failure handling and fork/update documentation were the
+three corrected review findings. No runtime code change followed that review.
+
+GitHub's API exposed completed job/step statuses and artifact metadata. Direct
+job-log retrieval in this cloud was blocked by the redirected Azure blob hostname;
+the public run and artifact links retain evidence for the owner. Native checks
+were executed by the Windows/Mac runners, not simulated in Linux.

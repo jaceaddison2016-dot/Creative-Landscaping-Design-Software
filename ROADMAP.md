@@ -7,7 +7,7 @@ manually accepted.
 
 | Milestone | Outcome | Current state |
 | --- | --- | --- |
-| A | Actual upstream desktop editor, provenance, available validation, honest native platform gate | Imported and being validated; Windows download is immediate target. Owner desktop test pending. |
+| A | Actual upstream desktop editor, provenance, available validation, honest native platform gate | Source and native Windows download validated; independent review clean. Owner desktop test pending; Mac packaging deferred. |
 | B | Centralized feet/inches input/display, metric compatibility, practical site/image/location/time-zone/north setup | Not started. Preserve centimeter geometry and avoid conversion drift. |
 | C | Useful landscape sample and curated plant/structure palette | Not started. A's four-object smoke fixture is diagnostic only. |
 | D | Landscape sun/shadow studies, clear dates/time zones, seasonal shade/heatmaps and explanations | Existing engine inherited; landscape workflow not started. |
