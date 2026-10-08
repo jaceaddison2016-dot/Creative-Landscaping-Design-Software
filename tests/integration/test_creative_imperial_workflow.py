@@ -8,7 +8,7 @@ import ezdxf
 import pytest
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QPixmap
-from PyQt6.QtWidgets import QApplication, QGroupBox, QMessageBox
+from PyQt6.QtWidgets import QApplication, QGroupBox, QLabel, QMessageBox
 
 from open_garden_planner.app.creative_preview import CreativePreviewWindow
 from open_garden_planner.app.settings import get_settings
@@ -186,8 +186,17 @@ def test_small_window_keeps_measurements_and_hides_optional_context(window, qtbo
     item.setSelected(True)
     assert not window.location_label.isVisible()
     assert not window.season_label.isVisible()
-    qtbot.waitUntil(lambda: window.selection_label.width() >=
-                    window.selection_label.fontMetrics().horizontalAdvance(window.selection_label.text()))
+    def measurements_fit():
+        label = window.selection_label
+        required = label.fontMetrics().horizontalAdvance(label.text())
+        assert label.width() >= required, {
+            "window_width": window.width(), "label_width": label.width(), "required": required,
+            "font": label.font().toString(), "text": label.text(),
+            "status_items": [(child.text(), child.width(), child.isVisible())
+                             for child in window.statusBar().findChildren(QLabel)],
+        }
+
+    qtbot.waitUntil(measurements_fit)
     window.resize(1440, 900)
     assert window.location_label.isVisible()
     assert window.season_label.isVisible()

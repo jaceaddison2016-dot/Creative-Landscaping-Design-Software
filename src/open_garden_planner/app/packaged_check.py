@@ -175,9 +175,12 @@ def exercise_window(app, window, output: Path) -> dict:
     QTest.keyClick(window.canvas_view, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
     QTest.qWait(100)
     require(close_to(patio.rect().width(), 321.31), "Packaged Ctrl+Y failed")
-    require(all(width.fontMetrics().inFont(char) for char in "0123456789'\"/²³"),
-            "Measurement font glyphs missing")
     control_font = QFontInfo(width.font()).family()
+    glyphs = {f"U+{ord(char):04X}": width.fontMetrics().inFont(char)
+              for char in "0123456789'\"/²³"}
+    require(all(glyphs.values()),
+            f"Measurement font glyphs missing: requested={width.font().toString()}, "
+            f"resolved={control_font}, platform={app.platformName()}, glyphs={glyphs}")
     patio_id = patio.item_id
     project = output / "imperial-roundtrip.ogp"
     window._save_to_file(project)
