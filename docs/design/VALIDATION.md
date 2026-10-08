@@ -9,7 +9,7 @@ visual approval is pending.
 
 | Check | Result / scope |
 | --- | --- |
-| Focused Qt / contrast / i18n run | 70 passed: 8 preview integration workflows, 39 contrast cases, 23 inherited i18n checks. |
+| Focused Qt / contrast / i18n run | 71 passed in 20.28 s after review fixes: 9 preview integration workflows, 39 contrast cases, 23 inherited i18n checks. Includes real subprocess launcher/restart/capture isolation. |
 | Preview-only rerun after layout refinements | 8 passed. |
 | Contrast measurements | 40 explicit pairings in contrast.csv; minimum tested text ratio 4.89, control ratio 3.76. |
 | Source captures | All six capture processes exited zero; real before/light/dark/narrow/150%/200% editor and welcome PNGs. |
@@ -18,8 +18,8 @@ visual approval is pending.
 | Bandit HIGH | Passed, no HIGH findings. |
 | Agent context / citations | Passed. |
 | Secret scan | Passed on tracked files; repeat after staging the new files. |
-| Full inherited suite | Investigation in progress: a full-run styling interaction needs diagnosis. This is not a pass claim. Update this row with the completed result before the draft review. |
-| Independent senior review | Pending. Record findings and disposition before creating the draft PR. |
+| Full inherited suite | Not completed. Two full runs and an alphabetical-prefix reproduction were interrupted after prolonged Qt styling work around the preview theme tests. Instrumentation observed roughly 79,000 retained widgets; the focused run completes. Root cause is not fully isolated, and no full-suite green result is claimed. CI/full-suite completion remains a gate before landing. |
+| Independent senior review | First review of 439e486..c8859ed found sample-file overwrite, launcher preference/translation defects, fullscreen sun chrome and a broken link. Fixes and regression coverage are recorded in docs/reviews/CREATIVE_DESIGN_PREVIEW.md; clean re-review pending. |
 
 The full suite includes drawing, selection, dragging, snapping, numeric editing,
 undo/redo, layers, project serialization, recovery, solar/shadow and export tests.
@@ -27,6 +27,9 @@ Focused preview tests additionally drive a real library click → real inherited
 tree gesture → undo/redo → save/reopen; synchronized layer commands; dock
 restoration/fullscreen; light/dark/fallback; New/Open/recent/missing-file handling
 and actual German translation loading, including the inherited footer.
+The subprocess launcher test additionally verifies a saved edited sample,
+German menus, dark theme, window geometry, hidden docks and suppressed welcome
+survive an interactive restart and a separate screenshot capture.
 
 ## Capture conditions and limits
 
@@ -54,8 +57,9 @@ that scale needs additional layout work. Native dock glyphs, all inherited
 dialog states and complete screen-reader behavior still require visual/manual QA.
 
 Before captures use the unchanged upstream classes with a fresh isolated
-reference account. Proposed captures use the real app subclass with a fresh
-isolated preview UI state. Both use the same serialized synthetic fixture;
+reference capture account. Proposed captures use the real app subclass with a
+separate capture account and fixture path; capture never replaces the interactive
+sample or its settings. Both use the same serialized synthetic fixture;
 selected patio geometry is unchanged. Capture setup opens the actual Properties
 accordion and switches off the existing object-name-label action. These are
 normal UI states, not drawn overlays. The warm solid lawn is sample-project
@@ -74,8 +78,8 @@ XDG_CACHE_HOME=$PWD/build/cloud-state/cache \
 Use `--original` or `--dark` for the corresponding reference/alternative. For
 150% use `QT_SCALE_FACTOR=1.5 --width 1280 --height 720` (put the environment
 assignment before the command, and the flags after it); for 200%, factor 2 and
-960×600. Captures reset only the isolated account's UiState group for repeatability.
-Interactive source preview keeps its workspace preferences.
+960×600. Captures reset only their capture account's UiState group for repeatability.
+Interactive source preview keeps its workspace preferences and saved sample edits.
 
 ## Not tested / not changed
 

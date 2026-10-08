@@ -1680,3 +1680,30 @@ signal. Observe the active tool and completed gesture before assuming placement
 semantics. Pinned by `test_library_click_places_undoable_tree_and_round_trips`
 in `tests/integration/test_creative_design_preview.py`; risk-log cross-reference
 in `docs/11-risks-and-technical-debt/README.md`.
+
+## Case study: a desktop preview subclass changed inherited translation context (2026-10-07)
+
+**Symptom:** With the actual German QM installed, the preview File menu stayed
+English even though the welcome proposal translated.
+
+**Wrong theory:** Registering the new CreativePreview strings and welcome footer
+was enough to preserve inherited localization.
+
+**Key logs:** `[TRANSLATION_PROBE] inherited: &File`;
+`[TRANSLATION_PROBE] original context: &Datei`;
+`[TRANSLATION_PROBE] actual menu: &File`.
+
+**Root cause:** QObject.tr used the new CreativePreviewWindow class context for
+inherited methods. Existing menu strings were registered under GardenPlannerApp.
+The runner also omitted normal startup's load_translator initialization, caught
+by independent review.
+
+**Fix:** Forward inherited tr calls to GardenPlannerApp, keep new strings in
+CreativePreview, and load the saved translator before constructing the window.
+Compiled-German tests inspect the real menu/header actions; a real launcher
+subprocess test verifies the saved language on restart. Remove probe logging.
+
+**Lesson:** A subclass can change a framework's implicit lookup context without
+changing any inherited text. Check the actual launcher and main window as well
+as new component strings. See the risk-log entry and
+`docs/reviews/CREATIVE_DESIGN_PREVIEW.md`.

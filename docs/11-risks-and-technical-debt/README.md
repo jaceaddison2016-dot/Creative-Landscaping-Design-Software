@@ -997,3 +997,17 @@ context used by inherited footer methods: New/Open translated, while Close and
 the startup checkbox stayed English. Register the inherited strings under
 CreativeWelcomeDialog too. Pinned by `test_german_preview_and_inherited_footer`.
 These lessons change no upstream placement or translation algorithm.
+
+The same Qt context change affected the main-window subclass: a compiled German
+probe returned `&File` from the inherited call versus `&Datei` from the registered
+GardenPlannerApp context. CreativePreviewWindow now forwards inherited `tr()`
+calls to that original context; new preview strings keep their explicit context.
+The real menu and the shared header New action are covered by the German test.
+
+Capture preparation must not run unconditionally during interactive startup.
+Independent review found it overwrote the loaded sample (and therefore Ctrl+S
+edits), reset window/docks/theme and ignored the visible welcome preference.
+Capture now uses a separate account and fixture path; interactive startup loads
+the saved language and honors existing sample, theme, geometry, docks and welcome
+preference. `test_interactive_runner_keeps_saved_language_geometry_and_docks`
+launches real subprocesses before and after a real capture to pin these seams.

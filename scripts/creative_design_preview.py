@@ -22,6 +22,7 @@ from open_garden_planner.app import settings as app_settings
 from open_garden_planner.app.application import GardenPlannerApp
 from open_garden_planner.app.creative_preview import CreativePreviewWindow
 from open_garden_planner.core.fill_patterns import FillPattern
+from open_garden_planner.core.i18n import load_translator
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.project import ProjectManager
 from open_garden_planner.models.layer import Layer
@@ -101,29 +102,34 @@ def main() -> int:
     # names are not changed in settings.py. Do this BEFORE any stores exist.
     app_settings.ORGANIZATION_NAME = "cofade_design_preview"
     app_settings.APPLICATION_NAME = "Original Design Reference" if args.original else "Creative Design Preview"
+    if args.capture:
+        app_settings.APPLICATION_NAME += " Capture"
     app = QApplication(sys.argv[:1])
     app.setOrganizationName(app_settings.ORGANIZATION_NAME)
     app.setApplicationName(app_settings.APPLICATION_NAME)
     settings = app_settings.get_settings()
+    load_translator(app, settings.language)
     if args.capture:
         # Repeatable evidence must start from a fresh workspace, rather than
         # replay toolbar/splitter geometry from a different experiment. This
         # removes only UI state in the already-isolated preview account.
         app_settings.create_qsettings().remove("UiState")
-    settings.show_welcome_on_startup = False
+        settings.show_welcome_on_startup = False
     settings.agent_api_enabled = False
     settings.download_plant_images = False
-    mode = ThemeMode.DARK if args.dark else ThemeMode.LIGHT
+    mode = ThemeMode.DARK if args.dark else (ThemeMode.LIGHT if args.capture else settings.theme_mode)
     settings.theme_mode = mode
     theme = apply_theme if args.original else apply_creative_theme
     theme(app, mode)
     window = GardenPlannerApp() if args.original else CreativePreviewWindow()
-    window.showNormal()
-    window.resize(args.width, args.height)
-    fixture_dir = ROOT / "build" / "creative-preview"
+    if args.capture:
+        window.showNormal()
+        window.resize(args.width, args.height)
+    fixture_dir = args.capture if args.capture else ROOT / "build" / "creative-preview"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     fixture = fixture_dir / "Southwest Michigan - sample landscape.ogp"
-    make_landscape_fixture(fixture)
+    if args.capture or not fixture.exists():
+        make_landscape_fixture(fixture)
     window._load_project_file(str(fixture))
     window._sun_toolbar.set_datetime_local(datetime(2026, 6, 21, 16, 0))
     window._sun_sim_action.trigger()
@@ -131,7 +137,8 @@ def main() -> int:
     window.canvas_scene.set_labels_visible(False)
     if isinstance(window, CreativePreviewWindow):
         window.library.category.setCurrentIndex(3)  # existing Trees category
-        window.reset_workspace()
+        if args.capture:
+            window.reset_workspace()
     window.show()
 
     def capture() -> None:
@@ -164,7 +171,7 @@ def main() -> int:
                 "canvas_width": window.canvas_view.width(),
                 "original": args.original, "dark": args.dark,
                 "sun_state": window._sun_controller.state,
-                "project": str(fixture.relative_to(ROOT)),
+                "project": str(fixture.relative_to(ROOT)) if fixture.is_relative_to(ROOT) else str(fixture),
                 "snapshot": window._project_manager.snapshot_dict(window.canvas_scene),
             }
             (args.capture / "evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
@@ -178,7 +185,10 @@ def main() -> int:
             # Retain the non-modal preview dialog for its window lifetime.
             window.creative_welcome = welcome
 
-    QTimer.singleShot(900, capture)
+    if args.capture:
+        QTimer.singleShot(900, capture)
+    else:
+        QTimer.singleShot(900, window.canvas_view.fit_in_view)
     return app.exec()
 
 

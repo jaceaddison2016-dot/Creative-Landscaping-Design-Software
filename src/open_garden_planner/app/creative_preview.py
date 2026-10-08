@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -27,6 +27,11 @@ from open_garden_planner.ui.theme import ThemeMode
 
 class CreativePreviewWindow(GardenPlannerApp):
     """Keep the real canvas, controllers, commands, dialogs and project manager."""
+
+    def tr(self, source_text: str, disambiguation: str | None = None, n: int = -1) -> str:
+        # QObject.tr otherwise uses the subclass name. Inherited menu/dialog
+        # strings live in GardenPlannerApp, while new preview strings use _tr.
+        return QCoreApplication.translate("GardenPlannerApp", source_text, disambiguation, n)
 
     def __init__(self) -> None:
         super().__init__()
@@ -161,7 +166,7 @@ class CreativePreviewWindow(GardenPlannerApp):
         self._creative_fullscreen_state = {
             widget: widget.isVisible() for widget in (
                 self.library_dock, self.properties_dock, self.preview_header,
-                self.category_toolbar, self.constraint_toolbar,
+                self.category_toolbar, self.constraint_toolbar, self._sun_toolbar,
             )
         }
         super()._enter_preview_mode()

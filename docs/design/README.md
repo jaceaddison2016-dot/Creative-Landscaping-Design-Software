@@ -27,7 +27,7 @@ For a nonprogrammer, **review the two images above first**. Approval can be a
 simple “Approve this direction” or a description of the visual changes wanted.
 The brief's execution step 4 requires this approval before broad application
 redesign. A new Windows download follows that stage and its checks; the earlier
-[Windows desktop-foundation download](../WINDOWS_PROTOTYPE.md) still contains the
+[Windows desktop-foundation download](../WINDOWS_DOWNLOAD.md) still contains the
 existing upstream interface.
 
 ## Developer source preview
@@ -46,9 +46,11 @@ On an already prepared Windows source checkout:
 .venv\Scripts\python.exe scripts\creative_design_preview.py
 ```
 
-The runner opens a synthetic landscape and the real welcome proposal. Close the
-welcome to edit. It isolates preferences, recents and recovery from the normal
-application, disables its optional agent server and never loads a client project.
+The runner initially opens a synthetic landscape and the real welcome proposal.
+Close the welcome to edit. Later launches preserve edits saved to this sample and
+respect the welcome checkbox, saved theme and workspace. It isolates preferences,
+recents and recovery from the normal application and disables its optional agent
+server. Other projects open only when selected through the normal Open controls.
 `--dark` selects dark mode; `--original` opens the unchanged reference interface
 in another isolated account. Normal `python -m open_garden_planner` is unchanged.
 
@@ -57,7 +59,8 @@ Source-review steps verified through Qt interactions/tests:
 - Library → search “Round Deciduous” → choose row → click center and rim on the
   canvas: a real tree appears. Ctrl+Z removes it; Ctrl+Y restores it.
 - Layers tab → rename a layer: both views reflect it, and undo restores its name.
-- Ctrl+S → choose a file, then Ctrl+O → reopen: the plan remains editable.
+- Ctrl+Shift+S (Save As) → choose your own file, then Ctrl+O → reopen: the plan
+  remains editable. Ctrl+S updates the current file.
 - View → Focus canvas hides both docks; Reset workspace restores them.
 - F11 → added chrome hides; Escape restores the previous workspace.
 - View → Theme → Dark changes the proposed chrome and keeps the canvas light.
