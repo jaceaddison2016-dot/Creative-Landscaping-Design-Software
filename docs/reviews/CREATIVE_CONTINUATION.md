@@ -20,11 +20,15 @@ citations passed. The reviewer did not build or validate a native package.
 - Fill/color changes, state restoration and undo use current texture strength.
 - Project loading and autosave recovery synchronize actual grid drawing/snapping.
 - Ctrl+F retains Find & Replace; visible library search uses Ctrl+Shift+F.
-- UI adapter imports are constructor-local. Primary creation/resize/offset
+- The constructor-local adapter import issue was resolved. Primary creation/resize/offset
   feedback adapts to imperial projects; optional narrow-window status context
   collapses so drawing measurements remain readable.
 
 ## Remaining gates and limits
+
+The paragraph below records the pre-packaging review stage. Its Windows gate was
+subsequently satisfied; see [packaging review and native evidence](CREATIVE_WINDOWS_PACKAGING.md)
+for the exact build source and remaining manual checks.
 
 The implementation workspace completed the full suite on this exact source: **7,711 passed / 36 skipped / 42 warnings in 570.74 s**. The source validation and review gates are satisfied for the draft update.
 Revised layout approval precedes the next Windows installer, as requested in

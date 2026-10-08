@@ -15,16 +15,21 @@ See the owner's [master plan](MASTER_PLAN.md),
 
 ## Trying the current prototype
 
-The owner approved the [revised editor and welcome](docs/design/README.md).
-The matching Windows installer is now undergoing native packaged validation.
+The approved Creative interface and imperial features are included in the
+[Windows x64 test download](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773267264/artifacts/11549062663)
+(444.6 MiB; GitHub sign-in may be required). Extract the ZIP, run
+**OpenGardenPlanner-v1.29.5-Setup.exe**, then start **Open Garden Planner** from
+the Start menu. It opens Creative Landscape Studio. No coding is required.
+See [complete installation and sample instructions](docs/WINDOWS_DOWNLOAD.md).
 
-The [available Windows foundation download](docs/WINDOWS_DOWNLOAD.md) was
-built from `439e486414070161d9fea58a6123644e8d0afdc3`. It contains the older
-Open Garden Planner interface and metric-only foundation, **not these revised
-screenshots or imperial features**. No Windows download includes this
-continuation yet, and no verified Mac installer is established.
+The download was built from `7c07a3220f0178f28ab7cf1b38a356cc6ff2aff1`.
+Both portable and installed applications passed native Windows checks. The
+source suite passed **7,726 tests**, with 36 skips and 42 warnings; the native
+Windows regression passed **282 tests**. The installer is unsigned and still
+needs human testing. No verified Mac installer is established.
 See [current validation](docs/design/CONTINUATION_VALIDATION.md) and
-[platform evidence](PLATFORM_STATUS.md).
+[platform evidence](PLATFORM_STATUS.md). Subsequent delivery commits add
+documentation and recorded screenshots; they do not change the built application.
 
 Developers can run the current source with
 `.venv/bin/python -m open_garden_planner`; `--classic` opens the inherited shell.
@@ -84,5 +89,6 @@ The [desktop editor and welcome captures](docs/design/README.md) show the actual
 Qt application opened by the normal entry point. See the
 [design system](BRAND_DESIGN_SYSTEM.md), [redesign brief](CREATIVE_REDESIGN_BRIEF.md)
 and [continuation brief](CREATIVE_CONTINUATION_BRIEF.md). Identity text is an
-explicit placeholder. Visual approval is recorded; native Windows validation
-remains necessary before the next test installer is uploaded.
+explicit placeholder for company identity. Visual approval and native Windows
+validation are complete for this test build. [Actual installed Windows captures](docs/design/windows-verified/README.md)
+record the matching build, including its screen-size and remaining usability limits.

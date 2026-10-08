@@ -1,5 +1,11 @@
 # Try the Creative Landscape Studio Windows test build
 
+[Download the Windows x64 test bundle](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773267264/artifacts/11549062663)
+— **444.6 MiB**, built from `7c07a3220f0178f28ab7cf1b38a356cc6ff2aff1`.
+The [native build and checks passed](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773267264).
+This download contains the approved Creative interface and imperial features.
+The Actions artifact expires **2027-01-06 UTC**; GitHub sign-in may be required.
+
 This guide accompanies the approved Creative desktop test bundle. The window
 opens **Creative Landscape Studio**, with feet and inches as the default for
 new projects. Installer filenames and the Start menu shortcut retain **Open
@@ -7,11 +13,11 @@ Garden Planner** to preserve the inherited installer identity. Check
 **BUILD-INFO.json** for the exact source commit used to build your download.
 The old foundation build at `439e486414070161d9fea58a6123644e8d0afdc3` has the
 earlier interface and metric-only foundation; it cannot demonstrate this work.
-Use the new successful run linked in the draft PR and current README.
+Use the successful test download linked above.
 
 ## Download and start
 
-1. Open the **Windows test download** link in the draft pull request. Sign in
+1. Open the **Windows test download** link above. Sign in
    to GitHub if needed and download **Creative-Landscape-Studio-Windows-x64-test**.
 2. Right-click the downloaded ZIP and select **Extract All**.
 3. Open **OpenGardenPlanner-v1.29.5-Setup.exe** and follow the installer. Start

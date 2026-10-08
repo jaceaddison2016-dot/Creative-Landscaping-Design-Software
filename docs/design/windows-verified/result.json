@@ -1,0 +1,32 @@
+{
+  "status": "PASS",
+  "run_id": "11705ace-03b8-4f31-9ce8-ea16f8d4fba5",
+  "frozen": true,
+  "executable": "D:\\a\\_temp\\CreativeLandscapeBaseline\\OpenGardenPlanner.exe",
+  "native_standard_handles_inherited": false,
+  "os": "nt",
+  "qt": "6.11.0",
+  "platform_plugin": "windows",
+  "control_font": "Segoe UI",
+  "icons": {
+    "file_save": true,
+    "tree": true,
+    "sun": true,
+    "select": true
+  },
+  "imperial_width_cm": 321.31,
+  "dxf_width_ft": 10.541666666666668,
+  "checks": [
+    "typed drawing",
+    "mouse plant placement",
+    "fractional inch property edit",
+    "Ctrl+Z/Ctrl+Y",
+    "save/reopen",
+    "PNG/PDF/DXF/CSV",
+    "fonts/icons",
+    "live sun/shade"
+  ],
+  "sun_computer_zone": "Eastern Daylight Time",
+  "human_manual_test": "not performed",
+  "gpu_3d_test": "not performed"
+}

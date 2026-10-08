@@ -1,0 +1,18 @@
+{
+  "editor.png": {
+    "sha256": "ca70a127feb8dfc3baa85499ac9c220744029bbe0c2202ff98e7901c141a98ca",
+    "parts": 26
+  },
+  "imperial-properties.png": {
+    "sha256": "473f2eb99836d100b0d46f56614f4f9d84f53176aabe96f21f692c9dff9f79b3",
+    "parts": 10
+  },
+  "sun-study.png": {
+    "sha256": "cd516da16ce2304f87857b8a0bbeb9cef1cc37ba194566ee5d8c2af64419f4dd",
+    "parts": 27
+  },
+  "welcome.png": {
+    "sha256": "7b6c4a4fff54cbd022bf834e879d41fe78f7232514fac7c0e583b2ed0dfdcb60",
+    "parts": 5
+  }
+}

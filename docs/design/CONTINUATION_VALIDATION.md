@@ -4,7 +4,7 @@ Evidence: 2026-10-08 UTC. Branch `feature/creative-design-preview`; draft PR [#3
 
 ## Executed checks
 
-Reviewed visual source: `7cfbcdc7746c3ae24806ebc7f12cd5ea3f986f90`. The following table records that source stage. The subsequent packaging stage adds an opt-in workflow diagnostic; its native results will be recorded separately below.
+Reviewed visual source: `7cfbcdc7746c3ae24806ebc7f12cd5ea3f986f90`. The following table records that source stage. The subsequent packaging stage adds an opt-in workflow diagnostic; its completed source/native results are recorded separately below.
 
 | Check | Result |
 | --- | --- |
@@ -52,6 +52,72 @@ The sample's curved bed is an editable sampled polygon, not a spline bed. Origin
 
 ## Platforms and download gate
 
-No new Windows build exists for this continuation. The available foundation artifact was built from `439e486414070161d9fea58a6123644e8d0afdc3` and contains the earlier interface; see [Windows download](../WINDOWS_DOWNLOAD.md). Do not use it to assess these screenshots or imperial work.
+The owner's visual approval satisfies continuation brief §8. A matching
+[Windows test download](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773267264/artifacts/11549062663)
+now includes these changes and passed native validation. The exact application
+source is **`7c07a3220f0178f28ab7cf1b38a356cc6ff2aff1`**. Subsequent delivery
+commits contain documentation and recorded evidence only. Older foundation
+downloads have the earlier interface; use [current instructions](../WINDOWS_DOWNLOAD.md).
 
-The owner's visual approval satisfies continuation brief §8. Native Windows packaged startup/fonts/icons/drawing/input/save/reopen/exports are **not tested for these changes** yet. The new opt-in actual-entry-point workflow diagnostic passed its two cloud integration checks; offscreen source checks do not establish a Windows package. Signing and human testing remain pending. macOS previously passed dependency/source self-test on Apple Silicon and Intel; **no working Mac installer is established**, and the continuation has not run on a Mac. Qt3D GPU, native dialogs, accessibility and real display scaling require native/manual checks. Context7 is unavailable; the implementation uses installed Qt bindings and existing repository patterns. The separate upstream wiki checkout is absent, so no external wiki was synchronized.
+| Final packaging-stage check | Result |
+| --- | --- |
+| Complete source suite on build source | **7,726 passed / 36 skipped / 42 warnings in 576.91 s**, exit 0. |
+| Source CI on build source | [Run 37773266704](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773266704) **success**. |
+| Independent review | Safety fixes: **35 passed** plus separate recovery-sentinel probe. Native-platform correction: **65 focused passed**; final recorder check: **7 passed**. No outstanding P0/P1; see [packaging review record](../reviews/CREATIVE_WINDOWS_PACKAGING.md). |
+| Ruff / Bandit HIGH / repository gates | Passed: src/tests/scripts lint, zero HIGH security findings, context parity, skill citations, tracked secrets and whitespace. |
+| Native Windows source regression | **282 passed in 105.49 s**, Qt native Windows plugin. |
+| Portable frozen application | PASS: subsystem self-test without inherited console handles, ≥8 s normal startup, actual-process MCP save/reopen/exports, real Qt key/mouse workflows. |
+| Installed frozen application | PASS: NSIS silent installation, subsystem/normal-process checks, the same real Qt workflows. |
+| Eight real Qt workflows, both copies | Typed drawing, mouse plant placement, fractional-inch edit, Ctrl+Z/Ctrl+Y, save/reopen, PNG/PDF/DXF/CSV, fonts/icons and live sun/shade. |
+| Distribution integrity | PASS: portable runtime, installer executable, exact application source and PyQt binding source ZIP contents/CRC; licenses/notices/checksums included. |
+| Artifact | [Run 37773267264](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773267264) **success**, 444.6 MiB test artifact uploaded. |
+| Actual installed Windows captures | [Four original PNGs and results](windows-verified/README.md), source SHA/native identity validated, hashes matched, complete PNG decoding verified; visually inspected. |
+
+### Packaging failures and their resolution
+
+- Independent review reproduced recovery loss in a scratch directory: isolating
+  QSettings alone left the diagnostic using the normal temporary autosave path.
+  A direct-CLI regression failed before the fix. The opt-in diagnostic now retains
+  a private TemporaryDirectory and switches process-local temporary storage before
+  constructing the app. A real-entry-point sentinel test proves existing recovery
+  bytes survive; normal application recovery remains unchanged.
+- On Windows, giving only stdin DEVNULL caused Python to duplicate parent output
+  handles despite DETACHED_PROCESS/close_fds. The frozen driver now passes all three
+  streams as None; the child checks GetStdHandle. Both native results confirm no
+  inherited standard handles. The source subprocess retains isolated logs.
+- [Run 37770416502](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37770416502)
+  (`f6789d3`): **272 passed / 3 failed in 99.63 s**. Diagnostic
+  [run 37771677509](https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37771677509)
+  (`d928a8a`): **272 passed / 3 failed in 89.72 s**. Both stopped before freezing
+  or making an installer. Their Windows offscreen plugin had an empty font database,
+  including no ASCII digit glyphs, and distorted the narrow-window text measurement.
+  The source Windows checks now use the native Windows plugin; font/layout assertions
+  were retained. The successful run passed all 282 checks without a product layout
+  or font workaround.
+- Intermediate complete Linux runs remain distinct: **7,713 passed / 36 skipped /
+  42 warnings in 565.02 s**, then safety-fix source `f6789d3` **7,719 passed /
+  36 skipped / 42 warnings in 577.20 s**. The final 7,726-result suite above supersedes
+  them for the actual build source.
+
+### Remaining limits
+
+Signing and human testing remain pending. The native runner's 1028 × 749 overview
+with both docks open exposes overlapping/clipped plant labels; zoom or close/resize
+docks. The imperial screenshot's width editor is below its visible scroll area,
+while the test records its exact physical result. Sun activation is automated and
+shadow paths are visible in the captures, but pixel accuracy is not asserted.
+The probe uses fixed Qt waits, so slower native machines may need investigation if
+automation fails. These limits are not represented as manual passes.
+
+macOS previously passed dependency/source self-test on Apple Silicon and Intel;
+**no working Mac installer is established**, and the continuation has not run on
+a Mac. GPU 3D, printing, native dialogs, accessibility, real display scaling,
+upgrades/uninstall, Windows ARM/older OS and antivirus acceptance remain untested.
+Optional online providers were not exercised. The Linux task could not download
+the whole binary artifact through its current storage-host allowlist; archive checks
+and app execution occurred on Windows, and native captures were retrieved through
+GitHub logs with exact hash/PNG verification. Cloud startup/network changes are
+saved as an unpublished configuration draft for review; they are not active here.
+Context7 is unavailable; installed Qt bindings and repository patterns were used.
+The separate upstream wiki checkout is absent; wiki sync remains pending.
+The PR remains draft; no merge, tag or production release was created.

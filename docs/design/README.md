@@ -1,8 +1,25 @@
 # Revised Creative desktop design
 
-The owner approved the navy/ivory/gold direction and revised layout. A matching Windows test installer is undergoing native validation. The normal desktop entry point opens the real Creative workspace over Open Garden Planner's editor. The internal subclass name remains CreativePreviewWindow to avoid an unnecessary package rename.
+The owner approved the navy/ivory/gold direction and revised layout. The [matching Windows test download](../WINDOWS_DOWNLOAD.md) passed native portable and installed checks. The normal desktop entry point opens the real Creative workspace over Open Garden Planner's editor. The internal subclass name remains CreativePreviewWindow to avoid an unnecessary package rename.
 
 These are genuine captures of running Qt widgets and an editable synthetic `.ogp` project. The labeled identity text remains a placeholder; there is no approved company logo. No client data, company photographs or fake templates were added.
+
+## Actual installed Windows application
+
+![Installed Windows Creative editor](windows-verified/editor.png)
+
+[Welcome](windows-verified/welcome.png) · [Imperial measurement/properties](windows-verified/imperial-properties.png) · [Sun Study](windows-verified/sun-study.png) · [Build identity and capture evidence](windows-verified/README.md)
+
+These captures come from the installed executable built from
+`7c07a3220f0178f28ab7cf1b38a356cc6ff2aff1`, using Qt's native Windows plugin
+and Segoe UI controls. The runner constrained the editor to 1028 × 749 pixels
+with both docks open. At this overview scale, some sample plant labels overlap
+or clip; close a dock, use View → Focus canvas, or zoom in. The imperial capture
+shows measurements and the top of Properties; scroll that dock to see size
+fields. The automated check separately verified the exact 10 ft 6½ in width.
+See the evidence page for limitations and unchanged original capture hashes.
+
+## Source layout comparisons
 
 ![Revised landscape editor](creative-preview/revised-light/editor.png)
 
@@ -18,7 +35,9 @@ See [validation and unit coverage](CONTINUATION_VALIDATION.md), [original interf
 
 A developer with the prepared environment can run `.venv/bin/python -m open_garden_planner` (Windows: `.venv\Scripts\python.exe -m open_garden_planner`). `--classic` retains the inherited shell. To open the synthetic review plan in an isolated account, run `.venv/bin/python scripts/creative_design_preview.py`; it preserves subsequently saved sample edits. No new dependency is needed.
 
-Visual approval is complete. A new Windows test installer follows successful native validation; the older foundation download does not contain this interface. See [download instructions](../WINDOWS_DOWNLOAD.md).
+Visual approval and native packaged validation are complete. The current Windows
+test download contains this interface; older foundation downloads have the earlier
+interface. See [download instructions](../WINDOWS_DOWNLOAD.md).
 
 ## Source review checklist
 

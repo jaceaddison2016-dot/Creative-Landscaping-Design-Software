@@ -1,0 +1,9 @@
+{
+  "signed": false,
+  "platform": "Windows x64",
+  "upstream_commit": "cb4a71db8649cc4e48f85f0bef671bb0ac58dd16",
+  "interactive_manual_test": "not performed",
+  "creative_workflows": "native portable and installed Qt controls, imperial drawing/edit, undo/redo, save/reopen, physical exports, icons/fonts, sun/shade",
+  "source_commit": "7c07a3220f0178f28ab7cf1b38a356cc6ff2aff1",
+  "run_url": "https://github.com/jaceaddison2016-dot/Creative-Landscaping-Design-Software/actions/runs/37773267264"
+}
