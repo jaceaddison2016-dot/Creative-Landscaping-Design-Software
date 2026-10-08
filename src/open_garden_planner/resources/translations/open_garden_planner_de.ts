@@ -768,6 +768,10 @@
             <source>Invalid distance. Enter a physical length.</source>
             <translation>Ungültiger Abstand. Eine Länge mit Einheit eingeben.</translation>
         </message>
+        <message>
+            <source>Created {dir} offset of {dist}</source>
+            <translation>{dir}-Versatz von {dist} erstellt</translation>
+        </message>
     </context>
     <context>
         <name>CircleItem</name>
@@ -3662,6 +3666,14 @@ Details: {error}</translation>
         <message>
             <source>X: {x}  Y: {y}</source>
             <translation>X: {x}  Y: {y}</translation>
+        </message>
+        <message>
+            <source>New project created: {width} x {height}</source>
+            <translation>Neues Projekt erstellt: {width} x {height}</translation>
+        </message>
+        <message>
+            <source>Canvas resized to {width} x {height}</source>
+            <translation>Leinwand auf {width} x {height} geändert</translation>
         </message>
     </context>
     <context>
@@ -7967,6 +7979,10 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</source>
             <source>{n} layer(s) found.</source>
             <translation>{n} Ebene(n) gefunden.</translation>
         </message>
+        <message>
+            <source>Declared DXF units set the default. Unknown or unitless files default to 1 cm per unit; adjust this factor when needed.</source>
+            <translation>Deklarierte DXF-Einheiten bestimmen den Standard. Unbekannte oder einheitenlose Dateien verwenden 1 cm pro Einheit; passen Sie diesen Faktor bei Bedarf an.</translation>
+        </message>
     </context>
     <context>
         <name>PdfReportDialog</name>
@@ -11704,6 +11720,10 @@ Geändert am {date}</translation>
         <message>
             <source>Letter Landscape (11 in wide)</source>
             <translation>Letter quer (11 in breit)</translation>
+        </message>
+        <message>
+            <source>Search object library</source>
+            <translation>Objektbibliothek durchsuchen</translation>
         </message>
     </context>
     <context>

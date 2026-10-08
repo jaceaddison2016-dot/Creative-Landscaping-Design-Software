@@ -36,8 +36,8 @@ def widget_units(source: object | None) -> DisplayUnits:
 class LengthSpinBox(QDoubleSpinBox):
     """Metric behavior stays native; imperial entry accepts explicit fractions.
 
-    Stored values have six cm decimals in imperial. Display rounds to 1/64 inch;
-    simply changing display units never writes that rounding back to a project.
+    Internal precision is independent of the requested metric display precision.
+    Rounded presentation must never overwrite an unchanged geometry component.
     """
 
     def __init__(self, parent=None, *, unit_source=None):
@@ -48,7 +48,7 @@ class LengthSpinBox(QDoubleSpinBox):
 
     def setDecimals(self, decimals: int) -> None:  # noqa: N802
         self._requested_decimals = decimals
-        super().setDecimals(6 if self._display_units.imperial else decimals)
+        super().setDecimals(15)
 
     def setSuffix(self, suffix: str) -> None:  # noqa: N802
         self._metric_suffix = suffix
@@ -59,21 +59,24 @@ class LengthSpinBox(QDoubleSpinBox):
             return
         blocker = QSignalBlocker(self)
         self._display_units = units
-        super().setDecimals(6 if units.imperial else getattr(self, "_requested_decimals", 2))
         super().setSuffix("" if units.imperial else getattr(self, "_metric_suffix", ""))
+        self.lineEdit().setText(self.prefix() + self.textFromValue(self.value()) + self.suffix())
         del blocker
 
     def textFromValue(self, value: float) -> str:  # noqa: N802
         units = getattr(self, "_display_units", METRIC)
-        return format_length(value, units) if units.imperial else super().textFromValue(value)
+        if units.imperial:
+            return format_length(value, units)
+        text = self.locale().toString(value, "f", getattr(self, "_requested_decimals", 2))
+        return text if self.isGroupSeparatorShown() else text.replace(self.locale().groupSeparator(), "")
 
     def valueFromText(self, text: str) -> float:  # noqa: N802
         units = self._display_units
-        if not units.imperial:
-            return super().valueFromText(text)
         stripped = text.removeprefix(self.prefix()).removesuffix(self.suffix())
         if stripped.strip() == self.textFromValue(self.value()):
             return self.value()  # untouched rounded display is not an edit
+        if not units.imperial:
+            return super().valueFromText(text)
         return parse_length(stripped, units)
 
     def validate(self, text: str, position: int):

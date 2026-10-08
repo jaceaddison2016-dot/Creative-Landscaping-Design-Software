@@ -150,6 +150,11 @@ class ColorButton(QPushButton):
                 self.set_color(color)
 
 
+def _material_brush(item, pattern, color):
+    """Use current scene presentation for edits, state restore and undo alike."""
+    return create_pattern_brush(pattern, color, getattr(item.scene(), "texture_strength", 1.0))
+
+
 class PropertiesPanel(QWidget):
     """Panel for live editing of selected object properties.
 
@@ -2138,7 +2143,7 @@ class PropertiesPanel(QWidget):
         if not isinstance(item, PolylineItem):
             pattern = state.get('fill_pattern', FillPattern.SOLID)
             color = state.get('fill_color') or item.brush().color()
-            brush = create_pattern_brush(pattern, color)
+            brush = _material_brush(item, pattern, color)
             item.setBrush(brush)
 
         stroke_color = state.get('stroke_color') or item.pen().color()
@@ -2476,7 +2481,7 @@ class PropertiesPanel(QWidget):
             if hasattr(item, 'fill_pattern'):
                 item.fill_pattern = value
             color = item.fill_color if hasattr(item, 'fill_color') and item.fill_color else item.brush().color()
-            brush = create_pattern_brush(value, color)
+            brush = _material_brush(item, value, color)
             item.setBrush(brush)
 
             if self._command_manager:
@@ -2484,7 +2489,7 @@ class PropertiesPanel(QWidget):
                     if hasattr(itm, 'fill_pattern'):
                         itm.fill_pattern = val
                     c = itm.fill_color if hasattr(itm, 'fill_color') and itm.fill_color else itm.brush().color()
-                    itm.setBrush(create_pattern_brush(val, c))
+                    itm.setBrush(_material_brush(itm, val, c))
                 cmd = ChangePropertyCommand(item, "fill pattern", old_pattern, value, apply_pattern)
                 self._command_manager.register_applied(cmd)
 
@@ -2569,7 +2574,7 @@ class PropertiesPanel(QWidget):
                 item.fill_color = color
             # Apply to brush
             pattern = item.fill_pattern if hasattr(item, 'fill_pattern') else FillPattern.SOLID
-            brush = create_pattern_brush(pattern, color)
+            brush = _material_brush(item, pattern, color)
             item.setBrush(brush)
 
             # Create undo command
@@ -2578,7 +2583,7 @@ class PropertiesPanel(QWidget):
                     if hasattr(itm, 'fill_color'):
                         itm.fill_color = val
                     p = itm.fill_pattern if hasattr(itm, 'fill_pattern') else FillPattern.SOLID
-                    itm.setBrush(create_pattern_brush(p, val))
+                    itm.setBrush(_material_brush(itm, p, val))
                 cmd = ChangePropertyCommand(item, "fill color", old_color, color, apply_fill_color)
                 self._command_manager.register_applied(cmd)
 

@@ -58,9 +58,12 @@ class DxfImportDialog(QDialog):
         self._scale_spin.setRange(0.001, 10000.0)
         self._scale_spin.setValue(1.0)
         self._scale_spin.setDecimals(3)
+        self._scale_edited = False
+        self._scale_spin.valueChanged.connect(self._on_scale_edited)
         self._scale_spin.setToolTip(
             self.tr("Multiply DXF coordinates by this factor to get centimeters.\n"
                     "Use 0.1 for DXF in mm, 100 for DXF in metres.")
+            + "\n" + self.tr("Declared DXF units set the default. Unknown or unitless files default to 1 cm per unit; adjust this factor when needed.")
         )
         scale_form.addRow(self.tr("Scale (DXF units → cm):"), self._scale_spin)
         layout.addWidget(scale_group)
@@ -101,11 +104,16 @@ class DxfImportDialog(QDialog):
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
+    def _on_scale_edited(self, _value: float) -> None:
+        self._scale_edited = True
+
     def _load_layers(self) -> None:
         from open_garden_planner.services.dxf_service import DxfImportService
 
         try:
             layers = DxfImportService.get_dxf_layers(self._file_path)
+            if not self._scale_edited:
+                self._scale_spin.setValue(DxfImportService.default_scale_factor(self._file_path))
         except Exception as exc:
             self._loading_label.setText(self.tr("Failed to read DXF: {error}").format(error=exc))
             return

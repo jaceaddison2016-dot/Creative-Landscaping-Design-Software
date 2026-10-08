@@ -308,6 +308,26 @@ class DxfImportService:
     ARC_SEGMENTS = 32
 
     @staticmethod
+    def _declared_scale(doc) -> float:
+        """Centimeters per declared DXF unit; unknown/unitless keeps legacy 1."""
+        from ezdxf.units import conversion_factor
+
+        units = int(doc.header.get("$INSUNITS", 0))
+        if units <= 0:
+            return 1.0
+        try:
+            return conversion_factor(units, 5)
+        except (TypeError, ValueError):
+            return 1.0
+
+    @staticmethod
+    def default_scale_factor(file_path: Path | str) -> float:
+        """Suggest a header-derived scale which users may explicitly override."""
+        import ezdxf
+
+        return DxfImportService._declared_scale(ezdxf.readfile(str(file_path)))
+
+    @staticmethod
     def get_dxf_layers(file_path: Path | str) -> list[str]:
         """Return the list of layer names present in a DXF file."""
         import ezdxf
@@ -323,7 +343,7 @@ class DxfImportService:
     def import_file(
         scene: CanvasScene,
         file_path: Path | str,
-        scale_factor: float = 1.0,
+        scale_factor: float | None = None,
         selected_layers: list[str] | None = None,
     ) -> DxfImportResult:
         """Parse a DXF file and return scene items ready to be added.
@@ -334,6 +354,8 @@ class DxfImportService:
         import ezdxf
 
         doc = ezdxf.readfile(str(file_path))
+        if scale_factor is None:
+            scale_factor = DxfImportService._declared_scale(doc)
         result = DxfImportResult()
 
         for entity in doc.modelspace():

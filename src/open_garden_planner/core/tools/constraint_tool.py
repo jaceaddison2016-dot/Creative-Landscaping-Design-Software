@@ -33,7 +33,6 @@ from open_garden_planner.core.measure_snapper import (
 from open_garden_planner.core.tools.base_tool import BaseTool, ToolType
 from open_garden_planner.core.units import format_dimension, format_length, units_for
 from open_garden_planner.ui.canvas.items import GardenItemMixin
-from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox, widget_units
 
 _log = logging.getLogger(__name__)
 
@@ -57,6 +56,8 @@ class DistanceInputDialog(QDialog):
         current_distance_cm: float,
         parent=None,
     ) -> None:
+        from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox, widget_units
+
         super().__init__(parent)
         self.setWindowTitle(
             QCoreApplication.translate("DistanceInputDialog", "Set Constraint Distance")
@@ -3772,6 +3773,8 @@ class HDistanceInputDialog(QDialog):
     """Dialog for entering the target horizontal distance for an H-distance constraint."""
 
     def __init__(self, current_h_dist_cm: float, parent=None) -> None:
+        from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox, widget_units
+
         super().__init__(parent)
         self.setWindowTitle(
             QCoreApplication.translate(
@@ -3829,6 +3832,8 @@ class VDistanceInputDialog(QDialog):
     """Dialog for entering the target vertical distance for a V-distance constraint."""
 
     def __init__(self, current_v_dist_cm: float, parent=None) -> None:
+        from open_garden_planner.ui.widgets.length_spin_box import LengthSpinBox, widget_units
+
         super().__init__(parent)
         self.setWindowTitle(
             QCoreApplication.translate("VDistanceInputDialog", "Set Vertical Distance")

@@ -1900,7 +1900,8 @@ class ProjectManager(QObject):
                 strength = 1.0
             scene.set_presentation(data.presentation.get("plant_symbols", "detailed"), strength)
             spacing = data.presentation.get("grid_spacing_cm", 50.0)
-            scene.grid_spacing_cm = spacing if isinstance(spacing, (int, float)) and .1 <= spacing <= 100000 else 50.0
+            spacing = spacing if isinstance(spacing, (int, float)) and .1 <= spacing <= 100000 else 50.0
+            scene.set_grid_spacing(spacing)
 
         # Clear dimension lines before removing garden items so the manager can
         # cleanly remove its graphics items while C++ objects are still alive

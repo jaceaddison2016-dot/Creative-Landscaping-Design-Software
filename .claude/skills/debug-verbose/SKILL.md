@@ -1717,3 +1717,23 @@ as new component strings. See the risk-log entry and
 **Root cause:** Qt popup window flags provided no QObject ownership; pytest-qt's close/deleteLater calls also remained queued when tests never entered QApplication.exec(). Global theme work then restyled all accumulated windows. Stack dumps and traceback logging located app.setStyleSheet, not modal welcome execution.
 **Fix:** CategoryDropdown(category, toolbar); a real destroy-and-click popup regression; flush QEvent.DeferredDelete at test teardown. Creative applies the combined theme once rather than a base pass plus an appended pass; its inherited theme handler uses one overridable hook. No tests or assertions were removed and no timeout was raised. The diagnostic lifetime run was intentionally interrupted after identifying ownership; it is not a passing check.
 **Lesson:** distinguish C++ ownership from window flags, and process deferred deletion explicitly in a headless Qt test harness. All temporary instrumentation was removed.
+
+
+## Case study: a startup probe scheduled before QApplication (2026-10-08)
+
+**Symptom:** a new subprocess entry-point test timed out while the actual editor stayed open.
+**Wrong theory:** the new Creative entry point did not start.
+**Key evidence:** `[TIMER_DIAG] pre-application None`, followed by Qt's `QBasicTimer::start: current thread's event dispatcher has already been destroyed`; only `[TIMER_DIAG] post-timer fired` appeared. The probe also printed its scheduling stack.
+**Root cause:** the test registered QTimer.singleShot before main created QApplication, so its inspector never fired.
+**Fix:** schedule inspection after the real window's show call, catch probe assertions into a nonzero subprocess exit, and keep the original 30 s timeout. The real normal-entry-point test then passed in 3.58 s. No production startup workaround was needed.
+**Lesson:** install headless startup observers only after Qt owns an event dispatcher; a hanging test is not evidence of a hanging product.
+
+
+## Case study: display preferences missed retained workflows (2026-10-08)
+
+**Symptom:** existing edit annotations kept feet after selecting Metric; changing width rounded an untouched height; texture edits ignored the current strength; recovery snapping kept the old grid; Ctrl+F became ambiguous; an exported 20 ft patio imported at 20 cm.
+**Wrong theories:** refreshing the Properties panel covered all measurement displays; signal blocking prevented precision loss; ordinary file-open synchronization covered recovery; preserving old tool actions guaranteed shortcut compatibility.
+**Key evidence:** six independent real-widget probes failed. `[PEER_DIAG] model after ... 500.0, 198.7` versus canonical height 198.654321, with the callback stack from Return → valueChanged → _on_dimension_changed; `TEXTURE_EQ False STRENGTH 0.0`; `RECOVERED_GRID 30.48 SAVED_GRID 15.24`; `CTRL_F_COUNTS 0 0 SEARCH_FOCUS False`; DXF width 20.0 versus expected 609.6. The diagnostic wrappers lived only in a temporary runner and were removed from the execution path.
+**Root cause:** presentation was only handled at new UI entry points. Retained annotations, coupled numeric editors, brush callbacks, recovery loading and CAD import still had their old assumptions. QDoubleSpinBox decimals controlled its stored numeric precision as well as its displayed precision.
+**Fix:** refresh live item annotations and selection measurements; separate spin-box numeric precision from locale-aware metric display; use a current-strength material brush helper for edit/undo/state restore; synchronize loaded grid spacing through CanvasScene for every attached view; retain Find & Replace Ctrl+F and expose library search Ctrl+Shift+F; derive import defaults from declared DXF units, preserving explicit overrides and unitless defaults. Integration regressions exercise the actual Qt workflows, peer positions/ellipse dimensions, and physical DXF round trips.
+**Lesson:** presentation preferences must cross existing callback and loading seams. Test a changed component with a precise unchanged peer, and test both directions of a physical format conversion.

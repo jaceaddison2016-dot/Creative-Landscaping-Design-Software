@@ -62,6 +62,26 @@ class CreativePreviewWindow(GardenPlannerApp):
         saved_workspace = app_settings.create_qsettings().value("UiState/creative_workspace", 0, type=int)
         self._workspace_combo.setCurrentIndex(saved_workspace if saved_workspace in (0, 1, 2) else 0)
         self._enforce_toolbar_visibility()
+        self._compact_status_bar()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "location_label"):
+            self._compact_status_bar()
+
+    def _compact_status_bar(self) -> None:
+        """Keep drawing measurements readable when optional context is crowded."""
+        compact = self.width() < 1250
+        for label in (self.location_label, self.season_label):
+            label.setVisible(not compact)
+        for icon in self.statusBar().findChildren(QLabel):
+            if icon.toolTip() in (self.tr("Garden location"), self.tr("Season")):
+                icon.setVisible(not compact)
+        self.coord_label.setMinimumWidth(110 if compact else 200)
+        self.zoom_label.setMinimumWidth(35 if compact else 60)
+        self.tool_label.setMinimumWidth(45 if compact else 80)
+        if self.coordinate_input_field is not None:
+            self.coordinate_input_field.setFixedWidth(150 if compact else 220)
 
     def _restore_ui_state(self) -> None:
         # Restore after the Creative docks exist. The optional capture runner
@@ -332,9 +352,10 @@ class CreativePreviewWindow(GardenPlannerApp):
         for index in range(1, self._tab_widget.count()):
             action = gardening.addAction(self._tab_widget.tabText(index))
             action.triggered.connect(lambda _checked=False, tab=index: self._open_gardening_tab(tab))
-        # The former hidden toolbar's Ctrl+F needs a visible search target.
-        self._search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
-        self._search_shortcut.activated.connect(self._focus_library_search)
+        # Preserve the retained Find & Replace Ctrl+F action.
+        search_action = view.addAction(_tr("Search object library"))
+        search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        search_action.triggered.connect(self._focus_library_search)
         for shortcut in self.category_toolbar.findChildren(QShortcut):
             if shortcut.key().toString() == "Ctrl+F":
                 shortcut.setEnabled(False)
@@ -361,6 +382,8 @@ class CreativePreviewWindow(GardenPlannerApp):
         self.constraints_panel.refresh()
         self.plant_database_panel.set_selected_items(list(self.canvas_scene.selectedItems()))
         self.update_coordinates(*getattr(self, "_last_coordinates", (0, 0)))
+        selected = list(self.canvas_scene.selectedItems())
+        self.update_selection(len(selected), selected)
         field = self.coordinate_input_field
         if self.canvas_scene.display_units.imperial:
             field.setPlaceholderText('@10ft,0  10ft,5ft')
@@ -455,7 +478,6 @@ class CreativePreviewWindow(GardenPlannerApp):
     def _load_project_file(self, file_path) -> None:
         self.canvas_view.setFocus()
         super()._load_project_file(file_path)
-        self.canvas_view.set_grid_size(self.canvas_scene.grid_spacing_cm)
         self._refresh_units()
 
     def _on_sun_toolbar_visibility(self, visible: bool) -> None:

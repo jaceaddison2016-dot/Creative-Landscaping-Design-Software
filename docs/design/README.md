@@ -27,6 +27,7 @@ For the owner, review the images first. A new Windows test installer follows rev
 - Use the workspace selector for Landscape, Sun Study or Gardening. Sun controls use the computer's time zone; location is saved, simulation time is runtime-only.
 - View → Focus canvas / Reset workspace, or dock close buttons, changes the drawing area; resizing/closing docks persists.
 - View → Drawing presentation switches existing detailed symbols and original architectural linework; texture strength is independent.
+- Ctrl+F retains Find & Replace; View → Search object library uses Ctrl+Shift+F. On narrow windows, optional location/season status segments collapse to keep measurements readable.
 - Existing File → Export and advanced tools remain available. Scientific gardening units and API/provider data remain canonical; see coverage limits.
 
 No merge or production release is authorized.

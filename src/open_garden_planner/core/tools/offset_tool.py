@@ -10,6 +10,7 @@ from PyQt6.QtGui import QBrush, QColor, QKeyEvent, QMouseEvent, QPen
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem
 
 from open_garden_planner.core.tools.base_tool import BaseTool, ToolType
+from open_garden_planner.core.units import format_length, units_for
 
 if TYPE_CHECKING:
     from open_garden_planner.ui.canvas.canvas_view import CanvasView
@@ -327,6 +328,9 @@ class OffsetTool(BaseTool):
         self._view.add_item(result, "offset")
         direction = self._view.tr("inward") if self._inward else self._view.tr("outward")
         self._view.set_status_message(
+            self._view.tr("Created {dir} offset of {dist}").format(
+                dir=direction, dist=format_length(dist, units_for(self._view.scene()))
+            ) if units_for(self._view.scene()).imperial else
             self._view.tr("Created {dir} offset of {dist:.1f} cm").format(dir=direction, dist=dist)
         )
         self._view._tool_manager.set_active_tool(ToolType.SELECT)

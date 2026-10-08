@@ -200,12 +200,28 @@ class CanvasScene(QGraphicsScene):
             return
         self.display_units = units
         self.update_dimension_lines()
-        self.display_units_changed.emit()
         from open_garden_planner.ui.canvas.items.garden_item import GardenItemMixin
         for item in self.items():
             if isinstance(item, GardenItemMixin):
                 item._update_area_label()
+                circle_refresh = getattr(item, "_update_circle_annotations", None)
+                if callable(circle_refresh):
+                    circle_refresh()
+                if getattr(item, "is_vertex_edit_mode", False):
+                    for name in ("_update_rect_annotations", "_update_annotations"):
+                        refresh = getattr(item, name, None)
+                        if callable(refresh):
+                            refresh()
+        self.display_units_changed.emit()
         self.update()
+
+    def set_grid_spacing(self, spacing_cm: float) -> None:
+        """Synchronize persisted spacing with every attached drawing/snap view."""
+        self.grid_spacing_cm = spacing_cm
+        for view in self.views():
+            setter = getattr(view, "set_grid_size", None)
+            if callable(setter):
+                setter(spacing_cm)
 
     def set_presentation(self, style: str, strength: float) -> None:
         """Refresh brushes/symbols without editing object geometry or metadata."""

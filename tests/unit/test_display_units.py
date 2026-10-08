@@ -3,8 +3,15 @@
 import pytest
 
 from open_garden_planner.core.units import (
-    IMPERIAL, METRIC, DisplayUnits, LengthFormat, UnitSystem,
-    format_area, format_length, format_volume, parse_length,
+    IMPERIAL,
+    METRIC,
+    DisplayUnits,
+    LengthFormat,
+    UnitSystem,
+    format_area,
+    format_length,
+    format_volume,
+    parse_length,
 )
 
 

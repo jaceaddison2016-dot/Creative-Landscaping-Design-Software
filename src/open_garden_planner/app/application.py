@@ -5633,7 +5633,11 @@ class GardenPlannerApp(QMainWindow):
         height_m = height_cm / 100.0
         status_bar = self.statusBar()
         if status_bar:
+            units = getattr(self, "default_new_project_units", units_for(self.canvas_scene))
             status_bar.showMessage(
+                self.tr("New project created: {width} x {height}").format(
+                    width=display_length(width_cm, units), height=display_length(height_cm, units)
+                ) if units.imperial else
                 self.tr("New project created: {width}m x {height}m").format(
                     width=f"{width_m:.1f}", height=f"{height_m:.1f}"
                 )
@@ -5661,6 +5665,10 @@ class GardenPlannerApp(QMainWindow):
             status_bar = self.statusBar()
             if status_bar:
                 status_bar.showMessage(
+                    self.tr("Canvas resized to {width} x {height}").format(
+                        width=display_length(width_cm, units_for(self.canvas_scene)),
+                        height=display_length(height_cm, units_for(self.canvas_scene)),
+                    ) if units_for(self.canvas_scene).imperial else
                     self.tr("Canvas resized to {width}m x {height}m").format(
                         width=f"{width_m:.1f}", height=f"{height_m:.1f}"
                     )

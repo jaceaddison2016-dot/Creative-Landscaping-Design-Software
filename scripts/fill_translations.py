@@ -234,6 +234,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
 
     "CanvasView": {
+        "Created {dir} offset of {dist}": "{dir}-Versatz von {dist} erstellt",
         "Created {dir} offset of {dist:.1f} cm": "{dir}-Versatz von {dist:.1f} cm erstellt",
         "Distance in cm": "Abstand in cm",
         "House": "Haus",
@@ -937,6 +938,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Recovery Failed": "Wiederherstellung fehlgeschlagen",
         "Failed to recover from auto-save:\n{error}":
             "Wiederherstellung von automatischer Speicherung fehlgeschlagen:\n{error}",
+        "New project created: {width} x {height}": "Neues Projekt erstellt: {width} x {height}",
         "New project created: {width}m x {height}m":
             "Neues Projekt erstellt: {width}m x {height}m",
         "Open Project": "Projekt öffnen",
@@ -1078,6 +1080,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Companion Planting": "Mischkulturen",
         "Crop Rotation": "Fruchtfolge",
         "Canvas Size": "Leinwandgröße",
+        "Canvas resized to {width} x {height}": "Leinwand auf {width} x {height} geändert",
         "Canvas resized to {width}m x {height}m": "Leinwand auf {width}m x {height}m geändert",
         "<p>Version {v}</p>": "<p>Version {v}</p>",
         "Garden location updated": "Gartenstandort aktualisiert",
@@ -1878,6 +1881,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Identity placeholder": "Markenplatzhalter",
         "A workspace for landscape planning": "Ein Arbeitsbereich für die Landschaftsplanung",
         "Search objects and plants": "Objekte und Pflanzen suchen",
+        "Search object library": "Objektbibliothek durchsuchen",
         "Filter the built-in object library": "Die integrierte Objektbibliothek filtern",
         "Object category": "Objektkategorie",
         "All objects": "Alle Objekte",
@@ -2199,6 +2203,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Import DXF": "DXF importieren",
         "File: {name}": "Datei: {name}",
         "Scale Factor": "Skalierungsfaktor",
+        "Declared DXF units set the default. Unknown or unitless files default to 1 cm per unit; adjust this factor when needed.": "Deklarierte DXF-Einheiten bestimmen den Standard. Unbekannte oder einheitenlose Dateien verwenden 1 cm pro Einheit; passen Sie diesen Faktor bei Bedarf an.",
         "Scale (DXF units → cm):": "Skalierung (DXF-Einheiten → cm):",
         "Multiply DXF coordinates by this factor to get centimeters.\n"
         "Use 0.1 for DXF in mm, 100 for DXF in metres.":
