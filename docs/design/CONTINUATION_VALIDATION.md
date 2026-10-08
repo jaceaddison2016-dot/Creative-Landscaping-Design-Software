@@ -4,10 +4,30 @@ Evidence: 2026-10-08 UTC. Branch `feature/creative-design-preview`; draft PR [#3
 
 ## Executed checks
 
-- Focused continuation regression: **134 passed in 32.24 s**, including actual property/drawing input, fractional inches, negative coordinates, repeated unit switching, undo/redo, save/reopen, calibration, DXF/CSV physical references, material costs, workspaces, popup destruction, German strings and retained dialogs.
-- Initial full suite: **7,664 passed, 2 failed, 36 skipped, 42 warnings in 513.57 s**. Failures were stale benchmark fixtures (only additive default preferences) and an icon-source guard seeing a parser minus literal. Fixtures regenerated with unchanged objects; normalization now names the Unicode code point without a UI-icon literal. Both checks passed in the affected 61-test run (32.64 s). A fresh full-suite rerun is required before handoff. Earlier diagnostic lifetime run was interrupted after identifying ownership. The instrumented integration prefix completed 652 passed / 13 skipped in 351.92 s; it is diagnostic evidence, not the final full-suite result.
-- Ruff passed on source and capture script. Bandit HIGH passed. Translation fill/compile passed; the focused i18n suite passed (23 tests). Agent parity passed; moved source citations updated for the citation gate.
-- Source captures: real Qt 6.11.0 on Linux offscreen, with local computer zone America/Detroit. See per-variant evidence.json for canvas/window size, fonts, sun state and serialized scene. Light/dark 1920 × 1080 and 960 × 720 captures complete; final recaptures reflect compact coordinate rows. Canvas widths: 1,380 / 1,920 (71.9%) and 654 / 960 (68.1%), with the small-screen library collapsed through its real dock control. Independent source review is pending.
+Final reviewed source: `7cfbcdc7746c3ae24806ebc7f12cd5ea3f986f90`. Documentation/capture commits after this SHA do not change application source.
+
+| Check | Result |
+| --- | --- |
+| Final full suite on the reviewed source | **7,711 passed / 36 skipped / 42 warnings in 570.74 s**, exit 0. Skips are GPU/RHI/render-tier, Windows registry and Windows Qt-runtime-specific checks. |
+| Final imperial workflow | **51 passed in 25.71 s**: actual input, peer precision, units/annotations/undo, save/reopen, recovery snapping, materials, shortcuts, CAD declared-unit conversions and fractional soil/container-height initialization/steps. |
+| Expanded UI/i18n/offset regression | **118 passed in 50.13 s**. |
+| Interoperability/units/project regression | **68 passed in 1.93 s**; later declared-unit expansion **91 passed in 24.14 s**. |
+| Independent source re-review | **106 passed in 66.09 s** in a fresh ordinary clone: 95 committed checks plus 11 independent probes; **no outstanding P0/P1**. See [review](../reviews/CREATIVE_CONTINUATION.md). |
+| Ruff | **Passed** over src/, tests/, scripts/. |
+| Bandit HIGH | **Passed**, zero high-severity findings. |
+| Translations | Fill/compile passed; German/i18n regression **23 passed**. |
+| Repository gates | Agent parity, skill citations, tracked secret scan and git diff whitespace passed. |
+| Source self-test | **Passed**: six Qt3D imports, matching runtime/wheel 6.11.0, Agent API server binding. This is not a frozen Windows test. |
+| Real source screenshots | Light/dark 1920 × 1080 and small 960 × 720; welcome/editor/imperial/Sun Study, captured from the reviewed source. Qt 6.11.0 Linux offscreen, computer zone America/Detroit. Per-variant evidence.json records source SHA, fonts, window/canvas size, solar state and serialized scene. Canvas widths: 1,380 / 1,920 (71.9%) and 654 / 960 (68.1%); the small-screen library is collapsed through its real dock control. |
+
+### Failed and interrupted runs, distinguished from passing evidence
+
+- Initial full suite: **7,664 passed / 2 failed / 36 skipped / 42 warnings in 513.57 s**. Failures were stale benchmark fixtures containing only additive preferences and an icon-source guard seeing a parser minus literal. Object geometry was unchanged when regenerating fixtures; normalization now names the Unicode code point. Both failed checks passed in the affected 61-test rerun.
+- A startup-test observer scheduled before QApplication caused a timeout; the observer was corrected after tracing Qt's missing event dispatcher, without changing production startup or increasing its timeout. A full rerun was deliberately interrupted at **248 passed / 13 skipped in 113.66 s** before correcting that observer.
+- Clean complete suite at `510cda0`: **7,669 passed / 36 skipped / 42 warnings in 530.18 s**. Independent review then exposed six retained-workflow defects not covered by those tests. Their fixes and new regressions produced another clean complete run at `004d2ff`: **7,684 passed / 36 skipped / 42 warnings in 528.78 s**.
+- A narrow-window regression initially asserted width before Qt completed layout (**117 passed / 1 failed**). It now waits for the actual measured label width while retaining the assertion.
+- Subsequent independent review found declared-unit factor clamping/survey gaps and default-constructor precision. The old-source suite at `afa1bb7` was deliberately interrupted at **956 passed / 13 skipped / 42 warnings in 238.73 s** so the final run uses the corrected constructor. Those issues passed their targeted checks and final independent re-review.
+- The earlier instrumented lifetime run was interrupted after identifying popup ownership. Its integration prefix (**652 passed / 13 skipped in 351.92 s**) is diagnostic evidence, not a complete suite pass. CategoryDropdown ownership, deferred test deletion and repeated styling were corrected; tests/assertions were retained and no timeout was raised.
 
 ## Unit coverage
 
@@ -17,11 +37,11 @@ Evidence: 2026-10-08 UTC. Branch `feature/creative-design-preview`; draft PR [#3
 | Drawing / typed coordinates | Feet/inches, decimal feet, fractions, explicit cm/m/mm/in/ft and negative coordinates; comma/semicolon component separators; `@` relative and `<` polar retained. Imperial decimal punctuation is a dot. |
 | Properties / plant sizes / arrays | Canonical cm signals with project display units; units fixed for each active editor so switching cannot reinterpret pending text. Controls rebuild or refresh on unit change. |
 | Dimensions / measurement / rulers / handles / coordinates | Project-aware feet/inches or decimal feet; inch display rounds to 1/64 only for display, never saved into geometry. |
-| Grid / snapping | Default new grid 1 ft; editable physical spacing, persisted as cm, undoable. Snap distances remain canonical. |
+| Grid / snapping | Default new grid 1 ft; editable physical spacing, persisted as cm, undoable. Snap distances remain canonical; project load/recovery synchronizes every attached view through CanvasScene. |
 | Image calibration / guides / fillet / chamfer | Explicit physical input converted once to cm. |
 | Areas / soil and mulch | ft² and yd³; price conversions preserve total cost and canonical saved price meaning. |
 | PNG/SVG/PDF | Render real project labels/symbols; PDF scale bar now represents its actual physical length. Paper size captions/plan dimensions adapt; numeric scale ratios remain unitless. |
-| DXF | Imperial entities in feet with INSUNITS=2; metric cm with 5; source geometry unchanged. |
+| DXF | Imperial entities in feet with INSUNITS=2; metric cm with 5; source geometry unchanged. Import defaults derive from declared units; explicit overrides retained; unknown/unitless files default to 1 cm per unit. |
 | CSV | Imperial numeric `_ft` columns, including actual plant centers; metric columns retain cm headers and now report the actual plant center too. |
 
 Remaining scientific/canonical surfaces: gardening fertilizer/pest/harvest data uses grams/kg/L and scientific rates, soil chemistry and weather retain their original units, provider/Agent API data and internal schemas remain cm. Paper margins and printer standards retain mm/cm calculations; imperial architectural scale presets (for example 1/8 inch = 1 foot) are not added. Location time-zone selection is not implemented: sun controls use computer-local time and convert to UTC.

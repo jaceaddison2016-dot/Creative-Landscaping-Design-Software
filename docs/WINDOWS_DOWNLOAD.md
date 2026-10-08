@@ -1,3 +1,5 @@
+> This available download contains the older foundation at `439e486414070161d9fea58a6123644e8d0afdc3`. It does **not** contain the revised Creative workspace or imperial features. A new installer awaits revised layout approval and native validation; see [current screenshots and checklist](design/README.md).
+
 # Try the Windows desktop test build
 
 This is Creative Landscape Studio's first desktop baseline, built from Open

@@ -1,3 +1,5 @@
+> Historical Milestone A foundation evidence. The current continuation changes application code and display units; see [current source validation](docs/design/CONTINUATION_VALIDATION.md). The statements below describe the earlier foundation build.
+
 # Validation evidence — Milestone A
 
 Baseline: upstream cb4a71db8649cc4e48f85f0bef671bb0ac58dd16, version 1.29.5.
